@@ -4,7 +4,7 @@ import { runLateralDatasetPipeline } from "@/services/lateral-processing/pipelin
 export const runtime = "nodejs";
 
 /** Full Lateral pipeline (config → Drive → New Sheet → reconcile → VBA → Dataset Manager). */
-export const maxDuration = 600;
+export const maxDuration = 300;
 
 export async function POST() {
   try {

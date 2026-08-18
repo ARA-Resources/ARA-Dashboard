@@ -16,7 +16,7 @@
  *
  * Vercel runtime constraints:
  *   - Route is Node.js runtime.
- *   - maxDuration must accommodate expected ~8-10 min run; see Vercel plan limits.
+ *   - maxDuration is capped at 300s (Vercel Hobby). Full Windows Run All is not expected here.
  *   - Do NOT import win32com / pywin32 / child_process in this file or its imports.
  *
  * Environment:
@@ -30,10 +30,8 @@ import { invokeLateralJob } from "@/services/lateral-processing/lateral-schedule
 
 export const runtime = "nodejs";
 
-// Accommodate long-running Lateral pipeline (~8-10 minutes).
-// Adjust based on Vercel plan. Pro/Enterprise supports up to 800s.
-// Hobby max is 60s — NOT sufficient for full Run All.
-export const maxDuration = 600;
+// Vercel Hobby allows maxDuration 1–300. Pro can go higher.
+export const maxDuration = 300;
 
 function getCronSecret(): string | undefined {
   return process.env.CRON_SECRET;
