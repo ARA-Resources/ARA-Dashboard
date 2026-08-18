@@ -1,36 +1,46 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ARA Dashboard
 
-## Getting Started
+Enterprise analytics dashboard for ARA Resources.
 
-First, run the development server:
+## Stack
+
+- Next.js (App Router) + TypeScript
+- Tailwind CSS v4 + shadcn/ui
+- Zustand · React Query · Framer Motion · ExcelJS · Recharts · TanStack Table
+
+## Getting started
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) — redirects to `/overview`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Excel sources
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Place master workbooks in `data/excel/` using the stable filenames:
 
-## Learn More
+| Business unit | File | Primary sheet |
+|---------------|------|---------------|
+| Lateral | `lateral-mastersheet.xlsm` | `P-Roles` |
+| Executive | `executive-mastersheet.xlsm` | `P - Dashboard` |
+| Consulting | `consulting-demand.xlsx` | `Sheet1` |
 
-To learn more about Next.js, take a look at the following resources:
+Replace a file in place to update data. Do not rename registry keys unless remapping intentionally.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Architecture
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+src/
+  app/                 # routes
+  components/          # ui, layouts, sidebar, navbar, dashboard, tables, charts, filters
+  constants/           # colors, routes, sidebar, business-unit registry
+  services/excel/      # Excel I/O only
+  stores/              # zustand (sidebar, filters, search)
+  hooks/ utils/ types/ animations/ providers/
+data/excel/            # master workbooks
+public/assets/         # ARA logo
+```
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Dashboard data features are intentionally not implemented yet — architecture only.

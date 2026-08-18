@@ -1,6 +1,8 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# dependencies
+# -----------------------------------------------------------------------------
+# Dependencies
+# -----------------------------------------------------------------------------
 /node_modules
 /.pnp
 .pnp.*
@@ -10,32 +12,98 @@
 !.yarn/releases
 !.yarn/versions
 
-# testing
-/coverage
+# -----------------------------------------------------------------------------
+# Environment / secrets
+# Keep .env.example tracked (names and placeholders only).
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
 
-# next.js
+# -----------------------------------------------------------------------------
+# Next.js / build
+# -----------------------------------------------------------------------------
 /.next/
 /out/
-
-# production
 /build
+next-env.d.ts
+*.tsbuildinfo
 
-# misc
-.DS_Store
-*.pem
+# -----------------------------------------------------------------------------
+# Runtime state, tokens, checkpoints, local datasets, Excel caches
+# -----------------------------------------------------------------------------
+.data/
 
-# debug
+# -----------------------------------------------------------------------------
+# Backups (recovery XLSM snapshots, step copies — never commit)
+# -----------------------------------------------------------------------------
+backups/
+**/backups/
+
+# -----------------------------------------------------------------------------
+# Excel workbooks (production Master, reference copies, datasets)
+# Keep data/excel/README.md tracked; do not commit the workbooks.
+# -----------------------------------------------------------------------------
+*.xlsm
+*.xlsx
+*.xls
+*.xlsb
+
+# -----------------------------------------------------------------------------
+# Testing / coverage
+# -----------------------------------------------------------------------------
+/coverage
+
+# -----------------------------------------------------------------------------
+# Logs and caches
+# -----------------------------------------------------------------------------
+*.log
+*.cache
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# -----------------------------------------------------------------------------
+# Python artifacts
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
 
-# vercel
+# -----------------------------------------------------------------------------
+# Local phase scratch (compiled verification dumps — never commit)
+# -----------------------------------------------------------------------------
+.tmp*/
+.tmp-*
+
+# -----------------------------------------------------------------------------
+# Python virtualenvs (Windows Run All helpers)
+# -----------------------------------------------------------------------------
+.venv/
+venv/
+env/
+
+# -----------------------------------------------------------------------------
+# Google / cloud credential files if dropped in the repo by mistake
+# -----------------------------------------------------------------------------
+client_secret*.json
+credentials.json
+token.json
+service-account*.json
+*-credentials.json
+
+# -----------------------------------------------------------------------------
+# Misc / OS / local / editors
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.pem
+*.bak
+*~
+.eslintcache
+.cursor/
+.idea/
 .vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+.turbo
