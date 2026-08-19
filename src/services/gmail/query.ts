@@ -8,7 +8,7 @@ import type { DatasetSyncName } from "@/types/dataset-sync";
 
 const DATASET_TZ =
   process.env.ARA_DATASET_TZ?.trim() ||
-  process.env.TZ?.trim() ||
+  process.env.TZ?.trim().replace(/^:/, "") ||
   "Asia/Kolkata";
 
 /** Calendar day in YYYY-MM-DD for the dataset timezone. */

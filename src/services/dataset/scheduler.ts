@@ -33,7 +33,7 @@ const GLOBAL_STATE_PATH = path.join(
 
 const ENV_DEFAULT_TZ =
   process.env.ARA_DATASET_TZ?.trim() ||
-  process.env.TZ?.trim() ||
+  process.env.TZ?.trim().replace(/^:/, "") ||
   "Asia/Kolkata";
 
 interface GlobalSchedulerState {
