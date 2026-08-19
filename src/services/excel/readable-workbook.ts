@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -7,10 +8,15 @@ const execFileAsync = promisify(execFile);
 
 function cachePathFor(xlsmPath: string) {
   const stem = path.basename(xlsmPath, path.extname(xlsmPath));
+  const isServerlessRuntime =
+    Boolean(process.env.VERCEL) ||
+    Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
+    process.cwd().startsWith("/var/task");
+  const cacheRoot = isServerlessRuntime
+    ? path.join(os.tmpdir(), "ara-dashboard", "excel-cache")
+    : path.join(process.cwd(), ".data", "excel-cache");
   return path.join(
-    process.cwd(),
-    ".data",
-    "excel-cache",
+    cacheRoot,
     `${stem}.readable.xlsx`
   );
 }

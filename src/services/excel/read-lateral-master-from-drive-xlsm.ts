@@ -3,6 +3,7 @@
  * Never creates a substitute workbook. Restores the configured file from trash if needed.
  */
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import ExcelJS from "exceljs";
 import { parseWorksheet } from "@/services/excel/parse-sheet";
@@ -25,7 +26,17 @@ export function getLateralProcessingMasterDriveUrl(): string {
   return getLateralMasterDriveViewUrl();
 }
 
-const CACHE_DIR = path.join(process.cwd(), ".data", "excel-cache", "drive-xlsm");
+function resolveDriveXlsmCacheDir() {
+  const isServerlessRuntime =
+    Boolean(process.env.VERCEL) ||
+    Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
+    process.cwd().startsWith("/var/task");
+
+  if (isServerlessRuntime) {
+    return path.join(os.tmpdir(), "ara-dashboard", "excel-cache", "drive-xlsm");
+  }
+  return path.join(process.cwd(), ".data", "excel-cache", "drive-xlsm");
+}
 
 interface DriveXlsmCacheEntry {
   mtimeMs: number;
@@ -60,9 +71,10 @@ async function ensureLocalXlsm(options: {
   modifiedTime: string | null;
   bypassCache?: boolean;
 }): Promise<string> {
-  await fs.mkdir(CACHE_DIR, { recursive: true });
-  const localPath = path.join(CACHE_DIR, `${options.fileId}.xlsm`);
-  const stampPath = path.join(CACHE_DIR, `${options.fileId}.mtime`);
+  const cacheDir = resolveDriveXlsmCacheDir();
+  await fs.mkdir(cacheDir, { recursive: true });
+  const localPath = path.join(cacheDir, `${options.fileId}.xlsm`);
+  const stampPath = path.join(cacheDir, `${options.fileId}.mtime`);
   const stamp = options.modifiedTime || "";
 
   if (!options.bypassCache) {
