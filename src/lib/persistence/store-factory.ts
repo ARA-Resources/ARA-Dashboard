@@ -23,6 +23,7 @@ import {
   FileLateralSourceDriveStateStore,
   FileHomeMetricsStore,
   FileAppNotificationsStore,
+  FileOAuthStateStore,
 } from "./file-stores";
 
 import {
@@ -34,6 +35,7 @@ import {
   PostgresLateralSourceDriveStateStore,
   PostgresHomeMetricsStore,
   PostgresAppNotificationsStore,
+  PostgresOAuthStateStore,
 } from "./postgres-stores";
 
 import type {
@@ -45,6 +47,7 @@ import type {
   LateralSourceDriveStateStoreInterface,
   HomeMetricsStoreInterface,
   AppNotificationsStoreInterface,
+  OAuthStateStore,
 } from "./interfaces";
 
 // Singletons per process (stores are stateless / safe to reuse)
@@ -56,6 +59,7 @@ let _syncWatermark: SyncWatermarkStoreInterface | null = null;
 let _lateralSourceDriveState: LateralSourceDriveStateStoreInterface | null = null;
 let _homeMetrics: HomeMetricsStoreInterface | null = null;
 let _appNotifications: AppNotificationsStoreInterface | null = null;
+let _oauthState: OAuthStateStore | null = null;
 
 export function getGmailCheckpointStore(): GmailCheckpointStore {
   if (!_gmailCheckpoint) {
@@ -129,6 +133,15 @@ export function getAppNotificationsStore(): AppNotificationsStoreInterface {
   return _appNotifications;
 }
 
+export function getOAuthStateStore(): OAuthStateStore {
+  if (!_oauthState) {
+    _oauthState = isPostgresMode()
+      ? new PostgresOAuthStateStore()
+      : new FileOAuthStateStore();
+  }
+  return _oauthState;
+}
+
 /** Reset all singletons (used in tests to switch modes). */
 export function resetStoreFactory(): void {
   _gmailCheckpoint = null;
@@ -139,4 +152,5 @@ export function resetStoreFactory(): void {
   _lateralSourceDriveState = null;
   _homeMetrics = null;
   _appNotifications = null;
+  _oauthState = null;
 }

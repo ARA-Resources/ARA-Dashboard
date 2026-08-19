@@ -13,9 +13,11 @@ import {
 } from "@/services/dataset/encrypted-json-store";
 import type { GmailOAuthTokens, StoredGmailAuth } from "@/types/gmail";
 import { getOAuthRedirectUri } from "@/lib/config/runtime";
+import { getOAuthStateStore } from "@/lib/persistence/store-factory";
 
 const TOKEN_FILE = "gmail-oauth.enc.json";
-const STATE_FILE = "gmail-oauth-state.enc.json";
+
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
@@ -66,23 +68,16 @@ export function buildGmailAuthUrl(options: {
 }
 
 export async function saveOAuthState(state: string, expectedEmail: string) {
-  await writeEncryptedJson(STATE_FILE, {
-    state,
-    expectedEmail,
-    createdAt: new Date().toISOString(),
-  });
+  const expiresAt = new Date(Date.now() + OAUTH_STATE_TTL_MS).toISOString();
+  await getOAuthStateStore().save(state, { expectedEmail, expiresAt });
 }
 
 export async function consumeOAuthState(state: string): Promise<{
   expectedEmail: string;
 } | null> {
-  const stored = await readEncryptedJson<{
-    state: string;
-    expectedEmail: string;
-  }>(STATE_FILE);
-  if (!stored || stored.state !== state) return null;
-  await deleteEncryptedJson(STATE_FILE);
-  return { expectedEmail: stored.expectedEmail };
+  const payload = await getOAuthStateStore().consume(state);
+  if (!payload) return null;
+  return { expectedEmail: payload.expectedEmail };
 }
 
 export async function exchangeCodeForTokens(code: string) {

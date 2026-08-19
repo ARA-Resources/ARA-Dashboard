@@ -26,6 +26,8 @@ import type {
   LateralSourceDriveStateStoreInterface,
   HomeMetricsStoreInterface,
   AppNotificationsStoreInterface,
+  OAuthStateStore,
+  OAuthStatePayload,
 } from "./interfaces";
 
 import type { LateralGmailCheckpoint } from "@/types/lateral-gmail-checkpoint";
@@ -655,3 +657,45 @@ export class PostgresAppNotificationsStore implements AppNotificationsStoreInter
     await sql`DELETE FROM app_notifications WHERE id = ${id}`;
   }
 }
+
+// ─── OAuth State ─────────────────────────────────────────────────────────────
+
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+export class PostgresOAuthStateStore implements OAuthStateStore {
+  async save(state: string, payload: OAuthStatePayload): Promise<void> {
+    const sql = getDbClient();
+    const expiresAt = new Date(payload.expiresAt);
+    // Each state token is its own row — concurrent flows never collide.
+    await sql`
+      INSERT INTO oauth_state (state_token, expected_email, expires_at)
+      VALUES (${state}, ${payload.expectedEmail}, ${expiresAt})
+      ON CONFLICT (state_token) DO NOTHING
+    `;
+    // Opportunistically purge tokens that expired more than an hour ago.
+    await sql`
+      DELETE FROM oauth_state
+      WHERE expires_at < NOW() - INTERVAL '1 hour'
+    `;
+  }
+
+  async consume(state: string): Promise<OAuthStatePayload | null> {
+    const sql = getDbClient();
+    // Delete and return atomically — single-use guarantee.
+    const rows = await sql<{ expected_email: string; expires_at: Date }[]>`
+      DELETE FROM oauth_state
+      WHERE state_token = ${state}
+        AND expires_at > NOW()
+      RETURNING expected_email, expires_at
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      expectedEmail: row.expected_email,
+      expiresAt: row.expires_at.toISOString(),
+    };
+  }
+}
+
+// Exported so scripts/_run-migrate.mjs can reference the TTL value.
+export { OAUTH_STATE_TTL_MS };

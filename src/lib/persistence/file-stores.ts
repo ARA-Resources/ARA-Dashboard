@@ -56,6 +56,8 @@ import type {
   LateralSourceDriveStateStoreInterface,
   HomeMetricsStoreInterface,
   AppNotificationsStoreInterface,
+  OAuthStateStore,
+  OAuthStatePayload,
 } from "./interfaces";
 
 import type { LateralGmailCheckpoint } from "@/types/lateral-gmail-checkpoint";
@@ -223,3 +225,36 @@ export class FileAppNotificationsStore implements AppNotificationsStoreInterface
     void id;
   }
 }
+
+// ─── OAuth State (file-backed) ────────────────────────────────────────────────
+//
+// Uses the existing encrypted-json-store so state is encrypted at rest on disk.
+// One file holds one pending state token — sufficient for local development
+// where concurrent flows are not expected.
+
+const OAUTH_STATE_FILE = "gmail-oauth-state.enc.json";
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+export class FileOAuthStateStore implements OAuthStateStore {
+  async save(state: string, payload: OAuthStatePayload): Promise<void> {
+    await writeEncryptedJson(OAUTH_STATE_FILE, { state, ...payload });
+  }
+
+  async consume(state: string): Promise<OAuthStatePayload | null> {
+    const stored = await readEncryptedJson<{
+      state: string;
+      expectedEmail: string;
+      expiresAt: string;
+    }>(OAUTH_STATE_FILE);
+    if (!stored || stored.state !== state) return null;
+    if (new Date(stored.expiresAt) <= new Date()) {
+      await deleteEncryptedJson(OAUTH_STATE_FILE);
+      return null;
+    }
+    await deleteEncryptedJson(OAUTH_STATE_FILE);
+    return { expectedEmail: stored.expectedEmail, expiresAt: stored.expiresAt };
+  }
+}
+
+// Keep compiler happy — TTL is referenced only for documentation parity
+void OAUTH_STATE_TTL_MS;

@@ -119,6 +119,31 @@ export interface HomeMetricsStoreInterface {
   ): Promise<HomeWidgetsMetricsSnapshot>;
 }
 
+// ─── OAuth State ─────────────────────────────────────────────────────────────
+
+export interface OAuthStatePayload {
+  /** The Gmail address expected to be authorized. */
+  expectedEmail: string;
+  /** ISO-8601 expiry timestamp. */
+  expiresAt: string;
+}
+
+export interface OAuthStateStore {
+  /**
+   * Persist a new OAuth state token.
+   * Multiple concurrent attempts each get their own row (keyed by state token).
+   * TTL: 10 minutes.
+   */
+  save(state: string, payload: OAuthStatePayload): Promise<void>;
+
+  /**
+   * Consume (read + delete) a state token.
+   * Returns null when the token does not exist or is expired.
+   * Single-use: the row is deleted atomically on successful retrieval.
+   */
+  consume(state: string): Promise<OAuthStatePayload | null>;
+}
+
 // ─── App Notifications ───────────────────────────────────────────────────────
 
 export interface AppNotificationsStoreInterface {

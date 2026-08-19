@@ -6,7 +6,6 @@ export type AccessLevel = "public" | "authenticated" | "operator";
 
 const OPERATOR_GET_PATHS = new Set([
   "/api/dataset/gmail/oauth/start",
-  "/api/dataset/gmail/oauth/callback",
   "/api/dataset/gmail/messages",
   "/api/dataset/gmail/sync",
 ]);
@@ -25,10 +24,19 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
 
   if (path === "/login") return "public";
   if (path === "/logout") return "public";
+
+  // Google redirects here after OAuth — must not require a dashboard session.
+  // State token validation is mandatory inside the route handler itself.
+  if (path === "/api/dataset/gmail/oauth/callback" && verb === "GET") {
+    return "public";
+  }
   if (path === "/api/health" && (verb === "GET" || verb === "HEAD")) {
     return "public";
   }
   if (path === "/api/auth/login" && (verb === "GET" || verb === "POST")) {
+    return "public";
+  }
+  if (path === "/api/auth/signup" && verb === "POST") {
     return "public";
   }
 
