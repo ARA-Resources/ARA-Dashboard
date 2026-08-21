@@ -1,3 +1,4 @@
+import { applySortAndTopN } from "@/services/excel/apply-filters";
 import { readLateralMasterSheetFromDriveXlsmVercelSafe } from "@/services/excel/read-lateral-master-from-drive-xlsm-vercel-safe";
 import {
   NativePRolesEngine,
@@ -40,6 +41,14 @@ export async function buildLateralPRolesOpenings(
           .ExcelPRolesEngine;
   const result = await engine.generate({ masterRows, filters: pRolesFilters });
   const table = pRolesResultToRows(result);
+  const ranked = applySortAndTopN(table.headers, table.rows, {
+    sortBy: filters?.sortBy ?? null,
+    sortDirection: filters?.sortDirection ?? "desc",
+    topN: filters?.topN ?? null,
+  }).map((row, index) => ({
+    ...row,
+    id: String(row.id ?? `p-roles-${index + 1}`),
+  }));
 
   return {
     businessUnitId: "lateral",
@@ -47,11 +56,11 @@ export async function buildLateralPRolesOpenings(
     sourceFile: masterSheet.sourceFile,
     sourceLabel: `Master Sheet → P-Roles (${result.metadata.engine})`,
     headers: table.headers,
-    rows: table.rows,
+    rows: ranked,
     appliedFilters: filters,
     meta: {
       name: "P-Roles",
-      rowCount: table.rows.length,
+      rowCount: ranked.length,
       columnCount: table.headers.length,
       headerRow: 1,
       filePath: masterSheet.meta.filePath,

@@ -248,7 +248,21 @@ export async function mergeHomeUnitWidgetsMetrics(
   };
 
   if (isValidHomeUnitMetrics(candidate)) {
-    nextUnits[businessUnitId] = candidate;
+    // Keep last non-zero Home KPIs until a newer sheet reports real counts.
+    // All-zero snapshots must not wipe a previously populated dashboard.
+    const incomingEmpty =
+      candidate.totals === 0 &&
+      candidate.active === 0 &&
+      candidate.posted === 0 &&
+      candidate.fresh === 0;
+    const previousPopulated =
+      isValidHomeUnitMetrics(previous) &&
+      (previous.totals > 0 ||
+        previous.active > 0 ||
+        previous.posted > 0 ||
+        previous.fresh > 0);
+    nextUnits[businessUnitId] =
+      incomingEmpty && previousPopulated ? previous! : candidate;
   } else if (isValidHomeUnitMetrics(previous)) {
     // Preserve last known good metrics for this unit.
     nextUnits[businessUnitId] = previous;

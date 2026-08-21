@@ -127,19 +127,6 @@ function expectedFromPresence(row: StatusReconciliationJrInput) {
   });
 }
 
-function actionForStatus(status: LateralMasterJobStatus): LateralStatusAction {
-  switch (status) {
-    case "Active":
-      return "Activated";
-    case "Reopen":
-      return "Reopened";
-    case "Closed":
-      return "Closed";
-    case "New":
-      return "Added";
-  }
-}
-
 /**
  * Scan Master Sheet cells for status values outside Column K.
  */
@@ -225,10 +212,7 @@ export function validateCompleteStatusReconciliation(
     const expectedStatus = expected?.status ?? null;
     const expectedAction = expected?.action ?? null;
     const reportedAction =
-      (row.reportedAction ?? "").trim() ||
-      (expectedAction && expectedStatus
-        ? actionForStatus(expectedStatus)
-        : "");
+      (row.reportedAction ?? "").trim() || expectedAction || "";
 
     let actionCorrect = true;
     if (!expectedStatus || final !== expectedStatus) {
@@ -278,7 +262,7 @@ export function validateCompleteStatusReconciliation(
     }
 
     let dateCorrect = true;
-    if (final === "Reopen" || expectedStatus === "Reopen") {
+    if (expected?.updateDate === true && expectedStatus === "Reopen") {
       const date = normalizeStatus(row.finalDate);
       if (date !== input.todayDDMMYYYY.trim()) {
         dateCorrect = false;

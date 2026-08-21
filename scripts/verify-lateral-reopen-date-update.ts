@@ -114,7 +114,7 @@ const ok = validateReopenDateUpdates({
   },
   statusByMasterRow: {
     3: "Active",
-    4: "Active",
+    4: "New",
     5: "Reopen",
     7: "Closed",
   },

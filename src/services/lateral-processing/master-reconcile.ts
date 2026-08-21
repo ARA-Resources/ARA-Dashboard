@@ -7,12 +7,15 @@
  * Allowed values: Active | Closed | Reopen | New
  *
  * Rules (keyed by Job Requisition ID):
- *   ACTIVE:  in New + Master, existing status NOT Closed → Column K = Active
+ *   ACTIVE:  in New + Master, existing status is not Closed / New / Reopen
+ *            → Column K = Active
  *   REOPEN:  in New + Master, existing status = Closed → Column K = Reopen,
  *            Date column for THAT row only = today (DD-MM-YYYY). No duplicate row.
  *            Active / Closed-absent / unrelated rows keep their existing dates.
+ *            Existing Reopen stays Reopen (no date rewrite) until changed by hand.
  *   CLOSED:  in Master, not in New → Column K = Closed (keep row; date unchanged)
  *   NEW:     in New, not in Master → append row (header-name mapping), Column K = New
+ *            Existing New stays New until changed by hand.
  *
  * Complete validation runs before success: every Master JR presence/status/action,
  * status + action counts, Reopen dates, per-status Column K, and statuses only in Column K.
@@ -65,7 +68,12 @@ const execFileAsync = promisify(execFile);
 const STAGING_META_FILE = "lateral-reconcile-staging.enc.json";
 const STAGING_DIR = path.join(process.cwd(), ".data", "lateral-reconcile-staging");
 
-export type ReconcileAction = "Added" | "Reopened" | "Closed" | "Activated";
+export type ReconcileAction =
+  | "Added"
+  | "Reopened"
+  | "Closed"
+  | "Activated"
+  | "Unchanged";
 
 export interface ReconciliationDetailRow {
   jobRequisitionId: string;
@@ -587,6 +595,28 @@ for jid in sorted(new_id_set & master_id_set):
             "newDate": today,
             "action": "Reopened",
         })
+    elif prev_status == "New":
+        # Keep New until Column K is changed by hand.
+        write_status(row, "New")
+        details.append({
+            "jobRequisitionId": jid,
+            "previousStatus": prev_status,
+            "newStatus": "New",
+            "previousDate": prev_date,
+            "newDate": prev_date,
+            "action": "Unchanged",
+        })
+    elif prev_status == "Reopen":
+        # Keep Reopen until Column K is changed by hand. Do not rewrite Date.
+        write_status(row, "Reopen")
+        details.append({
+            "jobRequisitionId": jid,
+            "previousStatus": prev_status,
+            "newStatus": "Reopen",
+            "previousDate": prev_date,
+            "newDate": prev_date,
+            "action": "Unchanged",
+        })
     else:
         # RULE 1 — ACTIVE: status only. Do NOT update Date merely because processed.
         write_status(row, "Active")
@@ -866,6 +896,10 @@ def validate_complete_status_reconciliation():
         elif in_new and in_master_before:
             if prev == "Closed":
                 expected_status, expected_action = "Reopen", "Reopened"
+            elif prev == "New":
+                expected_status, expected_action = "New", "Unchanged"
+            elif prev == "Reopen":
+                expected_status, expected_action = "Reopen", "Unchanged"
             else:
                 expected_status, expected_action = "Active", "Activated"
         else:
@@ -904,8 +938,8 @@ def validate_complete_status_reconciliation():
         else:
             status_counts[final_status] += 1
 
-        # Reopen date = current date
-        if final_status == "Reopen" or expected_status == "Reopen":
+        # Reopen date = current date only when Closed → Reopen this run
+        if expected_status == "Reopen" and expected_action == "Reopened":
             if final_date != today:
                 row_reasons.append(
                     f'Reopened JR "{jid}" Date must be "{today}" (found "{final_date or "(empty)"}").'

@@ -1,11 +1,12 @@
 /**
  * Home Dashboard widgets payload builder.
  *
- * Phase 2: reads lightweight metrics from `.data/home-widgets-metrics.json`.
- * Does NOT parse Lateral XLSM / Excel on the Home request path.
+ * Reads lightweight metrics from the Home snapshot store (file or Postgres).
+ * When Lateral metrics are missing, bootstraps once from the Drive Master XLSM
+ * so Home never renders an empty/zero dashboard while a sheet exists.
  *
- * `countOpeningsFromRows` is retained for Phase 3 (sync-time computation) —
- * it is not invoked from `getHomeDashboardWidgets`.
+ * `countOpeningsFromRows` is used at sync-time and Drive bootstrap — not for
+ * every warm Home hit once a valid snapshot exists.
  */
 import { BUSINESS_UNITS } from "@/constants/business-units";
 import {
@@ -206,15 +207,15 @@ function unitFromSnapshot(
     };
   }
 
-  // Stored but invalid / error — still do not parse Excel; surface message if any.
+  // Stored but invalid / error — still surface last stored counts (never force zeros).
   return {
     unitId,
     mtimeMs: unit.mtimeMs || 0,
     fileName: unit.fileName || "—",
-    totals: 0,
-    active: 0,
-    posted: 0,
-    fresh: 0,
+    totals: unit.totals,
+    active: unit.active,
+    posted: unit.posted,
+    fresh: unit.fresh,
     error: unit.error?.trim()
       ? unit.error
       : "Home metrics snapshot for this unit is incomplete.",
@@ -312,7 +313,7 @@ function buildPayload(
         status: "stale" as const,
         lastSyncedAt: unitGeneratedAt,
         message:
-          "Home metrics snapshot not available yet. Metrics will appear after the next successful Dataset sync.",
+          "Waiting for Master Sheet metrics. Connect Gmail/Drive or open Home again after OAuth so KPIs can load from Drive.",
       };
     }
 
@@ -421,15 +422,49 @@ function buildPayload(
   };
 }
 
+function lateralSnapshotNeedsBootstrap(
+  snapshot: HomeWidgetsMetricsSnapshot
+): boolean {
+  const lateral = snapshot.units.lateral;
+  if (!isValidHomeUnitMetrics(lateral)) return true;
+  // Treat an all-zero Lateral snapshot as empty so Home can recover from Drive.
+  return (
+    lateral.totals === 0 &&
+    lateral.active === 0 &&
+    lateral.posted === 0 &&
+    lateral.fresh === 0
+  );
+}
+
 /**
  * Home widgets data for `/api/home/widgets`.
- * L1: in-memory widgetsCache · L2: `.data/home-widgets-metrics.json`
- * Never parses Excel workbooks.
+ * L1: in-memory widgetsCache · L2: metrics snapshot (file / Postgres).
+ * Bootstraps Lateral KPIs from Drive Master when the snapshot is empty.
  */
 export async function getHomeDashboardWidgets(options?: {
   bypassCache?: boolean;
 }): Promise<HomeDashboardWidgetsData> {
-  const snapshot = await readHomeWidgetsMetricsSnapshot();
+  let snapshot = await readHomeWidgetsMetricsSnapshot();
+  const shouldRefreshFromDrive =
+    Boolean(options?.bypassCache) || lateralSnapshotNeedsBootstrap(snapshot);
+
+  if (shouldRefreshFromDrive) {
+    try {
+      const { refreshLateralHomeWidgetsMetricsFromDriveXlsm } = await import(
+        "@/services/home/refresh-lateral-home-widgets-metrics"
+      );
+      await refreshLateralHomeWidgetsMetricsFromDriveXlsm({
+        bypassCache: Boolean(options?.bypassCache),
+      });
+      snapshot = await readHomeWidgetsMetricsSnapshot();
+    } catch (error) {
+      console.warn(
+        "[home-widgets] Drive bootstrap failed; keeping last snapshot",
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
   const cacheKey = snapshotCacheKey(snapshot);
 
   if (

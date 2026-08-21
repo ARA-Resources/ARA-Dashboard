@@ -556,9 +556,26 @@ export class PostgresHomeMetricsStore implements HomeMetricsStoreInterface {
       computedAt: incoming.computedAt,
       error: incoming.error === undefined || incoming.error === null ? null : String(incoming.error),
     };
-    const toWrite = isValidHomeUnitMetrics(candidate)
-      ? candidate
-      : (isValidHomeUnitMetrics(previous) ? previous : previous) ?? candidate;
+    let toWrite: HomeUnitWidgetsMetrics;
+    if (isValidHomeUnitMetrics(candidate)) {
+      const incomingEmpty =
+        candidate.totals === 0 &&
+        candidate.active === 0 &&
+        candidate.posted === 0 &&
+        candidate.fresh === 0;
+      const previousPopulated =
+        isValidHomeUnitMetrics(previous) &&
+        (previous.totals > 0 ||
+          previous.active > 0 ||
+          previous.posted > 0 ||
+          previous.fresh > 0);
+      toWrite =
+        incomingEmpty && previousPopulated ? previous! : candidate;
+    } else if (isValidHomeUnitMetrics(previous)) {
+      toWrite = previous;
+    } else {
+      toWrite = previous ?? candidate;
+    }
 
     const snapshot: HomeWidgetsMetricsSnapshot = {
       ...prior,

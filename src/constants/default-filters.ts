@@ -11,7 +11,7 @@ export interface OpeningsFilterDefaults {
   sortByPatterns: RegExp[];
   sortDirection: OpeningsFilters["sortDirection"];
   topN: number | null;
-  /** Preferred Job Status values (Active / New) */
+  /** Preferred Job Status values */
   preferredStatusValues: string[];
   /** Preferred Posted values (Yes) */
   preferredPostedValues: string[];
@@ -23,11 +23,8 @@ export const DEFAULT_FILTER_CONFIG: Record<BusinessUnitId, OpeningsFilterDefault
       sortByPatterns: [/^grand\s*total$/i, /total/i],
       sortDirection: "desc",
       topN: 10,
-      // Match Google Sheet / Excel P-Roles page-filter default:
-      // Closed hidden → keep every other Job Status present in Master Sheet.
-      preferredStatusValues: ["Active", "New", "Reopen"],
-      // Posted stays "All" (no default Posted filter), same as P-Roles slicer.
-      preferredPostedValues: [],
+      preferredStatusValues: ["Active", "Reopen", "New"],
+      preferredPostedValues: ["Yes"],
     },
     executive: {
       sortByPatterns: [/^grand\s*total$/i, /total/i],
@@ -52,11 +49,11 @@ function pickExactValues(allValues: string[], preferred: string[]) {
     const hit = allValues.find(
       (value) => value.toLowerCase() === wanted.toLowerCase()
     );
-    if (!hit) continue;
-    const key = hit.toLowerCase();
+    const chosen = hit ?? wanted;
+    const key = chosen.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    matched.push(hit);
+    matched.push(chosen);
   }
   return matched;
 }
@@ -162,8 +159,10 @@ export function resolveDefaultsFromSchema(
   }
 
   let sortBy: string | null = null;
+  const sortHeaders =
+    resultHeaders.length > 0 ? resultHeaders : ["Grand Total"];
   for (const pattern of config.sortByPatterns) {
-    const hit = resultHeaders.find((header) => pattern.test(header));
+    const hit = sortHeaders.find((header) => pattern.test(header));
     if (hit) {
       sortBy = hit;
       break;
