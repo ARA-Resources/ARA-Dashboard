@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+README.md
+Documentation.md
+docker-compose.yml
