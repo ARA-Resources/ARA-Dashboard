@@ -31,7 +31,11 @@ export ARA_PERSISTENCE="postgres"
 export NODE_ENV="production"
 
 echo "Running Database Migrations..."
-npm run db:migrate
+if [ ! -f /app/scripts/db-migrate.mjs ]; then
+  echo "[db:migrate] ERROR: /app/scripts/db-migrate.mjs is missing. Rebuild the image after pulling latest code."
+  exit 1
+fi
+node /app/scripts/db-migrate.mjs || exit 1
 
 echo "Starting Next.js App..."
 # Start Next.js in foreground

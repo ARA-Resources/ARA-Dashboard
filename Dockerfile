@@ -29,15 +29,21 @@ RUN mkdir -p /var/lib/postgresql/data && chown -R postgres:postgres /var/lib/pos
 WORKDIR /app
 
 # Copy built application and dependencies
-# We copy node_modules to ensure all dependencies (including tsx for migrations) are available
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/.next ./.next
 COPY --from=build /app/public ./public
-COPY --from=build /app/scripts ./scripts
-COPY --from=build /app/db ./db
 COPY --from=build /app/next.config.ts ./
 COPY --from=build /app/tsconfig.json ./
+
+# Database migrations — copy from build context (host repo), NOT from build stage,
+# so db-migrate.mjs is always present when the file exists in the repo at build time.
+RUN mkdir -p scripts db/migrations
+COPY scripts/db-migrate.mjs ./scripts/db-migrate.mjs
+COPY db/migrations/ ./db/migrations/
+RUN test -f ./scripts/db-migrate.mjs \
+  && test -d ./db/migrations \
+  && ls -la ./scripts/db-migrate.mjs ./db/migrations/
 
 # Entrypoint Script
 COPY docker-entrypoint.sh /docker-entrypoint.sh

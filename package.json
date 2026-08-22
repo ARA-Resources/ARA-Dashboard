@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:migrate": "tsx scripts/db-migrate.ts",
+    "db:migrate": "node scripts/db-migrate.mjs",
     "test:persistence": "tsx scripts/verify-postgres-persistence-step13.ts"
   },
   "dependencies": {
