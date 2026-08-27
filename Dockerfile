@@ -10,15 +10,18 @@ COPY . .
 RUN npm run build
 
 # 2. Main Runtime Image
-# Step A: Docker/Podman + embedded Postgres + migrations only.
-# Python / openpyxl / P-Roles inject scripts are deferred to Step B.
+# Step A: Docker/Podman + embedded Postgres + migrations.
+# Step B: Python/OpenPyXL + P-Roles inject/extract scripts for Linux pipeline.
 FROM node:20-alpine
 
 RUN apk update && apk add --no-cache \
     postgresql \
     postgresql-contrib \
     bash \
+    python3 \
+    py3-openpyxl \
     su-exec \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/cache/apk/*
 
 RUN mkdir -p /run/postgresql && chown -R postgres:postgres /run/postgresql
@@ -38,9 +41,15 @@ COPY --from=build /app/tsconfig.json ./
 RUN mkdir -p /opt/ara/migrations /app/scripts /app/db/migrations
 COPY db/migrations/ /opt/ara/migrations/
 COPY scripts/db-migrate.mjs /opt/ara/db-migrate.mjs
+COPY scripts/_extract-master-p-roles-feed.py /opt/ara/_extract-master-p-roles-feed.py
+COPY scripts/_inject-p-roles-google-display.py /opt/ara/_inject-p-roles-google-display.py
 RUN cp -r /opt/ara/migrations/. /app/db/migrations/ \
   && cp /opt/ara/db-migrate.mjs /app/scripts/db-migrate.mjs \
+  && cp /opt/ara/_extract-master-p-roles-feed.py /app/scripts/_extract-master-p-roles-feed.py \
+  && cp /opt/ara/_inject-p-roles-google-display.py /app/scripts/_inject-p-roles-google-display.py \
   && test -f /app/scripts/db-migrate.mjs \
+  && test -f /app/scripts/_extract-master-p-roles-feed.py \
+  && test -f /app/scripts/_inject-p-roles-google-display.py \
   && test -f /app/db/migrations/001_initial_schema.sql \
   && test -f /app/db/migrations/002_oauth_state.sql \
   && test -f /app/db/migrations/003_lateral_master_staging.sql \

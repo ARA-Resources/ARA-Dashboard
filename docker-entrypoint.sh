@@ -33,9 +33,15 @@ export NODE_ENV="production"
 mkdir -p /app/scripts /app/db/migrations
 
 # Bundled copy from image (Dockerfile COPY to /opt/ara/)
-# Step A: migrate runner + SQL only. P-Roles Python scripts deferred to Step B.
+# Step A: migrate runner + SQL. Step B: P-Roles Python scripts.
 if [ -f /opt/ara/db-migrate.mjs ] && [ ! -f /app/scripts/db-migrate.mjs ]; then
   cp /opt/ara/db-migrate.mjs /app/scripts/db-migrate.mjs
+fi
+if [ -f /opt/ara/_extract-master-p-roles-feed.py ] && [ ! -f /app/scripts/_extract-master-p-roles-feed.py ]; then
+  cp /opt/ara/_extract-master-p-roles-feed.py /app/scripts/_extract-master-p-roles-feed.py
+fi
+if [ -f /opt/ara/_inject-p-roles-google-display.py ] && [ ! -f /app/scripts/_inject-p-roles-google-display.py ]; then
+  cp /opt/ara/_inject-p-roles-google-display.py /app/scripts/_inject-p-roles-google-display.py
 fi
 if [ -d /opt/ara/migrations ] && [ -z "$(ls -A /app/db/migrations 2>/dev/null || true)" ]; then
   cp -r /opt/ara/migrations/. /app/db/migrations/

@@ -40,6 +40,8 @@ export interface GoogleCompatiblePRolesIndependent {
   grandTotal: number;
   withClosedGrandTotal: number;
   pairCount: number;
+  postedYesCount: number;
+  postedDashCount: number;
 }
 
 export interface RefreshGoogleCompatiblePRolesResult {
@@ -99,6 +101,35 @@ export function buildPRolesDisplaySpec(extract: PRolesFeedExtract) {
     "Reopen",
     "Closed",
   ]);
+
+  /*
+   * Posted is Master Sheet Column M.
+   *
+   * Keep this count independent from the Job Status filter above.
+   * P-Roles must report the actual Posted state from the Master feed,
+   * otherwise the cross-check can incorrectly report zero even when
+   * Master Sheet contains Posted=Yes rows.
+   */
+  /*
+   * PRolesFeedExtract is the normalized 7-column feed:
+   *   0 = Job Requisition ID
+   *   1 = Primary Skills
+   *   2 = Skill Categorization
+   *   3 = Job Management Level
+   *   4 = Job Status
+   *   5 = Posted
+   *   6 = Market Map
+   *
+   * Posted therefore comes from row[5], not the original Master
+   * Sheet Column M index (row[12]).
+   */
+  const postedYesCount = extract.rows.filter(
+    (row) => String(row[5] ?? "").trim().toLowerCase() === "yes"
+  ).length;
+
+  const postedDashCount = extract.rows.filter(
+    (row) => String(row[5] ?? "").trim() === "-"
+  ).length;
   return {
     pairs,
     markets: Array.from(markets).sort((a, b) => a.localeCompare(b)),
@@ -108,6 +139,8 @@ export function buildPRolesDisplaySpec(extract: PRolesFeedExtract) {
       grandTotal: independent.grandTotal,
       withClosedGrandTotal: withClosed.grandTotal,
       pairCount: pairs.length,
+      postedYesCount,
+      postedDashCount,
     } satisfies GoogleCompatiblePRolesIndependent,
   };
 }
@@ -134,24 +167,164 @@ async function downloadProductionXlsm(dest: string) {
 }
 
 async function runInject(src: string, specPath: string, dest: string) {
-  const { stdout } = await execFileAsync("python", [INJECT_PY, src, specPath, dest], {
-    windowsHide: true,
-    timeout: 180_000,
-    maxBuffer: 16 * 1024 * 1024,
-  });
+  const tempDest = `${dest}.tmp-${process.pid}-${Date.now()}`;
+
+  await fs.rm(tempDest, { force: true });
+  await fs.rm(dest, { force: true });
+
+  console.log("P-ROLES INJECTOR SOURCE =", src);
+  console.log("P-ROLES INJECTOR SPEC =", specPath);
+  console.log("P-ROLES INJECTOR SCRIPT =", INJECT_PY);
+  console.log("P-ROLES INJECTOR DEST =", tempDest);
+
+  const sourceStat = await fs.stat(src);
+  const specStat = await fs.stat(specPath);
+
+  console.log(
+    "P-ROLES SOURCE SIZE =",
+    sourceStat.size,
+    "SPEC SIZE =",
+    specStat.size
+  );
+
+  const { stdout, stderr } = await execFileAsync(
+    "python3",
+    [INJECT_PY, src, specPath, tempDest],
+    {
+      windowsHide: true,
+      timeout: 180_000,
+      maxBuffer: 16 * 1024 * 1024,
+      cwd: process.cwd(),
+    }
+  );
+
+  console.log("P-ROLES INJECTOR STDOUT =", stdout.trim());
+
+  if (stderr?.trim()) {
+    console.log("P-ROLES INJECTOR STDERR =", stderr.trim());
+  }
+
   const parsed = JSON.parse((stdout || "").trim() || "{}") as {
     ok?: boolean;
     error?: string;
     sheetPart?: string;
     pairCount?: number;
+    marketCount?: number;
     headerRow?: number;
     dataStartRow?: number;
     totalRow?: number;
     jmlOrder?: string[];
   };
+
   if (!parsed.ok) {
-    throw new Error(parsed.error || "P-Roles display inject failed");
+    throw new Error(
+      parsed.error ||
+        `P-Roles display inject failed. stderr=${stderr || "(none)"}`
+    );
   }
+
+  if (parsed.sheetPart !== "xl/worksheets/sheet2.xml") {
+    throw new Error(
+      `P-Roles injector targeted unexpected sheet: ${parsed.sheetPart ?? "(missing)"}`
+    );
+  }
+
+  if (!parsed.pairCount || parsed.pairCount <= 0) {
+    throw new Error(
+      `P-Roles injector produced no pairs: ${parsed.pairCount ?? 0}`
+    );
+  }
+
+  const verification = JSON.parse(
+    (
+      await execFileAsync(
+        "python3",
+        [
+          "-c",
+          `
+import hashlib
+import json
+import os
+import sys
+import zipfile
+
+src, dest, target = sys.argv[1], sys.argv[2], sys.argv[3]
+
+if not os.path.isfile(dest):
+    raise SystemExit("OUTPUT_NOT_CREATED")
+
+def sha(path, part):
+    with zipfile.ZipFile(path, "r") as z:
+        return hashlib.sha256(z.read(part)).hexdigest()
+
+with zipfile.ZipFile(src, "r") as a, zipfile.ZipFile(dest, "r") as b:
+    src_hash = sha(src, target)
+    dest_hash = sha(dest, target)
+
+    names_a = set(a.namelist())
+    names_b = set(b.namelist())
+
+    changed = sorted(
+        name for name in names_a | names_b
+        if (
+            name not in names_a
+            or name not in names_b
+            or hashlib.sha256(a.read(name)).hexdigest()
+            != hashlib.sha256(b.read(name)).hexdigest()
+        )
+    )
+
+print(json.dumps({
+    "sourceSheetSha256": src_hash,
+    "outputSheetSha256": dest_hash,
+    "sheetChanged": src_hash != dest_hash,
+    "sourceParts": len(names_a),
+    "outputParts": len(names_b),
+    "changedParts": changed,
+}))
+`,
+          src,
+          tempDest,
+          parsed.sheetPart,
+        ],
+        {
+          windowsHide: true,
+          timeout: 60_000,
+          maxBuffer: 8 * 1024 * 1024,
+          cwd: process.cwd(),
+        }
+      )
+    ).stdout.trim() || "{}"
+  );
+
+  console.log("INJECTOR HARD CHECK:", JSON.stringify(verification));
+
+  if (!verification.sheetChanged) {
+    throw new Error(
+      [
+        "P-Roles injector produced a byte-identical worksheet.",
+        `source=${verification.sourceSheetSha256}`,
+        `output=${verification.outputSheetSha256}`,
+        `pairs=${parsed.pairCount}`,
+        `markets=${parsed.marketCount ?? "unknown"}`,
+      ].join(" ")
+    );
+  }
+
+  if (
+    !Array.isArray(verification.changedParts) ||
+    verification.changedParts.length !== 1 ||
+    verification.changedParts[0] !== parsed.sheetPart
+  ) {
+    throw new Error(
+      `Unexpected XLSM changes: ${JSON.stringify(
+        verification.changedParts
+      )}`
+    );
+  }
+
+  await fs.rename(tempDest, dest);
+
   return parsed;
 }
 
