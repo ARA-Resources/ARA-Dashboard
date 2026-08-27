@@ -23,7 +23,9 @@
     "test:lateral-staging": "tsx scripts/verify-lateral-staging-import.ts && tsx scripts/verify-lateral-gmail-staging.ts",
     "test:lateral-gmail-staging": "tsx scripts/verify-lateral-gmail-staging.ts",
     "test:lateral-excel-discovery": "tsx scripts/verify-lateral-excel-discovery.ts",
-    "test:lateral-gmail-checkpoint": "tsx scripts/verify-lateral-gmail-checkpoint.ts"
+    "test:lateral-gmail-checkpoint": "tsx scripts/verify-lateral-gmail-checkpoint.ts",
+    "test:lateral-posted-postgres-step18": "tsx scripts/verify-lateral-posted-postgres-step18.ts",
+    "test:stepc-posted-safety": "tsx scripts/verify-stepc-posted-safety.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
