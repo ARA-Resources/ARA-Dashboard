@@ -23,6 +23,7 @@
   lateralMasterSheet: "/company/accenture/lateral/master-sheet",
   lateralAllocations: "/company/accenture/lateral/allocations",
   executive: "/company/accenture/executive",
+  executiveMasterSheet: "/company/accenture/executive/master-sheet",
   consulting: "/company/accenture/consulting",
 } as const;
 

@@ -2,13 +2,20 @@
  * Home Dashboard widgets payload builder.
  *
  * Reads lightweight metrics from the Home snapshot store (file or Postgres).
- * When Lateral metrics are missing, bootstraps once from the Drive Master XLSM
- * so Home never renders an empty/zero dashboard while a sheet exists.
  *
- * `countOpeningsFromRows` is used at sync-time and Drive bootstrap — not for
- * every warm Home hit once a valid snapshot exists.
+ * Phase 8.4: When `ARA_PERSISTENCE=postgres`, the runtime Home KPI read path
+ * uses only `home_metrics` (via `readHomeWidgetsMetricsSnapshot`). It does
+ * NOT bootstrap from Drive/Excel on dashboard reads — pipeline/sync jobs
+ * remain responsible for writing metrics.
+ *
+ * File mode (non-postgres) may still bootstrap Lateral/Executive from
+ * Drive/local workbooks when snapshots are missing (dev convenience).
+ *
+ * `countOpeningsFromRows` is used at sync-time and file-mode bootstrap — not
+ * for every warm Home hit once a valid snapshot exists.
  */
 import { BUSINESS_UNITS } from "@/constants/business-units";
+import { isPostgresMode } from "@/lib/persistence/persistence-mode";
 import {
   isValidHomeUnitMetrics,
   readHomeWidgetsMetricsSnapshot,
@@ -422,44 +429,85 @@ function buildPayload(
   };
 }
 
-function lateralSnapshotNeedsBootstrap(
-  snapshot: HomeWidgetsMetricsSnapshot
+/**
+ * Whether the Home widgets read path may call Drive/Excel bootstrap.
+ * Phase 8.4: false in PostgreSQL mode (home_metrics only).
+ */
+export function homeWidgetsAllowsExcelBootstrap(): boolean {
+  return !isPostgresMode();
+}
+
+function unitSnapshotNeedsBootstrap(
+  snapshot: HomeWidgetsMetricsSnapshot,
+  unitId: BusinessUnitId
 ): boolean {
-  const lateral = snapshot.units.lateral;
-  if (!isValidHomeUnitMetrics(lateral)) return true;
-  // Treat an all-zero Lateral snapshot as empty so Home can recover from Drive.
+  const unit = snapshot.units[unitId];
+  if (!isValidHomeUnitMetrics(unit)) return true;
+  // Treat an all-zero snapshot as empty so Home can recover from source data.
   return (
-    lateral.totals === 0 &&
-    lateral.active === 0 &&
-    lateral.posted === 0 &&
-    lateral.fresh === 0
+    unit.totals === 0 &&
+    unit.active === 0 &&
+    unit.posted === 0 &&
+    unit.fresh === 0
   );
 }
 
 /**
  * Home widgets data for `/api/home/widgets`.
- * L1: in-memory widgetsCache · L2: metrics snapshot (file / Postgres).
- * Bootstraps Lateral KPIs from Drive Master when the snapshot is empty.
+ * L1: in-memory widgetsCache · L2: metrics snapshot (file / Postgres `home_metrics`).
+ *
+ * File mode: may bootstrap Lateral + Executive KPIs from Drive/Excel when empty.
+ * Postgres mode (Phase 8.4): read-only from `home_metrics` — no Drive/Excel I/O.
  */
 export async function getHomeDashboardWidgets(options?: {
   bypassCache?: boolean;
 }): Promise<HomeDashboardWidgetsData> {
   let snapshot = await readHomeWidgetsMetricsSnapshot();
-  const shouldRefreshFromDrive =
-    Boolean(options?.bypassCache) || lateralSnapshotNeedsBootstrap(snapshot);
+  const bypass = Boolean(options?.bypassCache);
+  const allowExcelBootstrap = homeWidgetsAllowsExcelBootstrap();
 
-  if (shouldRefreshFromDrive) {
+  const shouldRefreshLateral =
+    allowExcelBootstrap &&
+    (bypass || unitSnapshotNeedsBootstrap(snapshot, "lateral"));
+  const shouldRefreshExecutive =
+    allowExcelBootstrap &&
+    (bypass || unitSnapshotNeedsBootstrap(snapshot, "executive"));
+
+  if (shouldRefreshLateral) {
     try {
       const { refreshLateralHomeWidgetsMetricsFromDriveXlsm } = await import(
         "@/services/home/refresh-lateral-home-widgets-metrics"
       );
       await refreshLateralHomeWidgetsMetricsFromDriveXlsm({
-        bypassCache: Boolean(options?.bypassCache),
+        bypassCache: bypass,
       });
       snapshot = await readHomeWidgetsMetricsSnapshot();
     } catch (error) {
       console.warn(
-        "[home-widgets] Drive bootstrap failed; keeping last snapshot",
+        "[home-widgets] Lateral Drive bootstrap failed; keeping last snapshot",
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
+  if (shouldRefreshExecutive) {
+    try {
+      const { refreshExecutiveHomeWidgetsMetrics } = await import(
+        "@/services/home/refresh-executive-home-widgets-metrics"
+      );
+      const result = await refreshExecutiveHomeWidgetsMetrics({
+        bypassCache: bypass,
+      });
+      if (!result.ok) {
+        console.warn(
+          "[home-widgets] Executive Master bootstrap failed; keeping last snapshot",
+          result.error
+        );
+      }
+      snapshot = await readHomeWidgetsMetricsSnapshot();
+    } catch (error) {
+      console.warn(
+        "[home-widgets] Executive Master bootstrap failed; keeping last snapshot",
         error instanceof Error ? error.message : error
       );
     }

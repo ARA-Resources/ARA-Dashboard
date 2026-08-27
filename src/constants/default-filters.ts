@@ -27,11 +27,11 @@ export const DEFAULT_FILTER_CONFIG: Record<BusinessUnitId, OpeningsFilterDefault
       preferredPostedValues: ["Yes"],
     },
     executive: {
-      sortByPatterns: [/^grand\s*total$/i, /total/i],
-      sortDirection: "desc",
-      topN: 10,
-      preferredStatusValues: ["Active", "New"],
-      preferredPostedValues: ["Yes"],
+      sortByPatterns: [],
+      sortDirection: "asc",
+      topN: null,
+      preferredStatusValues: ["Active"],
+      preferredPostedValues: [],
     },
     consulting: {
       sortByPatterns: [],

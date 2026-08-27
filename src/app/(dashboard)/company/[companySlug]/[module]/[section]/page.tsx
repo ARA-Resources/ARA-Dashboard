@@ -7,6 +7,7 @@ import {
 } from "@/constants/companies";
 import { LateralAllocationsPage } from "@/components/dashboard/accenture/allocations";
 import { LateralMasterSheetPage } from "@/components/dashboard/accenture/lateral";
+import { ExecutiveMasterSheetPage } from "@/components/dashboard/accenture/executive";
 import { PageTransition } from "@/animations/page-transition";
 
 interface ModuleSectionPageProps {
@@ -74,6 +75,14 @@ export default async function CompanyModuleSectionPage({
     section.slug === "allocations"
   ) {
     return <LateralAllocationsPage />;
+  }
+
+  if (
+    company.slug === "accenture" &&
+    moduleConfig.slug === "executive" &&
+    section.slug === "master-sheet"
+  ) {
+    return <ExecutiveMasterSheetPage />;
   }
 
   return (

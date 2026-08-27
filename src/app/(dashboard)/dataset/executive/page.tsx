@@ -1,6 +1,6 @@
 ﻿import type { Metadata } from "next";
 import { PageTransition } from "@/animations/page-transition";
-import { DatasetPlaceholderPage } from "@/components/dataset/dataset-placeholder-page";
+import { ExecutiveDatasetIngestionPage } from "@/components/dataset/executive-dataset-ingestion-page";
 
 export const metadata: Metadata = {
   title: "Executive Dataset",
@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 export default function ExecutiveDatasetPage() {
   return (
     <PageTransition>
-      <DatasetPlaceholderPage datasetName="Executive" />
+      <ExecutiveDatasetIngestionPage />
     </PageTransition>
   );
 }

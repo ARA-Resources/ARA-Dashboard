@@ -33,6 +33,8 @@ export async function GET(request: Request, context: RouteContext) {
   const bypassCache = searchParams.get("refresh") === "1";
 
   try {
+    // Lateral (Phase 8.3): PostgreSQL lateral_master via getDynamicFilterSchema.
+    // Executive / Consulting: Excel/Drive (unchanged).
     const schema = await getDynamicFilterSchema(businessUnitId, {
       bypassCache,
     });

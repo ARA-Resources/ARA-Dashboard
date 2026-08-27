@@ -55,13 +55,17 @@ function parseFilters(searchParams: URLSearchParams): Partial<OpeningsFilters> {
   return filters;
 }
 
+/**
+ * GET /api/dataset/lateral/p-roles
+ * Phase 8.2: Aggregates from PostgreSQL `lateral_master` (not Drive/XLSM).
+ */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const filters = parseFilters(searchParams);
   try {
     const result = await buildLateralPRolesOpenings(
       filters as OpeningsFilters,
-      { forceVercelSafeNative: true }
+      { forceVercelSafeNative: true, source: "postgres" }
     );
     return NextResponse.json(result, {
       headers: { "Cache-Control": "no-store" },

@@ -73,12 +73,19 @@ export async function readEncryptedJson<T>(fileName: string): Promise<T | null> 
   if (isPostgresMode()) {
     try {
       const raw = await getEncryptedConfigStore().readRawEnvelope(fileName);
-      if (!raw) return null;
-      const envelope = JSON.parse(raw) as { alg: string; iv: string; tag: string; ciphertext: string };
-      if (envelope.alg !== "aes-256-gcm") return null;
-      return JSON.parse(decryptPayload(envelope)) as T;
+      if (raw) {
+        const envelope = JSON.parse(raw) as {
+          alg: string;
+          iv: string;
+          tag: string;
+          ciphertext: string;
+        };
+        if (envelope.alg === "aes-256-gcm") {
+          return JSON.parse(decryptPayload(envelope)) as T;
+        }
+      }
     } catch {
-      return null;
+      // Fall through to local .data file (common during postgres migration).
     }
   }
   try {

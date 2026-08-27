@@ -37,7 +37,8 @@ export const BUSINESS_UNITS: BusinessUnitConfig[] = [
       primarySheet: "P - Dashboard",
       detailSheet: "Master Sheet",
       detailHeaderRow: 1,
-      sourceLabel: "Executive Dataset (Dataset Manager)",
+      sourceLabel:
+        "Local/Drive Executive XLSM · Master Sheet → P - Dashboard",
       headerRow: 7,
     },
   },
