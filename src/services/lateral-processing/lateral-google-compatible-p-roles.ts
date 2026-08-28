@@ -366,7 +366,7 @@ export async function refreshGoogleCompatiblePRoles(options?: {
       },
       media: {
         mimeType: XLSM_MIME,
-        body: createReadStream(dest),
+        body: createReadStream(/* turbopackIgnore: true */ dest),
       },
       fields: "id,name,mimeType",
       supportsAllDrives: true,
