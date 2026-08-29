@@ -256,13 +256,16 @@ export async function mergeHomeUnitWidgetsMetrics(
       candidate.posted === 0 &&
       candidate.fresh === 0;
     const previousPopulated =
+      previous != null &&
       isValidHomeUnitMetrics(previous) &&
       (previous.totals > 0 ||
         previous.active > 0 ||
         previous.posted > 0 ||
         previous.fresh > 0);
     nextUnits[businessUnitId] =
-      incomingEmpty && previousPopulated ? previous! : candidate;
+      incomingEmpty && previousPopulated && previous != null
+        ? previous
+        : candidate;
   } else if (isValidHomeUnitMetrics(previous)) {
     // Preserve last known good metrics for this unit.
     nextUnits[businessUnitId] = previous;

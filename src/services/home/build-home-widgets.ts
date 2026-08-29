@@ -442,7 +442,7 @@ function unitSnapshotNeedsBootstrap(
   unitId: BusinessUnitId
 ): boolean {
   const unit = snapshot.units[unitId];
-  if (!isValidHomeUnitMetrics(unit)) return true;
+  if (unit == null || !isValidHomeUnitMetrics(unit)) return true;
   // Treat an all-zero snapshot as empty so Home can recover from source data.
   return (
     unit.totals === 0 &&

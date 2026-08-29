@@ -564,14 +564,17 @@ export class PostgresHomeMetricsStore implements HomeMetricsStoreInterface {
         candidate.posted === 0 &&
         candidate.fresh === 0;
       const previousPopulated =
+        previous != null &&
         isValidHomeUnitMetrics(previous) &&
         (previous.totals > 0 ||
           previous.active > 0 ||
           previous.posted > 0 ||
           previous.fresh > 0);
       toWrite =
-        incomingEmpty && previousPopulated ? previous! : candidate;
-    } else if (isValidHomeUnitMetrics(previous)) {
+        incomingEmpty && previousPopulated && previous != null
+          ? previous
+          : candidate;
+    } else if (previous != null && isValidHomeUnitMetrics(previous)) {
       toWrite = previous;
     } else {
       toWrite = previous ?? candidate;
