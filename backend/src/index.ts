@@ -1,10 +1,29 @@
 import express from "express";
+import { readDatabaseIdentity, selectOne } from "./db.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
 
 app.get("/api/health", (_req, res) => {
   res.status(200).json({ ok: true });
+});
+
+app.get("/api/db-health", async (_req, res) => {
+  try {
+    await selectOne();
+    const identity = await readDatabaseIdentity();
+    res.status(200).json({
+      ok: true,
+      database: true,
+      currentDatabase: identity.currentDatabase,
+      currentUser: identity.currentUser,
+    });
+  } catch {
+    res.status(503).json({
+      ok: false,
+      database: false,
+    });
+  }
 });
 
 app.listen(port, () => {
