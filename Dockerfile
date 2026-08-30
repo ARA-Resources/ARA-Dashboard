@@ -7,7 +7,8 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
-ENV NODE_OPTIONS="--max-old-space-size=4096"
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_OPTIONS="--max-old-space-size=2048"
 RUN npm run build
 
 # 2. Main Runtime Image
