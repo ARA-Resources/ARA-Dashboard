@@ -5,6 +5,7 @@ import { createLateralSyncHistoryRouter } from "./routes/lateral-sync-history.js
 const app = express();
 const port = Number(process.env.PORT) || 3001;
 
+// Public liveness probe. Must remain unauthenticated.
 app.get("/api/health", (_req, res) => {
   res.status(200).json({ ok: true });
 });
