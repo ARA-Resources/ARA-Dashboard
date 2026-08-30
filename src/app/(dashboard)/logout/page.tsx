@@ -13,13 +13,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { apiFetch } from "@/lib/api/client";
 
 export default function LogoutPage() {
   const router = useRouter();
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    void fetch("/api/auth/logout", { method: "POST" })
+    // Same-origin /api/auth/logout → Node via Stage 8C-1 rewrite when configured.
+    void apiFetch("/api/auth/logout", { method: "POST" })
       .catch(() => undefined)
       .finally(() => {
         setDone(true);

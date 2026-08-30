@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { apiFetch } from "@/lib/api/client";
 
 type AuthMode = "signin" | "signup";
 
@@ -27,7 +28,8 @@ export function LoginForm() {
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
-    void fetch("/api/auth/login", { cache: "no-store" })
+    // Same-origin /api/auth/* → Node via Stage 8C-1 rewrite when configured.
+    void apiFetch("/api/auth/login", { cache: "no-store" })
       .then((res) => res.json())
       .then((data: { configured?: boolean }) => {
         setConfigured(Boolean(data.configured));
@@ -53,7 +55,7 @@ export function LoginForm() {
 
     setPending(true);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         mode === "signup" ? "/api/auth/signup" : "/api/auth/login",
         {
           method: "POST",

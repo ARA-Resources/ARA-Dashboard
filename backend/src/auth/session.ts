@@ -16,13 +16,12 @@ export function getSessionSecret(): string {
   return process.env.ARA_SESSION_SECRET?.trim() ?? "";
 }
 
-function getDashboardPassword(): string {
+export function getDashboardPassword(): string {
   return process.env.ARA_DASHBOARD_PASSWORD?.trim() ?? "";
 }
 
 /**
  * Matches Next.js isAuthConfigured(): both env vars must be present.
- * Stage 5B does not verify passwords; login remains on Next.js.
  */
 export function isAuthConfigured(): boolean {
   return Boolean(getSessionSecret() && getDashboardPassword());
@@ -33,6 +32,17 @@ export function parseOperatorAllowlist(): string[] {
     .split(",")
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
+}
+
+/**
+ * Matches Next.js resolveRole(): empty allowlist ⇒ everyone is operator.
+ */
+export function resolveRole(username: string): SessionRole {
+  const allowlist = parseOperatorAllowlist();
+  if (allowlist.length === 0) return "operator";
+  return allowlist.includes(username.trim().toLowerCase())
+    ? "operator"
+    : "viewer";
 }
 
 function toBase64Url(bytes: Uint8Array): string {
@@ -62,12 +72,38 @@ function safeEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 function signPayload(payloadB64: string, secret: string): string {
-  const digest = createHmac("sha256", secret).update(payloadB64, "utf8").digest();
+  const digest = createHmac("sha256", secret)
+    .update(payloadB64, "utf8")
+    .digest();
   return toBase64Url(digest);
 }
 
 function isSessionRole(value: unknown): value is SessionRole {
   return value === "viewer" || value === "operator";
+}
+
+/**
+ * Mint a session token compatible with Next.js src/lib/auth/session.ts.
+ */
+export async function createSessionToken(input: {
+  username: string;
+  role: SessionRole;
+}): Promise<string> {
+  const secret = getSessionSecret();
+  if (!secret) {
+    throw new Error("ARA_SESSION_SECRET is not configured.");
+  }
+  const session: DashboardSession = {
+    v: 1,
+    username: input.username.trim(),
+    role: input.role,
+    exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
+  };
+  const payloadB64 = toBase64Url(
+    new TextEncoder().encode(JSON.stringify(session))
+  );
+  const sig = signPayload(payloadB64, secret);
+  return `${payloadB64}.${sig}`;
 }
 
 export async function verifySessionToken(
@@ -125,4 +161,38 @@ export function readSessionCookie(cookieHeader: string | null): string | null {
     }
   }
   return null;
+}
+
+/** Secure flag matches Next: HTTPS app URL ⇒ Secure. */
+export function sessionCookieSecure(): boolean {
+  const appUrl = (
+    process.env.ARA_APP_URL?.trim() ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    ""
+  ).replace(/\/$/, "");
+  return appUrl.startsWith("https://");
+}
+
+export function buildSessionCookie(token: string): string {
+  const parts = [
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${SESSION_TTL_SECONDS}`,
+  ];
+  if (sessionCookieSecure()) parts.push("Secure");
+  return parts.join("; ");
+}
+
+export function buildExpiredSessionCookie(): string {
+  const parts = [
+    `${SESSION_COOKIE}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
+  ];
+  if (sessionCookieSecure()) parts.push("Secure");
+  return parts.join("; ");
 }

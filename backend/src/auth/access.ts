@@ -9,8 +9,9 @@ function normalizePath(pathname: string): string {
 }
 
 /**
- * Minimum access policy for currently migrated Node APIs.
- * Does not yet reproduce the full Next.js route matrix.
+ * Access policy for Node APIs.
+ * Stage 8B-1: auth endpoint public/authenticated rules match Next.js.
+ * Does not yet reproduce the full Next page/API matrix.
  */
 export function requiredAccess(pathname: string, method: string): AccessLevel {
   const path = normalizePath(pathname);
@@ -22,6 +23,20 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
   if (path === "/api/db-health" && (verb === "GET" || verb === "HEAD")) {
     return "public";
   }
+
+  if (path === "/api/auth/login" && (verb === "GET" || verb === "POST")) {
+    return "public";
+  }
+  if (path === "/api/auth/signup" && verb === "POST") {
+    return "public";
+  }
+  if (path === "/api/auth/logout" && verb === "POST") {
+    return "authenticated";
+  }
+  if (path === "/api/auth/me" && verb === "GET") {
+    return "authenticated";
+  }
+
   if (
     path === "/api/dataset/lateral/sync-history" &&
     (verb === "GET" || verb === "HEAD")

@@ -1,6 +1,7 @@
 import express from "express";
 import type { NextFunction, Request, Response } from "express";
 import { readDatabaseIdentity, selectOne } from "./db.js";
+import { createAuthRouter } from "./routes/auth.js";
 import { createLateralFiltersRouter } from "./routes/lateral-filters.js";
 import { createLateralSyncHistoryRouter } from "./routes/lateral-sync-history.js";
 
@@ -45,11 +46,15 @@ if (corsOrigins.length > 0) {
   });
 }
 
+// Required for POST /api/auth/login and /api/auth/signup JSON bodies.
+app.use(express.json({ limit: "32kb" }));
+
 // Public liveness probe. Must remain unauthenticated.
 app.get("/api/health", (_req, res) => {
   res.status(200).json({ ok: true });
 });
 
+app.use(createAuthRouter());
 app.use(createLateralSyncHistoryRouter());
 app.use(createLateralFiltersRouter());
 

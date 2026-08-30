@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useNavigationStore } from "@/stores/navigation-store";
 import type { WorkspaceId } from "@/constants/navigation";
+import { apiFetch } from "@/lib/api/client";
 
 export function useNavigation() {
   const router = useRouter();
@@ -39,7 +40,8 @@ export function useNavigation() {
   );
 
   const logout = useCallback(() => {
-    void fetch("/api/auth/logout", { method: "POST" })
+    // Same-origin /api/auth/logout → Node via Stage 8C-1 rewrite when configured.
+    void apiFetch("/api/auth/logout", { method: "POST" })
       .catch(() => undefined)
       .finally(() => {
         router.replace("/login");
