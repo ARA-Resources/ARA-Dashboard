@@ -1,5 +1,6 @@
 import express from "express";
 import { readDatabaseIdentity, selectOne } from "./db.js";
+import { createLateralFiltersRouter } from "./routes/lateral-filters.js";
 import { createLateralSyncHistoryRouter } from "./routes/lateral-sync-history.js";
 
 const app = express();
@@ -11,6 +12,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.use(createLateralSyncHistoryRouter());
+app.use(createLateralFiltersRouter());
 
 app.get("/api/db-health", async (_req, res) => {
   try {
