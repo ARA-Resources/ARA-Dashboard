@@ -54,7 +54,9 @@ export async function fetchTopOpenings(
   const endpoint =
     businessUnitId === "lateral"
       ? "/api/dataset/lateral/p-roles"
-      : `/api/excel/${businessUnitId}`;
+      : businessUnitId === "executive"
+        ? "/api/excel/executive-p-dashboard"
+        : `/api/excel/${businessUnitId}`;
   const response = await fetch(
     `${endpoint}?${params.toString()}`,
     { method: "GET", cache: "no-store" }
@@ -77,6 +79,27 @@ export async function fetchFilterSchema(
   const params = new URLSearchParams();
   if (options?.refresh) params.set("refresh", "1");
   const suffix = params.toString() ? `?${params.toString()}` : "";
+
+  if (businessUnitId === "executive") {
+    const schemaParams = new URLSearchParams(params);
+    schemaParams.set("schema", "1");
+    const response = await fetch(
+      `/api/excel/executive-p-dashboard?${schemaParams.toString()}`,
+      { method: "GET", cache: "no-store" }
+    );
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+      schema?: DynamicFilterSchema;
+    } | null;
+    if (!response.ok || !payload?.schema) {
+      throw new Error(
+        payload?.error ?? "Failed to load filters for executive"
+      );
+    }
+    return payload.schema;
+  }
+
   const response = await fetch(`/api/excel/${businessUnitId}/filters${suffix}`, {
     method: "GET",
     cache: "no-store",

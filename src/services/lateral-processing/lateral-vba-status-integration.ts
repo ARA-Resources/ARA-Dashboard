@@ -7,8 +7,10 @@
  * ─────────────────────────────────────────────────────────────────────────
  * WHAT THE DATASET BACKEND HANDLES
  * ─────────────────────────────────────────────────────────────────────────
- *   JR in New + Master, existing K ≠ Closed  → Column K = Active
  *   JR in New + Master, existing K = Closed  → Column K = Reopen + Date DD-MM-YYYY
+ *   JR in New + Master, existing K = New     → keep New (manual change only)
+ *   JR in New + Master, existing K = Reopen  → keep Reopen (manual change only)
+ *   JR in New + Master, existing K otherwise → Column K = Active
  *   JR in Master, not in New                 → Column K = Closed (keep row)
  *   JR in New, not in Master                 → append row + Column K = New
  *

@@ -1,11 +1,12 @@
 /**
- * Refresh existing P-Roles PivotTable1 after Posted matching (Step 4).
+ * Refresh P-Roles on the staged local XLSM after Posted matching (pipeline step 19).
  *
- * - Uses Excel COM on the staged local XLSM
- * - Does NOT rebuild/delete PivotTable1
- * - Does NOT modify Master Sheet data (Column K preserved)
- * - Extends pivot source to current Master Sheet A1:M{lastRow}
- * - Re-applies JML numeric order after RefreshTable
+ * Windows + Excel:
+ *   - COM refresh of existing PivotTable1 (legacy production path)
+ *
+ * Linux / headless (Docker, Vercel, etc.):
+ *   - Google-compatible formula display inject via openpyxl/XML (no Excel COM)
+ *   - Does NOT modify Master Sheet data (Column K preserved)
  */
 
 import fs from "node:fs/promises";
@@ -120,6 +121,78 @@ finally:
   }
 }
 
+function pipelinePrefersExcelCom(): boolean {
+  const raw = (process.env.ARA_P_ROLES_PIPELINE ?? "").trim().toLowerCase();
+  return raw === "excel" || raw === "com";
+}
+
+/**
+ * Linux-safe P-Roles update: inject COUNTIFS display formulas from Master Sheet feed.
+ * Used when Excel COM is unavailable (Docker VPS, etc.).
+ */
+async function refreshPRolesViaGoogleCompatibleDisplay(
+  workbookPath: string
+): Promise<PRolesPivotRefreshResult> {
+  const workDir = path.join(os.tmpdir(), `p-roles-linux-refresh-${Date.now()}`);
+  const outputPath = path.join(workDir, "staged-with-proles.xlsm");
+
+  try {
+    await fs.mkdir(workDir, { recursive: true });
+    const { refreshGoogleCompatiblePRoles } = await import(
+      "@/services/lateral-processing/lateral-google-compatible-p-roles"
+    );
+    const result = await refreshGoogleCompatiblePRoles({
+      localXlsmPath: workbookPath,
+      outputPath,
+      commitToProduction: false,
+    });
+    await fs.copyFile(outputPath, workbookPath);
+
+    const jmlRenderedHeaders = result.jmlOrder;
+    const canonical = [
+      "8-Associate Manager",
+      "9-Team Lead/Consultant",
+      "10-Senior Analyst",
+      "11-Analyst",
+      "12-Associate",
+    ];
+    const jmlOrderOk = canonical.every((label, index) => jmlRenderedHeaders[index] === label);
+
+    return {
+      ok: true,
+      pivotName: "Google-compatible P-Roles display (headless)",
+      pivotCount: 1,
+      sourceA1: `'Master Sheet'!A1:M${result.masterRowCount + 1}`,
+      postedFilterItems: ["All", "-", "Yes"],
+      jmlOrderOk,
+      jmlRenderedHeaders,
+      masterSheetRows: result.masterRowCount,
+      postedYesCount: result.independent.postedYesCount,
+      postedDashCount: result.independent.postedDashCount,
+      columnKModified: false,
+      masterSheetModified: false,
+      excelVersion: null,
+      notes: [
+        `Headless P-Roles refresh (no Excel COM) on ${process.platform}.`,
+        `Skill/category pairs=${result.pairCount}; masterRows=${result.masterRowCount}.`,
+        "Pivot COM refresh skipped; formula display layer rebuilt from Master Sheet.",
+      ],
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof Error
+          ? `Headless P-Roles refresh failed: ${err.message}`
+          : "Headless P-Roles refresh failed unexpectedly.",
+      columnKModified: false,
+      masterSheetModified: false,
+    };
+  } finally {
+    await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 /**
  * Refresh the only PivotTable on P-Roles of the staged workbook in place.
  * COM Name may be "P-Roles" or "PivotTable1"; discovery is by count === 1.
@@ -141,13 +214,16 @@ export async function refreshPRolesPivotOnStagedWorkbook(options: {
 
   const env = await environmentSupportsExcelCom();
   if (!env.ok) {
-    return {
-      ok: false,
-      error: env.reason,
-      columnKModified: false,
-      masterSheetModified: false,
-      unavailable: true,
-    };
+    if (pipelinePrefersExcelCom()) {
+      return {
+        ok: false,
+        error: env.reason,
+        columnKModified: false,
+        masterSheetModified: false,
+        unavailable: true,
+      };
+    }
+    return refreshPRolesViaGoogleCompatibleDisplay(workbookPath);
   }
 
   const scriptPath = path.join(

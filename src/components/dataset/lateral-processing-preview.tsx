@@ -387,6 +387,9 @@ function ReconciliationReportView({
   macroResult?: MacroExecutionResult | null;
 }) {
   const { summary, details } = report;
+  const changeDetails = details.filter(
+    (row: ReconciliationDetailRow) => row.action !== "Unchanged"
+  );
   const busy = saving || cancelling;
 
   return (
@@ -479,7 +482,7 @@ function ReconciliationReportView({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {details.length === 0 ? (
+              {changeDetails.length === 0 ? (
                 <TableRow>
                   <TableCell
                     colSpan={6}
@@ -489,7 +492,7 @@ function ReconciliationReportView({
                   </TableCell>
                 </TableRow>
               ) : (
-                details.map((row: ReconciliationDetailRow) => (
+                changeDetails.map((row: ReconciliationDetailRow) => (
                   <TableRow key={`${row.jobRequisitionId}-${row.action}`}>
                     <TableCell className="font-medium font-mono text-xs">
                       {row.jobRequisitionId}
@@ -514,7 +517,9 @@ function ReconciliationReportView({
                           row.action === "Reopened" &&
                             "bg-amber-500/10 text-amber-700 dark:text-amber-300",
                           row.action === "Closed" &&
-                            "bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                            "bg-rose-500/10 text-rose-700 dark:text-rose-300",
+                          row.action === "Unchanged" &&
+                            "bg-muted text-muted-foreground"
                         )}
                       >
                         {row.action}
@@ -527,8 +532,8 @@ function ReconciliationReportView({
           </Table>
         </div>
         <p className="text-xs text-muted-foreground">
-          {details.length.toLocaleString()} change
-          {details.length === 1 ? "" : "s"} listed.
+          {changeDetails.length.toLocaleString()} change
+          {changeDetails.length === 1 ? "" : "s"} listed.
         </p>
       </section>
 

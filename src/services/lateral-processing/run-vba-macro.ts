@@ -485,6 +485,15 @@ export async function neutralizeConflictingStatusMacroInWorkbook(
     };
   }
 
+  if (process.platform !== "win32") {
+    return {
+      neutralized: false,
+      note:
+        "VBA neutralization skipped on non-Windows host. Conflicting status macro was NOT run; Dataset Column K status preserved.",
+      excelVersion: null,
+    };
+  }
+
   const stub = buildSafeStatusMacroStubSource();
   // Strip Attribute line for CodeModule.AddFromString (Excel adds module name separately)
   const stubBody = stub

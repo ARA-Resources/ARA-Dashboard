@@ -52,8 +52,13 @@ async function main() {
   if (!POSTGRES_URL) {
     console.error(
       "\n[db:migrate] ERROR: POSTGRES_URL is not set.\n" +
+<<<<<<< HEAD
       "Set POSTGRES_URL in your environment or .env.local before running migrations.\n" +
       "Example: POSTGRES_URL=postgresql://user:pass@localhost:5432/ara_dev\n"
+=======
+        "Set POSTGRES_URL in your environment or .env.local before running migrations.\n" +
+        "Example: POSTGRES_URL=postgresql://user:pass@localhost:5432/ara_dev\n"
+>>>>>>> a35563e26cb9ba3f960bb269a8104d704896ca34
     );
     process.exit(1);
   }
@@ -65,7 +70,11 @@ async function main() {
     connect_timeout: 10,
     ssl:
       POSTGRES_URL.includes("localhost") ||
+<<<<<<< HEAD
         POSTGRES_URL.includes("127.0.0.1")
+=======
+      POSTGRES_URL.includes("127.0.0.1")
+>>>>>>> a35563e26cb9ba3f960bb269a8104d704896ca34
         ? false
         : "require",
   });
@@ -139,4 +148,8 @@ async function main() {
 main().catch((err) => {
   console.error("[db:migrate] Unexpected error:", err);
   process.exit(1);
+<<<<<<< HEAD
 });
+=======
+});
+>>>>>>> a35563e26cb9ba3f960bb269a8104d704896ca34

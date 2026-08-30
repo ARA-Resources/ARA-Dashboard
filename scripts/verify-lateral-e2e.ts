@@ -294,6 +294,49 @@ async function test3ReopenJr() {
   );
 }
 
+async function testKeepNewAndReopen() {
+  const input = await buildScenarioWorkbook({
+    masterRows: [
+      { date: "10-07-2026", jr: "JR-KEEP-NEW", status: "New" },
+      { date: "11-07-2026", jr: "JR-KEEP-REOPEN", status: "Reopen" },
+    ],
+    newRows: [
+      { date: today, jr: "JR-KEEP-NEW" },
+      { date: today, jr: "JR-KEEP-REOPEN" },
+    ],
+  });
+  const result = await runLocalReconcile(input);
+  if (!result.ok) {
+    record(
+      "TEST 3B",
+      "KEEP NEW/REOPEN",
+      false,
+      result.error || "reconcile failed"
+    );
+    return;
+  }
+  const statuses = await readMasterStatuses(result.outPath);
+  const neu = statuses.get("JR-KEEP-NEW");
+  const reopen = statuses.get("JR-KEEP-REOPEN");
+  const ok =
+    neu?.status === "New" &&
+    neu.date === "10-07-2026" &&
+    reopen?.status === "Reopen" &&
+    reopen.date === "11-07-2026" &&
+    statuses.size === 2 &&
+    (result.summary?.activeUnchanged ?? 0) === 0 &&
+    (result.summary?.reopenedRequisitions ?? 0) === 0 &&
+    (result.summary?.newRequisitions ?? 0) === 0;
+  record(
+    "TEST 3B",
+    "KEEP NEW/REOPEN",
+    ok,
+    ok
+      ? "New and Reopen stayed in Column K; dates unchanged"
+      : `new=${neu?.status}/${neu?.date} reopen=${reopen?.status}/${reopen?.date}`
+  );
+}
+
 async function test4ClosedJr() {
   const input = await buildScenarioWorkbook({
     masterRows: [
@@ -671,6 +714,7 @@ async function main() {
   await test1NewJr();
   await test2ActiveJr();
   await test3ReopenJr();
+  await testKeepNewAndReopen();
   await test4ClosedJr();
   test5NoNewEmail();
   test6DriveFailure();

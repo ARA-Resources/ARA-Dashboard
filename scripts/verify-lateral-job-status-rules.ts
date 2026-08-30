@@ -28,7 +28,18 @@ const activeFromNew = resolveLateralJobStatus({
   existsInMasterSheet: true,
   existingMasterStatus: "New",
 });
-assert(activeFromNew?.status === "Active", "Rule 1 Active when not Closed");
+assert(activeFromNew?.status === "New", "New stays New until changed by hand");
+assert(activeFromNew?.action === "Unchanged", "New keep is Unchanged");
+assert(activeFromNew?.updateDate === false, "New keep no date change");
+
+const keepReopen = resolveLateralJobStatus({
+  existsInNewSheet: true,
+  existsInMasterSheet: true,
+  existingMasterStatus: "Reopen",
+});
+assert(keepReopen?.status === "Reopen", "Reopen stays Reopen until changed by hand");
+assert(keepReopen?.action === "Unchanged", "Reopen keep is Unchanged");
+assert(keepReopen?.updateDate === false, "Reopen keep no date rewrite");
 
 const activeFromEmpty = resolveLateralJobStatus({
   existsInNewSheet: true,

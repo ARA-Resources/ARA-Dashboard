@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+/**
+ * GET /api/home/widgets
+ * Phase 8.4: When ARA_PERSISTENCE=postgres, KPIs come from `home_metrics`
+ * only (no Drive/Excel bootstrap on this read path).
+ */
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);

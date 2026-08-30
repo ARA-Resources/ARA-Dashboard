@@ -139,6 +139,77 @@ const badClosed = validateCompleteStatusReconciliation({
 });
 assert(!badClosed.ok, "fail Closed Column K");
 
+// Kept New (still in both sheets) must not be promoted to Active
+const keptNew = validateCompleteStatusReconciliation({
+  todayDDMMYYYY: today,
+  masterRows: [
+    {
+      jobRequisitionId: "JR-N",
+      masterRowNumber: 5,
+      presentInNewSheet: true,
+      presentInMasterSheetBefore: true,
+      previousStatus: "New",
+      finalStatus: "New",
+      finalDate: "01-01-2026",
+      reportedAction: "Unchanged",
+    },
+  ],
+});
+assert(keptNew.ok, `kept New failed: ${keptNew.reasons.join("; ")}`);
+assert(keptNew.statusCounts.New === 1, "kept New count");
+
+const promotedNew = validateCompleteStatusReconciliation({
+  todayDDMMYYYY: today,
+  masterRows: [
+    {
+      jobRequisitionId: "JR-N",
+      masterRowNumber: 5,
+      presentInNewSheet: true,
+      presentInMasterSheetBefore: true,
+      previousStatus: "New",
+      finalStatus: "Active",
+      finalDate: "01-01-2026",
+      reportedAction: "Activated",
+    },
+  ],
+});
+assert(!promotedNew.ok, "fail New promoted to Active");
+
+const keptReopen = validateCompleteStatusReconciliation({
+  todayDDMMYYYY: today,
+  masterRows: [
+    {
+      jobRequisitionId: "JR-R",
+      masterRowNumber: 4,
+      presentInNewSheet: true,
+      presentInMasterSheetBefore: true,
+      previousStatus: "Reopen",
+      finalStatus: "Reopen",
+      finalDate: "01-01-2026",
+      reportedAction: "Unchanged",
+    },
+  ],
+});
+assert(keptReopen.ok, `kept Reopen failed: ${keptReopen.reasons.join("; ")}`);
+assert(keptReopen.checks.reopenDatesAreToday, "kept Reopen does not require today's date");
+
+const promotedReopen = validateCompleteStatusReconciliation({
+  todayDDMMYYYY: today,
+  masterRows: [
+    {
+      jobRequisitionId: "JR-R",
+      masterRowNumber: 4,
+      presentInNewSheet: true,
+      presentInMasterSheetBefore: true,
+      previousStatus: "Reopen",
+      finalStatus: "Active",
+      finalDate: "01-01-2026",
+      reportedAction: "Activated",
+    },
+  ],
+});
+assert(!promotedReopen.ok, "fail Reopen promoted to Active");
+
 // Fail: Active without Column K = Active
 const badActive = validateCompleteStatusReconciliation({
   todayDDMMYYYY: today,
@@ -148,7 +219,7 @@ const badActive = validateCompleteStatusReconciliation({
       masterRowNumber: 2,
       presentInNewSheet: true,
       presentInMasterSheetBefore: true,
-      previousStatus: "New",
+      previousStatus: "Active",
       finalStatus: "New",
       finalDate: "01-01-2026",
       reportedAction: "Activated",

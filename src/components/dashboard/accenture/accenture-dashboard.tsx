@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { BusinessUnitSelect } from "@/components/dashboard/accenture/business-unit-select";
 import { OpeningsTableToolbar } from "@/components/dashboard/accenture/openings-table-toolbar";
 import { OpeningsDataTable } from "@/components/dashboard/accenture/openings-data-table";
+import { ExecutivePDashboardTable } from "@/components/dashboard/accenture/executive";
 import { DEFAULT_DASHBOARD_BUSINESS_UNIT } from "@/constants/accenture-dashboard";
 import { getBusinessUnitById } from "@/constants/business-units";
 import {
@@ -170,12 +171,18 @@ export function AccentureDashboard() {
   }
 
   const title =
-    filters.topN === null ? "Openings" : `Top ${filters.topN} Openings`;
+    businessUnit === "executive"
+      ? "P - Dashboard"
+      : filters.topN === null
+        ? "Openings"
+        : `Top ${filters.topN} Openings`;
 
   const description = unit
-    ? `${unit.name} · Dataset Manager · Filters from: ${
-        unit.excel.detailSheet ?? unit.excel.primarySheet
-      }`
+    ? businessUnit === "executive"
+      ? `${unit.name} · Master Sheet → P - Dashboard (Count of Level)`
+      : `${unit.name} · Dataset Manager · Filters from: ${
+          unit.excel.detailSheet ?? unit.excel.primarySheet
+        }`
     : "Select a business unit to load Excel openings.";
 
   const activeFilterChips = Object.entries(filters.columnFilters).flatMap(
@@ -334,14 +341,25 @@ export function AccentureDashboard() {
             />
           </CardHeader>
           <CardContent className="pt-4">
-            <OpeningsDataTable
-              key={`${businessUnit}-${JSON.stringify(filters)}`}
-              headers={data?.headers ?? []}
-              data={data?.rows ?? []}
-              globalFilter={search}
-              isLoading={isLoading}
-              errorMessage={error instanceof Error ? error.message : null}
-            />
+            {businessUnit === "executive" ? (
+              <ExecutivePDashboardTable
+                key={`${businessUnit}-${JSON.stringify(filters)}`}
+                headers={data?.headers ?? []}
+                data={data?.rows ?? []}
+                globalFilter={search}
+                isLoading={isLoading}
+                errorMessage={error instanceof Error ? error.message : null}
+              />
+            ) : (
+              <OpeningsDataTable
+                key={`${businessUnit}-${JSON.stringify(filters)}`}
+                headers={data?.headers ?? []}
+                data={data?.rows ?? []}
+                globalFilter={search}
+                isLoading={isLoading}
+                errorMessage={error instanceof Error ? error.message : null}
+              />
+            )}
           </CardContent>
         </Card>
       </FadeIn>

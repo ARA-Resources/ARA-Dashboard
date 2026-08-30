@@ -25,7 +25,27 @@ def q(tag: str) -> str:
     return f"{{{NS_MAIN}}}{tag}"
 
 
+def zip_part_from_rel_target(target: str, names: set[str]) -> str:
+    stripped = (target or "").replace("\\", "/").lstrip("/")
+    candidates: list[str] = []
+    for c in (stripped, f"xl/{stripped}"):
+        c = c.lstrip("/")
+        if c and c not in candidates:
+            candidates.append(c)
+        if c.startswith("xl/xl/"):
+            fixed = c[len("xl/") :]
+            if fixed not in candidates:
+                candidates.append(fixed)
+    for c in candidates:
+        if c in names:
+            return c
+    raise RuntimeError(
+        f"P-Roles sheet part not in workbook zip. rel Target={target!r}; tried={candidates}"
+    )
+
+
 def find_proles_sheet_part(z: zipfile.ZipFile) -> str:
+    names = set(z.namelist())
     rel_root = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
     rid_to_target = {rel.attrib.get("Id"): rel.attrib.get("Target") for rel in rel_root}
     wb_root = ET.fromstring(z.read("xl/workbook.xml"))
@@ -38,9 +58,7 @@ def find_proles_sheet_part(z: zipfile.ZipFile) -> str:
             target = rid_to_target.get(rid)
             if not target:
                 raise RuntimeError("P-Roles rId target missing")
-            if target.startswith("xl/"):
-                return target
-            return "xl/" + target.lstrip("/")
+            return zip_part_from_rel_target(target, names)
     raise RuntimeError("P-Roles sheet not found")
 
 
@@ -129,7 +147,9 @@ def build_rows(pairs: list[list[str]], markets: list[str]) -> str:
     chunks.append(row_xml(11, [inline("A11", "New"), boolean("B11", True)] + [empty(f"{c}11") for c in "CDEFGH"] + z_for(11)))
     chunks.append(row_xml(12, [inline("A12", "Reopen"), boolean("B12", True)] + [empty(f"{c}12") for c in "CDEFGH"] + z_for(12)))
     chunks.append(row_xml(13, [inline("A13", "Closed"), boolean("B13", False)] + [empty(f"{c}13") for c in "CDEFGH"] + z_for(13)))
-    chunks.append(row_xml(14, [inline("A14", "Posted"), inline("B14", "All")] + [empty(f"{c}14") for c in "CDEFGH"] + z_for(14)))
+    # Phase 7 / production default: P-Roles opens on Posted=Yes.
+    # The selector remains available for All / - / Yes.
+    chunks.append(row_xml(14, [inline("A14", "Posted"), inline("B14", "Yes")] + [empty(f"{c}14") for c in "CDEFGH"] + z_for(14)))
     chunks.append(row_xml(15, [inline("A15", "Market Map"), inline("B15", "All")] + [empty(f"{c}15") for c in "CDEFGH"] + z_for(15)))
     chunks.append(
         row_xml(
@@ -217,6 +237,13 @@ def inject(src: str, spec_path: str, dest: str) -> dict:
     pairs = spec["pairs"]
     markets = spec["markets"]
     with zipfile.ZipFile(src, "r") as zin:
+        names = set(zin.namelist())
+
+        if "xl/vbaProject.bin" not in names:
+            raise RuntimeError(
+                "Source XLSM does not contain xl/vbaProject.bin"
+            )
+
         part = find_proles_sheet_part(zin)
         original = zin.read(part)
         new_xml = inject_sheet_xml(original, pairs, markets)
@@ -224,6 +251,12 @@ def inject(src: str, spec_path: str, dest: str) -> dict:
             for info in zin.infolist():
                 data = new_xml if info.filename == part else zin.read(info.filename)
                 zout.writestr(info, data)
+    with zipfile.ZipFile(dest, "r") as verify:
+        if "xl/vbaProject.bin" not in set(verify.namelist()):
+            raise RuntimeError(
+                "FATAL: VBA project disappeared during P-Roles injection."
+            )
+
     return {
         "ok": True,
         "sheetPart": part,
@@ -241,4 +274,3 @@ if __name__ == "__main__":
         print(json.dumps(inject(sys.argv[1], sys.argv[2], sys.argv[3])))
     except Exception as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
-        raise

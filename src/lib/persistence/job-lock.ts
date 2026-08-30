@@ -26,6 +26,7 @@
  *   still provides single-process protection).
  */
 
+import type postgres from "postgres";
 import { isPostgresMode } from "./persistence-mode";
 import { getDbClient } from "./db-client";
 
@@ -42,21 +43,16 @@ export interface JobLockResult {
  */
 const LATERAL_JOB_LOCK_KEY = 7482910234; // stable, arbitrary prime-like number
 
-export async function acquireLateralJobLock(): Promise<JobLockResult> {
-  if (!isPostgresMode()) {
-    // File mode: no distributed lock needed; in-memory `running` flag in scheduler handles single-process.
-    return {
-      acquired: true,
-      message: "file-mode: no distributed lock required",
-      release: async () => { /* no-op */ },
-    };
-  }
+type SqlClient = ReturnType<typeof postgres>;
 
-  const sql = getDbClient();
-
-  // pg_advisory_lock uses a persistent connection for the duration of the lock.
-  // We use pg_try_advisory_lock (non-blocking) to avoid hanging forever if another
-  // worker holds the lock.
+/**
+ * Acquire the shared Lateral advisory lock on a specific postgres.js client.
+ * Prefer this when the caller already owns the DB connection (CLI / sync jobs)
+ * so lock + transaction share the same session.
+ */
+export async function acquireLateralJobLockOn(
+  sql: SqlClient
+): Promise<JobLockResult> {
   const result = await sql<{ acquired: boolean }[]>`
     SELECT pg_try_advisory_lock(${LATERAL_JOB_LOCK_KEY}) as acquired
   `;
@@ -66,8 +62,11 @@ export async function acquireLateralJobLock(): Promise<JobLockResult> {
   if (!acquired) {
     return {
       acquired: false,
-      message: "Lateral job is already running on another instance. This request has been safely rejected.",
-      release: async () => { /* nothing to release */ },
+      message:
+        "Lateral job is already running on another instance. This request has been safely rejected.",
+      release: async () => {
+        /* nothing to release */
+      },
     };
   }
 
@@ -82,4 +81,19 @@ export async function acquireLateralJobLock(): Promise<JobLockResult> {
       }
     },
   };
+}
+
+export async function acquireLateralJobLock(): Promise<JobLockResult> {
+  if (!isPostgresMode()) {
+    // File mode: no distributed lock needed; in-memory `running` flag in scheduler handles single-process.
+    return {
+      acquired: true,
+      message: "file-mode: no distributed lock required",
+      release: async () => {
+        /* no-op */
+      },
+    };
+  }
+
+  return acquireLateralJobLockOn(getDbClient());
 }

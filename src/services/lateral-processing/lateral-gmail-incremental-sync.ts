@@ -86,15 +86,37 @@ export interface LateralPendingCheckpointAdvance {
   receivedAtMs: number;
   attachmentFilename: string;
   driveFileId: string;
+  /**
+   * Local temp path of the downloaded workbook (Phase 3A staging handoff).
+   * Present after successful download + ATCI DS read.
+   */
+  localWorkbookPath?: string;
   /** Display-only (no tokens) */
   sender?: string;
   subject?: string;
+}
+
+/** full_pipeline = Run All path; staging_only = Phase 3A (skip Master/New Sheet). */
+export type LateralGmailSyncPurpose = "full_pipeline" | "staging_only";
+
+export interface LateralGmailIncrementalSyncOptions {
+  purpose?: LateralGmailSyncPurpose;
+  /**
+   * Cap how many matched emails to download/upload in this run.
+   * When set with processNewestFirst, newest emails are preferred.
+   */
+  maxUploads?: number;
+  /** Prefer newest-first queue order (default chronological oldest-first). */
+  processNewestFirst?: boolean;
 }
 
 export interface LateralIncrementalSyncResult {
   checkpointBefore: LateralGmailCheckpoint;
   checkpointAfter: LateralGmailCheckpoint;
   query: string;
+  /** Enabled Lateral keyword values used to build the Gmail search */
+  gmailKeywords: string[];
+  syncPurpose: LateralGmailSyncPurpose;
   scannedMessages: number;
   matchedAttachments: number;
   processedCount: number;
@@ -106,8 +128,9 @@ export interface LateralIncrementalSyncResult {
   warnings: string[];
   message: string;
   /**
-   * Checkpoint is NOT advanced here. Advance only after the configured Master
-   * Workbook Drive update succeeds (see executeLateralDatasetJob).
+   * Checkpoint is NOT advanced here.
+   * - full_pipeline: advance only after Master Drive update (executeLateralDatasetJob)
+   * - staging_only: advance only after lateral_staging import succeeds
    */
   pendingCheckpointAdvances: LateralPendingCheckpointAdvance[];
   /** Last successful source workbook read in this run (if any) */
@@ -143,10 +166,16 @@ async function appendLog(entry: Record<string, unknown>) {
  * - Multiple attachments → explicit Lateral criteria selection (logged)
  * - Multiple emails → chronological order (oldest first)
  * - Preserves ORIGINAL attachment filename (never renames)
- * - Does NOT advance Gmail checkpoint here — that happens only after the
- *   configured Master Workbook Drive update succeeds
+ * - Does NOT advance Gmail checkpoint here
+ * - purpose=full_pipeline: Master/New Sheet gates; checkpoint after Master save
+ * - purpose=staging_only: skips Master/New Sheet; checkpoint after staging import
  */
-export async function runLateralGmailIncrementalSync(): Promise<LateralIncrementalSyncResult> {
+export async function runLateralGmailIncrementalSync(
+  options?: LateralGmailIncrementalSyncOptions
+): Promise<LateralIncrementalSyncResult> {
+  const syncPurpose: LateralGmailSyncPurpose =
+    options?.purpose ?? "full_pipeline";
+
   const setup = await readDatasetSetup();
   if (!setup) {
     throw new Error("Complete Dataset setup before Lateral Gmail sync.");
@@ -168,6 +197,11 @@ export async function runLateralGmailIncrementalSync(): Promise<LateralIncrement
   const processingSetup = await readLateralDataProcessingSetup();
   const sourceWorksheetName =
     processingSetup?.sourceWorksheet?.trim() || DEFAULT_LATERAL_SOURCE_WORKSHEET;
+
+  const gmailKeywords = (lateral.keywords ?? [])
+    .filter((k) => k.enabled !== false && String(k.value ?? "").trim())
+    .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999))
+    .map((k) => String(k.value).trim());
 
   const afterMs =
     checkpointBefore.receivedAtMs ??
@@ -205,9 +239,11 @@ export async function runLateralGmailIncrementalSync(): Promise<LateralIncrement
     at: new Date().toISOString(),
     event: "lateral_excel_discovery_start",
     query,
+    syncPurpose,
+    gmailKeywords,
     checkpointMessageId: checkpointBefore.messageId,
     checkpointReceivedAtMs: checkpointBefore.receivedAtMs,
-    keywordCount: lateral.keywords?.filter((k) => k.enabled).length ?? 0,
+    keywordCount: gmailKeywords.length,
   });
 
   const list = await gmail.users.messages.list({
@@ -264,7 +300,20 @@ export async function runLateralGmailIncrementalSync(): Promise<LateralIncrement
   }
 
   // Chronological unless configuration later specifies another order.
-  const queue = sortLateralDiscoveriesChronologically(discoveries);
+  let queue = sortLateralDiscoveriesChronologically(discoveries);
+  if (options?.processNewestFirst) {
+    queue = [...queue].reverse();
+  }
+  if (
+    typeof options?.maxUploads === "number" &&
+    options.maxUploads > 0 &&
+    queue.length > options.maxUploads
+  ) {
+    warnings.push(
+      `Limiting Gmail uploads to newest/first ${options.maxUploads} of ${queue.length} matched email(s).`
+    );
+    queue = queue.slice(0, options.maxUploads);
+  }
 
   let checkpointAfter = checkpointBefore;
   let uploadedCount = 0;
@@ -514,9 +563,17 @@ export async function runLateralGmailIncrementalSync(): Promise<LateralIncrement
       }
 
       // Master Workbook discovery (read-only): exact XLSM + Master Sheet + New Sheet.
-      // Required before checkpoint whenever Lateral Dataset Setup is configured.
+      // Required for full_pipeline before checkpoint. Skipped for staging_only (Phase 3A).
       let masterDiscovery: LateralMasterDiscoveryResult | null = null;
-      if (!processingSetup) {
+      if (syncPurpose === "staging_only") {
+        await appendLog({
+          at: new Date().toISOString(),
+          event: "lateral_staging_only_skip_master_discovery",
+          messageId: row.messageId,
+          reason:
+            "Phase 3A staging import does not touch Master Workbook / New Sheet.",
+        });
+      } else if (!processingSetup) {
         warnings.push(
           "Lateral Dataset Setup not configured — skipped Master Workbook discovery."
         );
@@ -690,7 +747,8 @@ export async function runLateralGmailIncrementalSync(): Promise<LateralIncrement
         }
       }
 
-      // Defer checkpoint until Master Workbook Drive update succeeds.
+      // Defer checkpoint until downstream processing succeeds
+      // (Master Drive save for full_pipeline; staging import for staging_only).
       pendingCheckpointAdvances.push({
         messageId: row.messageId,
         attachmentId: row.attachmentId,
@@ -698,6 +756,7 @@ export async function runLateralGmailIncrementalSync(): Promise<LateralIncrement
         receivedAtMs: row.receivedAtMs,
         attachmentFilename: originalFilename,
         driveFileId,
+        localWorkbookPath: tempPath,
         sender: discovery.sender,
         subject: discovery.subject,
       });
@@ -721,12 +780,16 @@ export async function runLateralGmailIncrementalSync(): Promise<LateralIncrement
       });
       await appendLog({
         at: new Date().toISOString(),
-        event: "lateral_gmail_uploaded_pending_master_save",
+        event:
+          syncPurpose === "staging_only"
+            ? "lateral_gmail_uploaded_pending_staging_import"
+            : "lateral_gmail_uploaded_pending_master_save",
         messageId: row.messageId,
         subject: discovery.subject,
         attachmentFilename: originalFilename,
         preservedFilename: originalFilename,
         driveFileId,
+        localWorkbookPath: tempPath,
         receivedAtMs: row.receivedAtMs,
         selectionReason: discovery.selection.selectionReason,
         sourceWorksheet: sourceRead.worksheetName,
@@ -737,6 +800,7 @@ export async function runLateralGmailIncrementalSync(): Promise<LateralIncrement
         masterSheet: masterDiscovery?.masterSheet ?? null,
         newSheet: masterDiscovery?.newSheet ?? null,
         checkpointDeferred: true,
+        syncPurpose,
       });
     } catch (error) {
       failedCount += 1;
@@ -777,6 +841,10 @@ export async function runLateralGmailIncrementalSync(): Promise<LateralIncrement
   const structureFailed = items.some(
     (item) => item.status === "new_sheet_structure_failed"
   );
+  const deferredHint =
+    syncPurpose === "staging_only"
+      ? "Gmail checkpoint deferred until lateral_staging import succeeds."
+      : "Gmail checkpoint deferred until Master Workbook Drive update succeeds.";
   const message =
     uploadedCount === 0 && failedCount === 0
       ? `No new Lateral Excel emails after checkpoint${
@@ -794,13 +862,17 @@ export async function runLateralGmailIncrementalSync(): Promise<LateralIncrement
                 ?.error || "Master Workbook discovery failed."
             : stoppedOnFailure
               ? `Uploaded ${uploadedCount} Lateral file(s); stopped on failure — Gmail checkpoint NOT advanced. Failed: ${failedCount}.`
-              : lastSourceRead && lastMasterDiscovery
-                ? `Uploaded ${uploadedCount} Lateral Excel file(s); read "${lastSourceRead.worksheetName}" (${lastSourceRead.rowCount}×${lastSourceRead.colCount}); Master "${lastMasterDiscovery.fileName}" validated (${lastMasterDiscovery.masterSheet}, ${lastMasterDiscovery.newSheet}); New Sheet headers OK. Gmail checkpoint deferred until Master Workbook Drive update succeeds.`
-                : `Uploaded ${uploadedCount} Lateral Excel file(s) from Gmail (incremental). Gmail checkpoint deferred until Master Workbook Drive update succeeds.`;
+              : syncPurpose === "staging_only" && lastSourceRead
+                ? `Uploaded ${uploadedCount} Lateral Excel file(s); read "${lastSourceRead.worksheetName}" (${lastSourceRead.rowCount}×${lastSourceRead.colCount}). ${deferredHint}`
+                : lastSourceRead && lastMasterDiscovery
+                  ? `Uploaded ${uploadedCount} Lateral Excel file(s); read "${lastSourceRead.worksheetName}" (${lastSourceRead.rowCount}×${lastSourceRead.colCount}); Master "${lastMasterDiscovery.fileName}" validated (${lastMasterDiscovery.masterSheet}, ${lastMasterDiscovery.newSheet}); New Sheet headers OK. ${deferredHint}`
+                  : `Uploaded ${uploadedCount} Lateral Excel file(s) from Gmail (incremental). ${deferredHint}`;
 
   await appendLog({
     at: new Date().toISOString(),
     event: "lateral_excel_discovery_complete",
+    syncPurpose,
+    gmailKeywords,
     uploadedCount,
     failedCount,
     stoppedOnFailure,
@@ -815,6 +887,8 @@ export async function runLateralGmailIncrementalSync(): Promise<LateralIncrement
     checkpointBefore,
     checkpointAfter,
     query,
+    gmailKeywords,
+    syncPurpose,
     scannedMessages: messageRefs.length,
     matchedAttachments: queue.length,
     processedCount,

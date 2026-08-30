@@ -28,7 +28,12 @@ export const MASTER_JOB_STATUS_HEADER = "Job Status";
 export const JOB_REQUISITION_ID_HEADER = "Job Requisition ID";
 export const MASTER_DATE_HEADER = "Date";
 
-export type LateralStatusAction = "Activated" | "Reopened" | "Closed" | "Added";
+export type LateralStatusAction =
+  | "Activated"
+  | "Reopened"
+  | "Closed"
+  | "Added"
+  | "Unchanged";
 
 export interface LateralStatusResolution {
   status: LateralMasterJobStatus;
@@ -84,7 +89,24 @@ export function resolveLateralJobStatus(options: {
         createRow: false,
       };
     }
-    // RULE 1 — ACTIVE (existing is NOT Closed)
+    // New and Reopen stay until a person changes Column K.
+    if (existing === "New") {
+      return {
+        status: "New",
+        action: "Unchanged",
+        updateDate: false,
+        createRow: false,
+      };
+    }
+    if (existing === "Reopen") {
+      return {
+        status: "Reopen",
+        action: "Unchanged",
+        updateDate: false,
+        createRow: false,
+      };
+    }
+    // RULE 1 — ACTIVE (existing is not Closed / New / Reopen)
     return {
       status: "Active",
       action: "Activated",

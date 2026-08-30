@@ -67,6 +67,14 @@ export const COMPANIES: CompanyConfig[] = [
         label: "Executive",
         slug: "executive",
         businessUnitId: "executive",
+        children: [
+          {
+            id: "master-sheet",
+            label: "Master Sheet",
+            slug: "master-sheet",
+            businessUnitId: "executive",
+          },
+        ],
       },
       {
         id: "consulting",

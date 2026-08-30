@@ -7,6 +7,7 @@ import {
   isAuthConfigured,
   resolveRole,
 } from "@/lib/auth/session";
+import { findUserByUsername, verifyUserPassword } from "@/lib/auth/users-store";
 
 export const runtime = "nodejs";
 
@@ -43,19 +44,26 @@ export async function POST(request: Request) {
 
   const username = (body.username?.trim() || "operator").slice(0, 80);
   const password = body.password ?? "";
-  const expected = getDashboardPassword();
 
-  if (!passwordMatches(password, expected)) {
+  const registered = await findUserByUsername(username);
+  const matchedUser = registered
+    ? await verifyUserPassword(username, password)
+    : null;
+  const sharedOk =
+    !registered && passwordMatches(password, getDashboardPassword());
+
+  if (!matchedUser && !sharedOk) {
     return NextResponse.json(
       { error: "Invalid username or password.", code: "INVALID_CREDENTIALS" },
       { status: 401, headers: { "Cache-Control": "no-store" } }
     );
   }
 
-  const role = resolveRole(username);
-  const token = await createSessionToken({ username, role });
+  const sessionUsername = matchedUser?.username ?? username;
+  const role = resolveRole(sessionUsername);
+  const token = await createSessionToken({ username: sessionUsername, role });
   const response = NextResponse.json(
-    { ok: true, username, role },
+    { ok: true, username: sessionUsername, role },
     { headers: { "Cache-Control": "no-store" } }
   );
   response.headers.set("Set-Cookie", buildSessionCookie(token));

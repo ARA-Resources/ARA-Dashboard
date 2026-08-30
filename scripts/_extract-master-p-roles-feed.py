@@ -22,7 +22,7 @@ def cell(ws, r, c):
 
 
 def extract(path: str) -> dict:
-    wb = load_workbook(path, read_only=True, data_only=True, keep_vba=True)
+    wb = load_workbook(path, read_only=True, data_only=False, keep_vba=True)
     if "Master Sheet" not in wb.sheetnames:
         raise RuntimeError("Master Sheet not found")
     ws = wb["Master Sheet"]

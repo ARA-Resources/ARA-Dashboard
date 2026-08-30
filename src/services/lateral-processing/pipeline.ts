@@ -155,7 +155,7 @@ const SUGGESTED_ACTIONS: Record<number, string> = {
   16: "Re-run the pipeline after confirming Master Sheet and New Sheet are readable.",
   17: "Review validation errors, restore from backup if needed, then re-run.",
   18: "Confirm Posted Sheet exists, Master Sheet has Job Requisition ID and Posted (Column M) headers, then re-run. Column K was not modified by this step.",
-  19: "P-Roles refresh failed. Confirm Windows + Excel + pywin32 are available, P-Roles has exactly one PivotTable, then re-run. Master Sheet and Column K were not modified by this step.",
+  19: "P-Roles refresh failed. On Windows: confirm Excel + pywin32. On Linux/Docker: confirm Python and scripts/_inject-p-roles-google-display.py are present, then re-run. Master Sheet and Column K were not modified by this step.",
   20: "Check Drive write access to the master file, then re-run from Confirm/Save or full pipeline.",
   21: "Status-safe finalize failed. Dataset Column K statuses were already applied; check Drive upload and Excel VBA trust (optional stub). Conflicting status macro is never run.",
   22: "Status-safe VBA finalize verification failed. Confirm .xlsm was re-uploaded and conflicting UpdateJobRequisitionsStatusLateral was not executed.",

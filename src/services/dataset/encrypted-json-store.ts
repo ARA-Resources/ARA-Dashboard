@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import {
   getDatasetSetupSecret,
@@ -9,7 +10,17 @@ import {
 import { isPostgresMode } from "@/lib/persistence/persistence-mode";
 import { getEncryptedConfigStore } from "@/lib/persistence/store-factory";
 
-const STORE_DIR = path.join(process.cwd(), ".data");
+function resolveEncryptedStoreDir() {
+  const isServerlessRuntime =
+    Boolean(process.env.VERCEL) ||
+    Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
+    process.cwd().startsWith("/var/task");
+
+  if (isServerlessRuntime) {
+    return path.join(os.tmpdir(), "ara-dashboard", ".data");
+  }
+  return path.join(process.cwd(), ".data");
+}
 
 function resolveSecretKey(): Buffer {
   const secret = getDatasetSetupSecret();
@@ -62,16 +73,26 @@ export async function readEncryptedJson<T>(fileName: string): Promise<T | null> 
   if (isPostgresMode()) {
     try {
       const raw = await getEncryptedConfigStore().readRawEnvelope(fileName);
-      if (!raw) return null;
-      const envelope = JSON.parse(raw) as { alg: string; iv: string; tag: string; ciphertext: string };
-      if (envelope.alg !== "aes-256-gcm") return null;
-      return JSON.parse(decryptPayload(envelope)) as T;
+      if (raw) {
+        const envelope = JSON.parse(raw) as {
+          alg: string;
+          iv: string;
+          tag: string;
+          ciphertext: string;
+        };
+        if (envelope.alg === "aes-256-gcm") {
+          return JSON.parse(decryptPayload(envelope)) as T;
+        }
+      }
     } catch {
-      return null;
+      // Fall through to local .data file (common during postgres migration).
     }
   }
   try {
-    const raw = await fs.readFile(path.join(STORE_DIR, fileName), "utf8");
+    const raw = await fs.readFile(
+      path.join(resolveEncryptedStoreDir(), fileName),
+      "utf8"
+    );
     const envelope = JSON.parse(raw) as {
       alg: string;
       iv: string;
@@ -99,8 +120,9 @@ export async function writeEncryptedJson(
     await getEncryptedConfigStore().writeRawEnvelope(fileName, envelopeStr);
     return;
   }
-  await fs.mkdir(STORE_DIR, { recursive: true });
-  await fs.writeFile(path.join(STORE_DIR, fileName), envelopeStr, "utf8");
+  const storeDir = resolveEncryptedStoreDir();
+  await fs.mkdir(storeDir, { recursive: true });
+  await fs.writeFile(path.join(storeDir, fileName), envelopeStr, "utf8");
 }
 
 export async function deleteEncryptedJson(fileName: string): Promise<void> {
@@ -109,7 +131,7 @@ export async function deleteEncryptedJson(fileName: string): Promise<void> {
     return;
   }
   try {
-    await fs.unlink(path.join(STORE_DIR, fileName));
+    await fs.unlink(path.join(resolveEncryptedStoreDir(), fileName));
   } catch {
     // ignore
   }
