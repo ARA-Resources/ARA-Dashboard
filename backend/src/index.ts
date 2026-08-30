@@ -2,6 +2,7 @@ import express from "express";
 import type { NextFunction, Request, Response } from "express";
 import { readDatabaseIdentity, selectOne } from "./db.js";
 import { createAuthRouter } from "./routes/auth.js";
+import { createHomeWidgetsRouter } from "./routes/home-widgets.js";
 import { createLateralFiltersRouter } from "./routes/lateral-filters.js";
 import { createLateralPRolesRouter } from "./routes/lateral-p-roles.js";
 import { createLateralSyncHistoryRouter } from "./routes/lateral-sync-history.js";
@@ -59,6 +60,7 @@ app.use(createAuthRouter());
 app.use(createLateralSyncHistoryRouter());
 app.use(createLateralFiltersRouter());
 app.use(createLateralPRolesRouter());
+app.use(createHomeWidgetsRouter());
 
 app.get("/api/db-health", async (_req, res) => {
   try {

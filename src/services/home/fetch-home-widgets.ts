@@ -1,11 +1,12 @@
 /**
  * Home dashboard widgets data source.
- * Uses server API that aggregates lateral/executive/consulting Excel files.
+ * Same-origin /api/home/widgets → Node via Stage 10 rewrite when configured.
  */
 import type { HomeDashboardWidgetsData } from "@/types/home-widgets";
+import { apiFetch } from "@/lib/api/client";
 
 async function fetchLiveHomeDashboardWidgets(): Promise<HomeDashboardWidgetsData> {
-  const response = await fetch("/api/home/widgets", {
+  const response = await apiFetch("/api/home/widgets", {
     method: "GET",
   });
 

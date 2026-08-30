@@ -26,6 +26,11 @@ function nodeBackendRewrites(): { source: string; destination: string }[] {
       source: "/api/dataset/lateral/p-roles",
       destination: `${target}/api/dataset/lateral/p-roles`,
     },
+    // Stage 10 — Home widgets (Next Route Handler remains as rollback)
+    {
+      source: "/api/home/widgets",
+      destination: `${target}/api/home/widgets`,
+    },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
       source: "/api/auth/login",
