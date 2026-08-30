@@ -16,6 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { HOME_WIDGETS_QUERY_KEY } from "@/services/home/fetch-home-widgets";
+import { apiFetch } from "@/lib/api/client";
 import type { AppNotification } from "@/types/notifications";
 
 export function NotificationsButton() {
@@ -29,7 +30,8 @@ export function NotificationsButton() {
 
   const load = React.useCallback(async () => {
     try {
-      const response = await fetch("/api/dataset/notifications", {
+      // Same-origin /api/dataset/notifications → Node via Stage 11 rewrite when configured.
+      const response = await apiFetch("/api/dataset/notifications", {
         cache: "no-store",
       });
       if (!response.ok) return;
@@ -72,7 +74,7 @@ export function NotificationsButton() {
   }, [load]);
 
   async function markAllRead() {
-    await fetch("/api/dataset/notifications", {
+    await apiFetch("/api/dataset/notifications", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "mark_all_read" }),
@@ -81,7 +83,7 @@ export function NotificationsButton() {
   }
 
   async function openNotification(item: AppNotification) {
-    await fetch("/api/dataset/notifications", {
+    await apiFetch("/api/dataset/notifications", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "mark_read", id: item.id }),

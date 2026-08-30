@@ -58,6 +58,13 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
     return "authenticated";
   }
 
+  // Stage 11: POST must remain authenticated (not operator) — matches Next access.ts
+  if (path === "/api/dataset/notifications") {
+    if (verb === "GET" || verb === "HEAD" || verb === "POST") {
+      return "authenticated";
+    }
+  }
+
   if (path.startsWith("/api/")) {
     if (verb === "GET" || verb === "HEAD") return "authenticated";
     return "operator";

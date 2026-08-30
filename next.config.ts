@@ -31,6 +31,11 @@ function nodeBackendRewrites(): { source: string; destination: string }[] {
       source: "/api/home/widgets",
       destination: `${target}/api/home/widgets`,
     },
+    // Stage 11 — Notifications GET+POST (Next Route Handler remains as rollback)
+    {
+      source: "/api/dataset/notifications",
+      destination: `${target}/api/dataset/notifications`,
+    },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
       source: "/api/auth/login",

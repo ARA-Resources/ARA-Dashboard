@@ -6,6 +6,7 @@ import { createHomeWidgetsRouter } from "./routes/home-widgets.js";
 import { createLateralFiltersRouter } from "./routes/lateral-filters.js";
 import { createLateralPRolesRouter } from "./routes/lateral-p-roles.js";
 import { createLateralSyncHistoryRouter } from "./routes/lateral-sync-history.js";
+import { createNotificationsRouter } from "./routes/notifications.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
@@ -51,6 +52,27 @@ if (corsOrigins.length > 0) {
 // Required for POST /api/auth/login and /api/auth/signup JSON bodies.
 app.use(express.json({ limit: "32kb" }));
 
+// Stage 11: match Next notifications POST — invalid JSON body → empty object
+// (then "Unknown action." 400), without changing other routes' JSON errors.
+app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+  const isJsonSyntax =
+    err instanceof SyntaxError &&
+    typeof err === "object" &&
+    err !== null &&
+    "status" in err &&
+    (err as { status?: number }).status === 400;
+  if (
+    isJsonSyntax &&
+    req.method === "POST" &&
+    req.path === "/api/dataset/notifications"
+  ) {
+    req.body = {};
+    next();
+    return;
+  }
+  next(err);
+});
+
 // Public liveness probe. Must remain unauthenticated.
 app.get("/api/health", (_req, res) => {
   res.status(200).json({ ok: true });
@@ -61,6 +83,7 @@ app.use(createLateralSyncHistoryRouter());
 app.use(createLateralFiltersRouter());
 app.use(createLateralPRolesRouter());
 app.use(createHomeWidgetsRouter());
+app.use(createNotificationsRouter());
 
 app.get("/api/db-health", async (_req, res) => {
   try {
