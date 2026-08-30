@@ -1,5 +1,6 @@
 import express from "express";
 import { readDatabaseIdentity, selectOne } from "./db.js";
+import { createLateralSyncHistoryRouter } from "./routes/lateral-sync-history.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
@@ -7,6 +8,8 @@ const port = Number(process.env.PORT) || 3001;
 app.get("/api/health", (_req, res) => {
   res.status(200).json({ ok: true });
 });
+
+app.use(createLateralSyncHistoryRouter());
 
 app.get("/api/db-health", async (_req, res) => {
   try {

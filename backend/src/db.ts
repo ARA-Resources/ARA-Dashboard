@@ -1,4 +1,4 @@
-import { Pool, type PoolConfig } from "pg";
+import { Pool, type PoolConfig, type QueryResultRow } from "pg";
 
 let pool: Pool | null = null;
 
@@ -40,6 +40,14 @@ function getPool(): Pool {
     });
   }
   return pool;
+}
+
+export async function queryRows<T extends QueryResultRow>(
+  text: string,
+  params: unknown[] = []
+): Promise<T[]> {
+  const result = await getPool().query<T>(text, params);
+  return result.rows;
 }
 
 export async function selectOne(): Promise<void> {
