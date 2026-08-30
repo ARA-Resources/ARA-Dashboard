@@ -27,6 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { apiFetch } from "@/lib/api/client";
 import type { SyncHistoryEntry, SyncHistoryStatus } from "@/types/sync-history";
 import { cn } from "@/lib/utils";
 
@@ -79,7 +80,7 @@ export function SyncHistoryPage() {
     else setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/dataset/sync-history?limit=200", {
+      const response = await apiFetch("/api/dataset/sync-history?limit=200", {
         cache: "no-store",
       });
       const payload = (await response.json()) as {
@@ -131,7 +132,9 @@ export function SyncHistoryPage() {
   async function downloadLog(entry: SyncHistoryEntry) {
     setDownloadingId(entry.id);
     try {
-      const response = await fetch(`/api/dataset/sync-history/${entry.id}/log`);
+      const response = await apiFetch(
+        `/api/dataset/sync-history/${entry.id}/log`
+      );
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as {
           error?: string;

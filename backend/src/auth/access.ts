@@ -65,6 +65,20 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
     }
   }
 
+  // Stage 13: Dataset Sync History (file-backed) — authenticated GETs
+  if (
+    path === "/api/dataset/sync-history" &&
+    (verb === "GET" || verb === "HEAD")
+  ) {
+    return "authenticated";
+  }
+  if (
+    /^\/api\/dataset\/sync-history\/[^/]+\/log$/.test(path) &&
+    (verb === "GET" || verb === "HEAD")
+  ) {
+    return "authenticated";
+  }
+
   if (path.startsWith("/api/")) {
     if (verb === "GET" || verb === "HEAD") return "authenticated";
     return "operator";

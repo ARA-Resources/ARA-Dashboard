@@ -6,6 +6,7 @@ import { createHomeWidgetsRouter } from "./routes/home-widgets.js";
 import { createLateralFiltersRouter } from "./routes/lateral-filters.js";
 import { createLateralPRolesRouter } from "./routes/lateral-p-roles.js";
 import { createLateralSyncHistoryRouter } from "./routes/lateral-sync-history.js";
+import { createDatasetSyncHistoryRouter } from "./routes/dataset-sync-history.js";
 import { createNotificationsRouter } from "./routes/notifications.js";
 
 const app = express();
@@ -84,6 +85,7 @@ app.use(createLateralFiltersRouter());
 app.use(createLateralPRolesRouter());
 app.use(createHomeWidgetsRouter());
 app.use(createNotificationsRouter());
+app.use(createDatasetSyncHistoryRouter());
 
 app.get("/api/db-health", async (_req, res) => {
   try {

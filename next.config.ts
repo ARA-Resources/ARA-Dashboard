@@ -36,6 +36,15 @@ function nodeBackendRewrites(): { source: string; destination: string }[] {
       source: "/api/dataset/notifications",
       destination: `${target}/api/dataset/notifications`,
     },
+    // Stage 13 — Dataset Sync History list + log (file-backed; Next handlers remain as rollback)
+    {
+      source: "/api/dataset/sync-history/:id/log",
+      destination: `${target}/api/dataset/sync-history/:id/log`,
+    },
+    {
+      source: "/api/dataset/sync-history",
+      destination: `${target}/api/dataset/sync-history`,
+    },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
       source: "/api/auth/login",
