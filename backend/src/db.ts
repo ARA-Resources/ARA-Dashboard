@@ -29,6 +29,20 @@ function readPoolConfig(): PoolConfig {
     config.password = password;
   }
 
+  // Neon and other hosted Postgres require TLS. Local hosts stay plain.
+  // Matches Next.js persistence: ssl off for localhost/127.0.0.1 only.
+  // `ssl: true` enables TLS with Node default CA verification (no insecure bypass).
+  const sslMode = process.env.PGSSLMODE?.trim().toLowerCase();
+  const isLocalHost =
+    host === "localhost" || host === "127.0.0.1" || host === "::1";
+  const forceSsl =
+    sslMode === "require" ||
+    sslMode === "verify-ca" ||
+    sslMode === "verify-full";
+  if (!isLocalHost || forceSsl) {
+    config.ssl = true;
+  }
+
   return config;
 }
 

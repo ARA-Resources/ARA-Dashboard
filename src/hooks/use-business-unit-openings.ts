@@ -5,6 +5,7 @@ import type { BusinessUnitId } from "@/types/business-unit";
 import type { ExcelOpeningsResult } from "@/types/excel";
 import type { OpeningsFilters } from "@/types/filters";
 import type { DynamicFilterSchema } from "@/services/excel/discover-filters";
+import { apiFetch } from "@/lib/api/client";
 
 /** Stable query-key fragment so filter object identity cannot break cache updates */
 export function openingsFiltersQueryKey(filters: OpeningsFilters) {
@@ -100,10 +101,18 @@ export async function fetchFilterSchema(
     return payload.schema;
   }
 
-  const response = await fetch(`/api/excel/${businessUnitId}/filters${suffix}`, {
-    method: "GET",
-    cache: "no-store",
-  });
+  // Lateral filters: Stage 6 Node endpoint when API base URL is configured.
+  // Executive/consulting remain on Next.js until migrated.
+  const response =
+    businessUnitId === "lateral"
+      ? await apiFetch(`/api/excel/lateral/filters${suffix}`, {
+          method: "GET",
+          cache: "no-store",
+        })
+      : await fetch(`/api/excel/${businessUnitId}/filters${suffix}`, {
+          method: "GET",
+          cache: "no-store",
+        });
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as {

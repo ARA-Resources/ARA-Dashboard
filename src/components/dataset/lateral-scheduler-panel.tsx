@@ -17,6 +17,7 @@ import type {
   LateralSchedulerStatus,
 } from "@/types/lateral-scheduler";
 import type { LateralSyncHistoryEntry } from "@/types/lateral-sync-history";
+import { apiFetch } from "@/lib/api/client";
 
 type LateralStatusPayload = LateralSchedulerStatus & {
   processing?: LateralProcessingStatusView;
@@ -142,7 +143,10 @@ export function LateralSchedulerPanel({
     setHistoryBusy(true);
     setHistoryError(null);
     try {
-      const response = await fetch("/api/dataset/lateral/sync-history?limit=100");
+      // Stage 7: Node when NEXT_PUBLIC_ARA_API_BASE_URL is set; else Next.
+      const response = await apiFetch(
+        "/api/dataset/lateral/sync-history?limit=100"
+      );
       const payload = (await response.json().catch(() => null)) as {
         entries?: LateralSyncHistoryEntry[];
         error?: string;
