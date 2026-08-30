@@ -58,10 +58,18 @@ export async function fetchTopOpenings(
       : businessUnitId === "executive"
         ? "/api/excel/executive-p-dashboard"
         : `/api/excel/${businessUnitId}`;
-  const response = await fetch(
-    `${endpoint}?${params.toString()}`,
-    { method: "GET", cache: "no-store" }
-  );
+  // Lateral P-Roles: Stage 9 Node endpoint via same-origin rewrite when configured.
+  // Executive/consulting remain on Next.js until migrated.
+  const response =
+    businessUnitId === "lateral"
+      ? await apiFetch(`${endpoint}?${params.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+        })
+      : await fetch(`${endpoint}?${params.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+        });
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as {
