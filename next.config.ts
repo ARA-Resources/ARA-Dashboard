@@ -97,6 +97,11 @@ function nodeBackendRewrites(): NodeRewrite[] {
       source: "/api/excel/executive-master-sheet",
       destination: `${target}/api/excel/executive-master-sheet`,
     },
+    // Stage 28 — Lateral Master Sheet GET (export remains on Next)
+    {
+      source: "/api/excel/lateral-master-sheet",
+      destination: `${target}/api/excel/lateral-master-sheet`,
+    },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
       source: "/api/auth/login",

@@ -21,7 +21,7 @@ export type ExcelDataRow = {
 };
 
 export interface ExcelReadResult {
-  businessUnitId: "consulting" | "executive";
+  businessUnitId: "consulting" | "executive" | "lateral";
   sheetName: string;
   sourceFile: string;
   sourceLabel: string;

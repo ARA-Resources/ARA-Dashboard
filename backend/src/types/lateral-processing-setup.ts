@@ -23,6 +23,30 @@ export interface ProcessingWorkbookConfig {
   fileName: string;
 }
 
+/**
+ * Pipeline / VBA / reconcile still require the XLSM Master.
+ * When Company primary master is a Google Sheet, processingMasterWorkbook holds the XLSM.
+ */
+export function resolvePipelineMasterWorkbook(
+  setup: Pick<
+    LateralDataProcessingSetup,
+    "masterWorkbook" | "processingMasterWorkbook"
+  >
+): ProcessingWorkbookConfig {
+  const processing = setup.processingMasterWorkbook;
+  if (processing?.fileId?.trim()) {
+    return {
+      fileId: processing.fileId.trim(),
+      fileName: processing.fileName?.trim() || processing.fileId.trim(),
+    };
+  }
+  return {
+    fileId: setup.masterWorkbook.fileId.trim(),
+    fileName:
+      setup.masterWorkbook.fileName?.trim() || setup.masterWorkbook.fileId.trim(),
+  };
+}
+
 export const DEFAULT_LATERAL_MASTER_WORKBOOK_NAME =
   "Copy of ATCI Lateral DS AI MasterSheet Final 2026.xlsm";
 

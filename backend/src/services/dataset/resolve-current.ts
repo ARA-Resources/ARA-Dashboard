@@ -8,9 +8,23 @@ import {
 
 const EXCEL_EXT = /\.(xlsx|xlsm|xls)$/i;
 
+export type BusinessUnitId = "lateral" | "executive" | "consulting";
+
+const BUSINESS_UNIT_TO_DATASET: Record<BusinessUnitId, DatasetSyncName> = {
+  lateral: "Lateral",
+  executive: "Executive",
+  consulting: "Consulting",
+};
+
+const DATASET_TO_BUSINESS_UNIT: Record<DatasetSyncName, BusinessUnitId> = {
+  Lateral: "lateral",
+  Executive: "executive",
+  Consulting: "consulting",
+};
+
 export interface CurrentDatasetFile {
   datasetName: DatasetSyncName;
-  businessUnitId: "consulting";
+  businessUnitId: BusinessUnitId;
   filePath: string;
   fileName: string;
   mtimeMs: number;
@@ -18,8 +32,16 @@ export interface CurrentDatasetFile {
   source: "dataset-manager";
 }
 
-export function businessUnitToDatasetName(): DatasetSyncName {
-  return "Consulting";
+export function businessUnitToDatasetName(
+  businessUnitId: BusinessUnitId = "consulting"
+): DatasetSyncName {
+  return BUSINESS_UNIT_TO_DATASET[businessUnitId];
+}
+
+export function datasetNameToBusinessUnit(
+  datasetName: DatasetSyncName
+): BusinessUnitId {
+  return DATASET_TO_BUSINESS_UNIT[datasetName];
 }
 
 export async function resolveCurrentDatasetFile(
@@ -47,7 +69,7 @@ export async function resolveCurrentDatasetFile(
       const stat = await fs.stat(filePath);
       return {
         datasetName: normalized,
-        businessUnitId: "consulting" as const,
+        businessUnitId: datasetNameToBusinessUnit(normalized),
         filePath,
         fileName,
         mtimeMs: stat.mtimeMs,

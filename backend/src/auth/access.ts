@@ -156,6 +156,14 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
     return "authenticated";
   }
 
+  // Stage 28: Lateral Master Sheet GET (Excel/Drive-backed)
+  if (
+    path === "/api/excel/lateral-master-sheet" &&
+    (verb === "GET" || verb === "HEAD")
+  ) {
+    return "authenticated";
+  }
+
   if (path.startsWith("/api/")) {
     if (verb === "GET" || verb === "HEAD") return "authenticated";
     return "operator";

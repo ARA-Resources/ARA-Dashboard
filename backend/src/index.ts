@@ -16,6 +16,7 @@ import { createLateralProcessingSetupRouter } from "./routes/lateral-processing-
 import { createExcelConsultingRouter } from "./routes/excel-consulting.js";
 import { createExcelExecutivePDashboardRouter } from "./routes/excel-executive-p-dashboard.js";
 import { createExcelExecutiveMasterSheetRouter } from "./routes/excel-executive-master-sheet.js";
+import { createExcelLateralMasterSheetRouter } from "./routes/excel-lateral-master-sheet.js";
 import { createNotificationsRouter } from "./routes/notifications.js";
 
 const app = express();
@@ -109,6 +110,7 @@ app.use(createLateralProcessingSetupRouter());
 app.use(createExcelConsultingRouter());
 app.use(createExcelExecutivePDashboardRouter());
 app.use(createExcelExecutiveMasterSheetRouter());
+app.use(createExcelLateralMasterSheetRouter());
 
 app.get("/api/db-health", async (_req, res) => {
   try {

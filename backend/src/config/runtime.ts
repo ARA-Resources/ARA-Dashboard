@@ -87,3 +87,19 @@ export function getBundledExecutiveExcelPath(): string {
     "executive-mastersheet.xlsm"
   );
 }
+
+export function getLateralMasterDriveFileId(): string {
+  const id = trimEnv("ARA_LATERAL_MASTER_DRIVE_FILE_ID");
+  if (!id) {
+    throw missingConfigError("ARA_LATERAL_MASTER_DRIVE_FILE_ID");
+  }
+  return id;
+}
+
+export function peekLateralMasterDriveFileId(): string {
+  return trimEnv("ARA_LATERAL_MASTER_DRIVE_FILE_ID");
+}
+
+export function getLateralMasterDriveViewUrl(): string {
+  return `https://drive.google.com/file/d/${getLateralMasterDriveFileId()}/view`;
+}
