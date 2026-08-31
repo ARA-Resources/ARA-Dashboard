@@ -20,6 +20,14 @@ export type KeywordMatchMode =
   | "ends_with"
   | "regex";
 
+export const KEYWORD_MATCH_MODES: KeywordMatchMode[] = [
+  "contains",
+  "exact",
+  "starts_with",
+  "ends_with",
+  "regex",
+];
+
 export type DatasetKeywordConfig = {
   value: string;
   enabled: boolean;
@@ -237,6 +245,18 @@ export function createEmptyDatasetsMap(): DatasetSearchConfigMap {
     Executive: createEmptyDatasetSearchConfig("Executive"),
     Consulting: createEmptyDatasetSearchConfig("Consulting"),
   };
+}
+
+/** Enabled keywords sorted by priority (ascending). */
+export function getEnabledKeywords(
+  config: DatasetSearchConfig | null | undefined
+): DatasetKeywordConfig[] {
+  if (!config?.keywords?.length) return [];
+  return [...config.keywords]
+    .filter((keyword) => keyword.enabled && keyword.value.trim())
+    .sort(
+      (a, b) => a.priority - b.priority || a.value.localeCompare(b.value)
+    );
 }
 
 export function createEmptyDatasetSetup(): Omit<DatasetSetupConfig, "updatedAt"> {

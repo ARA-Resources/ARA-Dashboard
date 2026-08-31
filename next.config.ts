@@ -52,7 +52,7 @@ function nodeBackendRewrites(): NodeRewrite[] {
       source: "/api/dataset/sync-history",
       destination: `${target}/api/dataset/sync-history`,
     },
-    // Stage 16 — Dataset Setup GET only (POST/DELETE remain on Next)
+    // Stage 16/21 — Dataset setup GET/POST/DELETE (Next handler remains as rollback)
     {
       source: "/api/dataset/setup",
       destination: `${target}/api/dataset/setup`,

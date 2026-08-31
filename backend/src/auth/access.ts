@@ -79,12 +79,14 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
     return "authenticated";
   }
 
-  // Stage 16: Dataset Setup GET only (POST/DELETE remain Next operator routes)
-  if (
-    path === "/api/dataset/setup" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
+  // Stage 16/21: Dataset Setup GET (authenticated) + POST/DELETE (operator)
+  if (path === "/api/dataset/setup") {
+    if (verb === "GET" || verb === "HEAD") {
+      return "authenticated";
+    }
+    if (verb === "POST" || verb === "DELETE") {
+      return "operator";
+    }
   }
 
   // Stage 18: Drive metadata GET (encrypted local store; no Google Drive API)

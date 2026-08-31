@@ -70,8 +70,13 @@ app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   if (
     isJsonSyntax &&
     req.method === "POST" &&
-    req.path === "/api/dataset/notifications"
+    (req.path === "/api/dataset/notifications" ||
+      req.path === "/api/dataset/setup")
   ) {
+    if (req.path === "/api/dataset/setup") {
+      res.status(400).json({ error: "Invalid JSON body." });
+      return;
+    }
     req.body = {};
     next();
     return;
