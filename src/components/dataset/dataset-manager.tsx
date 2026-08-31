@@ -44,6 +44,7 @@ import type { MultiSchedulerStatus } from "@/types/dataset-schedule";
 import type { LateralRunProgressSnapshot } from "@/types/lateral-scheduler";
 import { DATASET_SYNC_NAMES } from "@/types/dataset-sync";
 import { cn } from "@/lib/utils";
+import { apiFetch } from "@/lib/api/client";
 import { gmailOAuthStartHref } from "@/lib/config/gmail-oauth-start";
 import { LateralRunProgressPanel } from "@/components/dataset/lateral-run-progress-panel";
 
@@ -457,7 +458,7 @@ export function DatasetManager() {
       try {
         // Critical path only — local/fast endpoints so the shell paints quickly.
         const [setupRes, connectionsRes, schedulerRes] = await Promise.all([
-          fetch("/api/dataset/setup"),
+          apiFetch("/api/dataset/setup"),
           fetch("/api/dataset/connections"),
           fetch("/api/dataset/scheduler"),
         ]);

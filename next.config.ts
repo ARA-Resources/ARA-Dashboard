@@ -45,6 +45,11 @@ function nodeBackendRewrites(): { source: string; destination: string }[] {
       source: "/api/dataset/sync-history",
       destination: `${target}/api/dataset/sync-history`,
     },
+    // Stage 16 — Dataset Setup GET only (POST/DELETE remain on Next)
+    {
+      source: "/api/dataset/setup",
+      destination: `${target}/api/dataset/setup`,
+    },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
       source: "/api/auth/login",

@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { buttonVariants } from "@/components/ui/button";
 import { ROUTES } from "@/constants/routes";
 import { cn } from "@/lib/utils";
+import { apiFetch } from "@/lib/api/client";
 import { gmailOAuthStartHref } from "@/lib/config/gmail-oauth-start";
 import type { DatasetSetupConfig } from "@/types/dataset-setup";
 
@@ -67,7 +68,7 @@ export function DatasetConnectionsPage({
     setError(null);
     try {
       const [setupRes, connRes] = await Promise.all([
-        fetch("/api/dataset/setup"),
+        apiFetch("/api/dataset/setup"),
         fetch("/api/dataset/connections"),
       ]);
       const setupPayload = (await setupRes.json()) as {
