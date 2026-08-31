@@ -36,6 +36,10 @@ import {
   isDatasetSchedulerAutoEnabled,
   shouldSkipScheduledTickAfterArm,
 } from "@/lib/config/scheduler-policy";
+import {
+  schedulerOwnershipReason,
+  shouldThisProcessOwnLateralCron,
+} from "@/lib/config/scheduler-owner";
 import { DATASET_LOG_DIR } from "@/services/dataset/paths";
 
 const STORE_PATH = path.join(
@@ -246,6 +250,16 @@ export async function getLateralSchedulerStatus(): Promise<
 async function armLateralCron(): Promise<LateralSchedulerStatus> {
   stopLateralTasks();
 
+  if (!shouldThisProcessOwnLateralCron()) {
+    console.info(
+      `[lateral-scheduler] Cron not armed in this process (${schedulerOwnershipReason()}).`
+    );
+    appendSchedulerLog("cron_not_armed", {
+      reason: schedulerOwnershipReason(),
+    });
+    return getLateralSchedulerStatus();
+  }
+
   if (!isDatasetSchedulerAutoEnabled()) {
     console.info(
       `[lateral-scheduler] Automatic cron not armed (${datasetSchedulerPolicyReason()}). Manual Run All is unchanged.`
@@ -410,6 +424,14 @@ export async function reloadLateralScheduler(): Promise<LateralSchedulerStatus> 
 }
 
 export async function startLateralScheduler(): Promise<void> {
+  if (!shouldThisProcessOwnLateralCron()) {
+    console.info(
+      `[lateral-scheduler] Scheduler bootstrap skipped in this process (${schedulerOwnershipReason()}).`
+    );
+    bootstrapped = true;
+    return;
+  }
+
   if (!isDatasetSchedulerAutoEnabled()) {
     console.info(
       `[lateral-scheduler] Automatic cron disabled (${datasetSchedulerPolicyReason()}). Manual Run All is unchanged.`

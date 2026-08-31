@@ -39,11 +39,18 @@ export async function registerNodeInstrumentation() {
   }
 
   try {
-    const { startLateralScheduler } = await import(
-      "@/services/lateral-processing/lateral-scheduler"
-    );
-    await startLateralScheduler();
-    console.info("[instrumentation] Lateral scheduler bootstrap complete.");
+    const { getSchedulerOwner } = await import("@/lib/config/scheduler-owner");
+    if (getSchedulerOwner() === "worker") {
+      console.info(
+        "[instrumentation] Lateral scheduler not started (ARA_SCHEDULER_OWNER=worker; Worker process owns cron)."
+      );
+    } else {
+      const { startLateralScheduler } = await import(
+        "@/services/lateral-processing/lateral-scheduler"
+      );
+      await startLateralScheduler();
+      console.info("[instrumentation] Lateral scheduler bootstrap complete.");
+    }
   } catch (error) {
     console.error("[instrumentation] Lateral scheduler failed to start", error);
   }

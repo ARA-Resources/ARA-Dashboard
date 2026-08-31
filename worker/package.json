@@ -1,0 +1,11 @@
+{
+  "name": "ara-dashboard-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stage 23: lateral scheduler worker (separate from Node API)",
+  "scripts": {
+    "dev": "tsx --tsconfig tsconfig.json src/index.ts",
+    "build": "tsc --noEmit -p tsconfig.json",
+    "start": "tsx --tsconfig tsconfig.json src/index.ts"
+  }
+}

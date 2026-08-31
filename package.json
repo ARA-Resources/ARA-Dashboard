@@ -25,7 +25,10 @@
     "test:lateral-excel-discovery": "tsx scripts/verify-lateral-excel-discovery.ts",
     "test:lateral-gmail-checkpoint": "tsx scripts/verify-lateral-gmail-checkpoint.ts",
     "test:lateral-posted-postgres-step18": "tsx scripts/verify-lateral-posted-postgres-step18.ts",
-    "test:stepc-posted-safety": "tsx scripts/verify-stepc-posted-safety.ts"
+    "test:stepc-posted-safety": "tsx scripts/verify-stepc-posted-safety.ts",
+    "worker:dev": "tsx --tsconfig worker/tsconfig.json worker/src/index.ts",
+    "worker:build": "tsc --noEmit -p worker/tsconfig.json",
+    "worker:start": "tsx --tsconfig worker/tsconfig.json worker/src/index.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
