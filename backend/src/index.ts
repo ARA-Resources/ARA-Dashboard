@@ -7,6 +7,7 @@ import { createLateralFiltersRouter } from "./routes/lateral-filters.js";
 import { createLateralPRolesRouter } from "./routes/lateral-p-roles.js";
 import { createLateralSyncHistoryRouter } from "./routes/lateral-sync-history.js";
 import { createDatasetDriveMetadataRouter } from "./routes/dataset-drive-metadata.js";
+import { createDatasetConnectionsRouter } from "./routes/dataset-connections.js";
 import { createDatasetSetupRouter } from "./routes/dataset-setup.js";
 import { createDatasetSyncHistoryRouter } from "./routes/dataset-sync-history.js";
 import { createNotificationsRouter } from "./routes/notifications.js";
@@ -90,6 +91,7 @@ app.use(createNotificationsRouter());
 app.use(createDatasetSyncHistoryRouter());
 app.use(createDatasetSetupRouter());
 app.use(createDatasetDriveMetadataRouter());
+app.use(createDatasetConnectionsRouter());
 
 app.get("/api/db-health", async (_req, res) => {
   try {

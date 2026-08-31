@@ -459,7 +459,7 @@ export function DatasetManager() {
         // Critical path only — local/fast endpoints so the shell paints quickly.
         const [setupRes, connectionsRes, schedulerRes] = await Promise.all([
           apiFetch("/api/dataset/setup"),
-          fetch("/api/dataset/connections"),
+          apiFetch("/api/dataset/connections"),
           fetch("/api/dataset/scheduler"),
         ]);
         const payload = (await setupRes.json()) as {
@@ -705,7 +705,7 @@ export function DatasetManager() {
             } else {
               setReconnectHint(null);
               // Refresh live connection status after folder-only edits
-              void fetch("/api/dataset/connections")
+              void apiFetch("/api/dataset/connections")
                 .then((r) => r.json())
                 .then((payload) => {
                   setGmailConnected(Boolean(payload?.gmail?.connected));

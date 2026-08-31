@@ -69,7 +69,7 @@ export function DatasetConnectionsPage({
     try {
       const [setupRes, connRes] = await Promise.all([
         apiFetch("/api/dataset/setup"),
-        fetch("/api/dataset/connections"),
+        apiFetch("/api/dataset/connections"),
       ]);
       const setupPayload = (await setupRes.json()) as {
         setup?: DatasetSetupConfig | null;

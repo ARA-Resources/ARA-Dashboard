@@ -55,6 +55,11 @@ function nodeBackendRewrites(): { source: string; destination: string }[] {
       source: "/api/dataset/drive/metadata",
       destination: `${target}/api/dataset/drive/metadata`,
     },
+    // Stage 19 — Connections GET only (DELETE remains on Next)
+    {
+      source: "/api/dataset/connections",
+      destination: `${target}/api/dataset/connections`,
+    },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
       source: "/api/auth/login",
