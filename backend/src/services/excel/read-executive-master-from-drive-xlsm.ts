@@ -1,0 +1,169 @@
+/**
+ * Read Company → Accenture → Executive → Master Sheet from the Drive XLSM.
+ * Uses ARA_EXECUTIVE_MASTER_DRIVE_FILE_ID only — never the Lateral Drive file.
+ */
+import fs from "node:fs/promises";
+import path from "node:path";
+import ExcelJS from "exceljs";
+import { repoDataDir } from "../../config/repo-root.js";
+import {
+  getExecutiveMasterDriveFileId,
+  getExecutiveMasterDriveViewUrl,
+  peekExecutiveMasterDriveFileId,
+} from "../../config/runtime.js";
+import type { ExcelReadResult, ExcelReaderOptions } from "../../types/excel.js";
+import { getAuthorizedGmailClient } from "../gmail-oauth-read.js";
+import { parseWorksheet } from "./parse-sheet.js";
+import { resolveReadableExcelPath } from "./readable-workbook.js";
+
+function resolveDriveXlsmCacheDir() {
+  return path.join(repoDataDir(), "excel-cache", "drive-xlsm");
+}
+
+interface DriveXlsmCacheEntry {
+  mtimeMs: number;
+  payload: ExcelReadResult;
+}
+
+const memoryCache = new Map<string, DriveXlsmCacheEntry>();
+
+export function executiveDriveFileViewUrl(fileId: string): string {
+  return `https://drive.google.com/file/d/${fileId.trim()}/view`;
+}
+
+export function hasExecutiveMasterDriveFileIdConfigured(): boolean {
+  return Boolean(peekExecutiveMasterDriveFileId());
+}
+
+async function ensureLocalXlsm(options: {
+  fileId: string;
+  fileName: string;
+  modifiedTime: string | null;
+  bypassCache?: boolean;
+}): Promise<string> {
+  const cacheDir = resolveDriveXlsmCacheDir();
+  await fs.mkdir(cacheDir, { recursive: true });
+  const localPath = path.join(cacheDir, `executive-${options.fileId}.xlsm`);
+  const stampPath = path.join(cacheDir, `executive-${options.fileId}.mtime`);
+  const stamp = options.modifiedTime || "";
+
+  if (!options.bypassCache) {
+    try {
+      const [stat, previous] = await Promise.all([
+        fs.stat(localPath),
+        fs.readFile(stampPath, "utf8").catch(() => ""),
+      ]);
+      if (stat.size > 0 && previous.trim() === stamp && stamp) {
+        return localPath;
+      }
+    } catch {
+      // download below
+    }
+  }
+
+  const { drive } = await getAuthorizedGmailClient();
+  const response = await drive.files.get(
+    { fileId: options.fileId, alt: "media", supportsAllDrives: true },
+    { responseType: "arraybuffer" }
+  );
+  await fs.writeFile(localPath, Buffer.from(response.data as ArrayBuffer));
+  await fs.writeFile(stampPath, stamp, "utf8");
+  return localPath;
+}
+
+export async function readExecutiveMasterSheetFromDriveXlsm(options: {
+  sheetName: string;
+  headerRow?: number;
+  readerOptions?: ExcelReaderOptions;
+}): Promise<ExcelReadResult> {
+  const fileId = getExecutiveMasterDriveFileId();
+  const { drive } = await getAuthorizedGmailClient();
+
+  let meta = await drive.files.get({
+    fileId,
+    fields: "id,name,mimeType,trashed,modifiedTime,webViewLink",
+    supportsAllDrives: true,
+  });
+
+  if (meta.data.trashed) {
+    meta = await drive.files.update({
+      fileId,
+      requestBody: { trashed: false },
+      fields: "id,name,mimeType,trashed,modifiedTime,webViewLink",
+      supportsAllDrives: true,
+    });
+  }
+
+  if (!meta.data.id) {
+    throw new Error(
+      `Configured Executive Master Workbook was not found on Google Drive (id configured).`
+    );
+  }
+
+  const fileName =
+    meta.data.name || "ATCI Exec Job Reqs Master Sheet.xlsm";
+  const mtimeMs = meta.data.modifiedTime
+    ? Date.parse(meta.data.modifiedTime)
+    : Date.now();
+  const cacheKey = `executive:${fileId}:${options.sheetName}:${options.headerRow ?? 1}`;
+  const cached = memoryCache.get(cacheKey);
+  if (
+    cached &&
+    cached.mtimeMs === mtimeMs &&
+    !options.readerOptions?.bypassCache
+  ) {
+    return cached.payload;
+  }
+
+  const localPath = await ensureLocalXlsm({
+    fileId,
+    fileName,
+    modifiedTime: meta.data.modifiedTime ?? null,
+    bypassCache: options.readerOptions?.bypassCache,
+  });
+  const readablePath = await resolveReadableExcelPath(localPath);
+  const excel = new ExcelJS.Workbook();
+  await excel.xlsx.readFile(readablePath);
+  const sheet =
+    excel.worksheets.find(
+      (item) =>
+        item.name.trim().toLowerCase() === options.sheetName.trim().toLowerCase()
+    ) ?? null;
+
+  if (!sheet) {
+    const available = excel.worksheets.map((item) => item.name).join(", ");
+    throw new Error(
+      `Sheet "${options.sheetName}" not found in Executive Drive Master Workbook. Available: ${available}`
+    );
+  }
+
+  const parsed = parseWorksheet(sheet, { headerRow: options.headerRow ?? 1 });
+  const viewUrl =
+    meta.data.webViewLink ||
+    executiveDriveFileViewUrl(fileId) ||
+    getExecutiveMasterDriveViewUrl();
+
+  const payload: ExcelReadResult = {
+    businessUnitId: "executive",
+    sheetName: parsed.sheetName,
+    sourceFile: fileName,
+    sourceLabel: `Google Drive XLSM · ${fileName}`,
+    headers: parsed.headers,
+    rows: parsed.rows.map((row, index) => ({
+      id: `executive-drive-xlsm-${parsed.sheetName}-${index + 1}`,
+      ...row,
+    })),
+    meta: {
+      name: parsed.sheetName,
+      rowCount: parsed.rows.length,
+      columnCount: parsed.headers.length,
+      headerRow: parsed.headerRow,
+      filePath: viewUrl,
+      mtimeMs,
+      totalRows: parsed.rows.length,
+    },
+  };
+
+  memoryCache.set(cacheKey, { mtimeMs, payload });
+  return payload;
+}

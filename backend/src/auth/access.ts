@@ -140,6 +140,14 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
     return "authenticated";
   }
 
+  // Stage 26: Executive P-Dashboard GET (Excel/Drive-backed)
+  if (
+    path === "/api/excel/executive-p-dashboard" &&
+    (verb === "GET" || verb === "HEAD")
+  ) {
+    return "authenticated";
+  }
+
   if (path.startsWith("/api/")) {
     if (verb === "GET" || verb === "HEAD") return "authenticated";
     return "operator";

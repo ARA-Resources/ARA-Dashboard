@@ -87,6 +87,11 @@ function nodeBackendRewrites(): NodeRewrite[] {
       source: "/api/excel/consulting",
       destination: `${target}/api/excel/consulting`,
     },
+    // Stage 26 — Executive P-Dashboard GET (Next handler remains as rollback)
+    {
+      source: "/api/excel/executive-p-dashboard",
+      destination: `${target}/api/excel/executive-p-dashboard`,
+    },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
       source: "/api/auth/login",
