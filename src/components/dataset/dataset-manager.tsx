@@ -372,7 +372,7 @@ export function DatasetManager() {
         message,
       });
       setSchedulerRefreshKey((key) => key + 1);
-      const currentRes = await fetch("/api/dataset/current");
+      const currentRes = await apiFetch("/api/dataset/current");
       const currentPayload = (await currentRes.json().catch(() => null)) as {
         datasets?: Array<{
           datasetName: string;
@@ -502,8 +502,8 @@ export function DatasetManager() {
         // Secondary local data — does not block first paint.
         const [driveMetaRes, currentRes, foldersRes, lateralSetupRes] = await Promise.all([
           apiFetch("/api/dataset/drive/metadata"),
-          fetch("/api/dataset/current"),
-          fetch("/api/dataset/drive/folders"),
+          apiFetch("/api/dataset/current"),
+          apiFetch("/api/dataset/drive/folders"),
           fetch("/api/dataset/lateral-processing/setup"),
         ]);
         if (cancelled) return;
@@ -1133,7 +1133,7 @@ export function DatasetManager() {
               onSchedulerChange={setScheduler}
               onDatasetsChanged={() => {
                 void (async () => {
-                  const currentRes = await fetch("/api/dataset/current");
+                  const currentRes = await apiFetch("/api/dataset/current");
                   const currentPayload = (await currentRes
                     .json()
                     .catch(() => null)) as {
@@ -1370,7 +1370,7 @@ export function DatasetManager() {
                           throw new Error(payload.error ?? "Sync failed.");
                         }
                         setScheduler(payload.scheduler ?? null);
-                        const currentRes = await fetch("/api/dataset/current");
+                        const currentRes = await apiFetch("/api/dataset/current");
                         const currentPayload = (await currentRes
                           .json()
                           .catch(() => null)) as {
@@ -1565,7 +1565,7 @@ export function DatasetManager() {
                 void (async () => {
                   const [driveRes, currentRes] = await Promise.all([
                     apiFetch("/api/dataset/drive/metadata"),
-                    fetch("/api/dataset/current"),
+                    apiFetch("/api/dataset/current"),
                   ]);
                   const drivePayload = (await driveRes
                     .json()

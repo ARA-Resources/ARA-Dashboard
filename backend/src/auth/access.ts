@@ -103,6 +103,22 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
     return "authenticated";
   }
 
+  // Stage 20: Dataset current GET (filesystem read-only; ?seed=1 not supported)
+  if (
+    path === "/api/dataset/current" &&
+    (verb === "GET" || verb === "HEAD")
+  ) {
+    return "authenticated";
+  }
+
+  // Stage 20: Drive folders GET (local metadata only; ?live=1 not supported)
+  if (
+    path === "/api/dataset/drive/folders" &&
+    (verb === "GET" || verb === "HEAD")
+  ) {
+    return "authenticated";
+  }
+
   if (path.startsWith("/api/")) {
     if (verb === "GET" || verb === "HEAD") return "authenticated";
     return "operator";

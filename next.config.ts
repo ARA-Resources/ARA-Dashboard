@@ -8,7 +8,14 @@ import type { NextConfig } from "next";
  * Example: ARA_NODE_BACKEND_URL=http://127.0.0.1:3001
  * Do not put secrets in this URL.
  */
-function nodeBackendRewrites(): { source: string; destination: string }[] {
+type NodeRewrite = {
+  source: string;
+  destination: string;
+  /** When set, rewrite applies only if these conditions are NOT matched. */
+  missing?: Array<{ type: "query"; key: string; value: string }>;
+};
+
+function nodeBackendRewrites(): NodeRewrite[] {
   const target = (process.env.ARA_NODE_BACKEND_URL ?? "").trim().replace(/\/+$/, "");
   if (!target) return [];
   return [
@@ -59,6 +66,17 @@ function nodeBackendRewrites(): { source: string; destination: string }[] {
     {
       source: "/api/dataset/connections",
       destination: `${target}/api/dataset/connections`,
+    },
+    // Stage 20 — Dataset current GET (filesystem read-only; ?seed=1 remains on Next)
+    {
+      source: "/api/dataset/current",
+      destination: `${target}/api/dataset/current`,
+    },
+    // Stage 20 — Drive folders GET (local metadata on Node; ?live=1 stays on Next)
+    {
+      source: "/api/dataset/drive/folders",
+      missing: [{ type: "query", key: "live", value: "1" }],
+      destination: `${target}/api/dataset/drive/folders`,
     },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
