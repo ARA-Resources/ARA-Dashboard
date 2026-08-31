@@ -140,6 +140,14 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
     return "authenticated";
   }
 
+  // Stage 30A: Lateral processing preview GET
+  if (
+    path === "/api/dataset/lateral-processing/preview" &&
+    (verb === "GET" || verb === "HEAD")
+  ) {
+    return "authenticated";
+  }
+
   // Stage 25: Consulting Excel dashboard GETs (filesystem-backed)
   if (
     (path === "/api/excel/consulting" ||

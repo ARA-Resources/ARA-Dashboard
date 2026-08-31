@@ -111,6 +111,11 @@ function nodeBackendRewrites(): NodeRewrite[] {
       source: "/api/dataset/lateral-processing/worksheets",
       destination: `${target}/api/dataset/lateral-processing/worksheets`,
     },
+    // Stage 30A — Lateral processing preview GET
+    {
+      source: "/api/dataset/lateral-processing/preview",
+      destination: `${target}/api/dataset/lateral-processing/preview`,
+    },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
       source: "/api/auth/login",
