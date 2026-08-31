@@ -13,6 +13,7 @@ import { createDatasetDriveFoldersRouter } from "./routes/dataset-drive-folders.
 import { createDatasetSetupRouter } from "./routes/dataset-setup.js";
 import { createDatasetSyncHistoryRouter } from "./routes/dataset-sync-history.js";
 import { createLateralProcessingSetupRouter } from "./routes/lateral-processing-setup.js";
+import { createExcelConsultingRouter } from "./routes/excel-consulting.js";
 import { createNotificationsRouter } from "./routes/notifications.js";
 
 const app = express();
@@ -103,6 +104,7 @@ app.use(createDatasetConnectionsRouter());
 app.use(createDatasetCurrentRouter());
 app.use(createDatasetDriveFoldersRouter());
 app.use(createLateralProcessingSetupRouter());
+app.use(createExcelConsultingRouter());
 
 app.get("/api/db-health", async (_req, res) => {
   try {

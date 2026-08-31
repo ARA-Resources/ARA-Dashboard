@@ -78,6 +78,15 @@ function nodeBackendRewrites(): NodeRewrite[] {
       missing: [{ type: "query", key: "live", value: "1" }],
       destination: `${target}/api/dataset/drive/folders`,
     },
+    // Stage 25 — Consulting Excel dashboard GETs (Next handlers remain as rollback)
+    {
+      source: "/api/excel/consulting/filters",
+      destination: `${target}/api/excel/consulting/filters`,
+    },
+    {
+      source: "/api/excel/consulting",
+      destination: `${target}/api/excel/consulting`,
+    },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
       source: "/api/auth/login",

@@ -131,6 +131,15 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
     return "authenticated";
   }
 
+  // Stage 25: Consulting Excel dashboard GETs (filesystem-backed)
+  if (
+    (path === "/api/excel/consulting" ||
+      path === "/api/excel/consulting/filters") &&
+    (verb === "GET" || verb === "HEAD")
+  ) {
+    return "authenticated";
+  }
+
   if (path.startsWith("/api/")) {
     if (verb === "GET" || verb === "HEAD") return "authenticated";
     return "operator";
