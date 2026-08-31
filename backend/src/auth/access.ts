@@ -87,6 +87,14 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
     return "authenticated";
   }
 
+  // Stage 18: Drive metadata GET (encrypted local store; no Google Drive API)
+  if (
+    path === "/api/dataset/drive/metadata" &&
+    (verb === "GET" || verb === "HEAD")
+  ) {
+    return "authenticated";
+  }
+
   if (path.startsWith("/api/")) {
     if (verb === "GET" || verb === "HEAD") return "authenticated";
     return "operator";

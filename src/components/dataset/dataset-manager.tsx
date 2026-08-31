@@ -501,7 +501,7 @@ export function DatasetManager() {
 
         // Secondary local data — does not block first paint.
         const [driveMetaRes, currentRes, foldersRes, lateralSetupRes] = await Promise.all([
-          fetch("/api/dataset/drive/metadata"),
+          apiFetch("/api/dataset/drive/metadata"),
           fetch("/api/dataset/current"),
           fetch("/api/dataset/drive/folders"),
           fetch("/api/dataset/lateral-processing/setup"),
@@ -1564,7 +1564,7 @@ export function DatasetManager() {
               onSyncComplete={() => {
                 void (async () => {
                   const [driveRes, currentRes] = await Promise.all([
-                    fetch("/api/dataset/drive/metadata"),
+                    apiFetch("/api/dataset/drive/metadata"),
                     fetch("/api/dataset/current"),
                   ]);
                   const drivePayload = (await driveRes

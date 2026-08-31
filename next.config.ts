@@ -50,6 +50,11 @@ function nodeBackendRewrites(): { source: string; destination: string }[] {
       source: "/api/dataset/setup",
       destination: `${target}/api/dataset/setup`,
     },
+    // Stage 18 — Drive metadata GET (encrypted local store; Next handler remains as rollback)
+    {
+      source: "/api/dataset/drive/metadata",
+      destination: `${target}/api/dataset/drive/metadata`,
+    },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
       source: "/api/auth/login",
