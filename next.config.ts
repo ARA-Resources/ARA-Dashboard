@@ -102,6 +102,15 @@ function nodeBackendRewrites(): NodeRewrite[] {
       source: "/api/excel/lateral-master-sheet",
       destination: `${target}/api/excel/lateral-master-sheet`,
     },
+    // Stage 29A — Lateral processing wizard Drive discovery GETs
+    {
+      source: "/api/dataset/lateral-processing/workbooks",
+      destination: `${target}/api/dataset/lateral-processing/workbooks`,
+    },
+    {
+      source: "/api/dataset/lateral-processing/worksheets",
+      destination: `${target}/api/dataset/lateral-processing/worksheets`,
+    },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
       source: "/api/auth/login",

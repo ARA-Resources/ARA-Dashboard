@@ -23,6 +23,14 @@ export interface ProcessingWorkbookConfig {
   fileName: string;
 }
 
+export interface WorkbookOption {
+  id: string;
+  name: string;
+  mimeType: string;
+  modifiedTime: string | null;
+  webViewLink: string | null;
+}
+
 /**
  * Pipeline / VBA / reconcile still require the XLSM Master.
  * When Company primary master is a Google Sheet, processingMasterWorkbook holds the XLSM.

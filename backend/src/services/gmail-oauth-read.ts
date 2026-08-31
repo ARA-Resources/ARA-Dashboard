@@ -136,6 +136,7 @@ export async function getAuthorizedGmailClient() {
     auth: stored,
     gmail: google.gmail({ version: "v1", auth: client }),
     drive: google.drive({ version: "v3", auth: client }),
+    sheets: google.sheets({ version: "v4", auth: client }),
     oauth2Client: client,
   };
 }

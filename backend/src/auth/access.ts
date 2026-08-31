@@ -131,6 +131,15 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
     return "authenticated";
   }
 
+  // Stage 29A: Lateral processing wizard Drive discovery GETs
+  if (
+    (path === "/api/dataset/lateral-processing/workbooks" ||
+      path === "/api/dataset/lateral-processing/worksheets") &&
+    (verb === "GET" || verb === "HEAD")
+  ) {
+    return "authenticated";
+  }
+
   // Stage 25: Consulting Excel dashboard GETs (filesystem-backed)
   if (
     (path === "/api/excel/consulting" ||
