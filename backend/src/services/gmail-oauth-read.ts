@@ -1,9 +1,12 @@
 /**
- * Stage 19: read-only Gmail/Drive OAuth helpers for connection status.
- * Does NOT persist token refreshes — full OAuth write layer deferred to Stage 22.
+ * Stage 19/22: Gmail/Drive OAuth helpers for connection status and disconnect.
+ * Does NOT persist token refreshes — deferred to future Gmail/Drive OAuth stage.
  */
 import { google } from "googleapis";
-import { readEncryptedJson } from "./encrypted-json-store.js";
+import {
+  deleteEncryptedJson,
+  readEncryptedJson,
+} from "./encrypted-json-store.js";
 import {
   getOAuthRedirectUri,
 } from "../config/runtime.js";
@@ -39,6 +42,11 @@ export function createOAuth2Client() {
 
 export async function readGmailAuth(): Promise<StoredGmailAuth | null> {
   return readEncryptedJson<StoredGmailAuth>(TOKEN_FILE);
+}
+
+/** Remove stored Gmail/Drive OAuth tokens (local disconnect only). */
+export async function clearGmailAuth(): Promise<void> {
+  await deleteEncryptedJson(TOKEN_FILE);
 }
 
 /**

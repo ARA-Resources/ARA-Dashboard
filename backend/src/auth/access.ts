@@ -97,12 +97,14 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
     return "authenticated";
   }
 
-  // Stage 19: Connections GET only (DELETE remains Next operator route)
-  if (
-    path === "/api/dataset/connections" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
+  // Stage 19/22: Connections GET (authenticated) + DELETE (operator)
+  if (path === "/api/dataset/connections") {
+    if (verb === "GET" || verb === "HEAD") {
+      return "authenticated";
+    }
+    if (verb === "DELETE") {
+      return "operator";
+    }
   }
 
   // Stage 20: Dataset current GET (filesystem read-only; ?seed=1 not supported)
