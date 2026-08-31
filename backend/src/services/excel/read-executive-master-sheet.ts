@@ -9,9 +9,16 @@ import {
 import type { ExcelReadResult, ExcelReaderOptions } from "../../types/excel.js";
 import {
   assertExecutiveMasterHeaders,
+  applyExecutiveMasterFilters,
+  discoverExecutiveMasterFilters,
   EXECUTIVE_MASTER_HEADER_ROW,
   EXECUTIVE_MASTER_SHEET_NAME,
+  paginateExecutiveRows,
   projectExecutiveMasterLiveColumns,
+  type ExecutiveMasterFilterSchema,
+  type ExecutiveMasterPageSize,
+  type ExecutiveMasterSheetPageResult,
+  type ExecutiveMasterSheetQuery,
   type ExecutiveMasterDataSourceKind,
   type ExecutiveMasterSheetReadResult,
 } from "./executive-master-sheet.js";
@@ -211,4 +218,48 @@ export async function readExecutiveMasterSheet(
         : "Executive Master Sheet could not be loaded.";
     throw new Error(message);
   }
+}
+
+function sourceUrlFromMeta(filePath?: string): string | undefined {
+  if (!filePath) return undefined;
+  if (/^https?:\/\//i.test(filePath)) return filePath;
+  return undefined;
+}
+
+export async function getExecutiveMasterFilterSchema(
+  options?: ExcelReaderOptions
+): Promise<ExecutiveMasterFilterSchema> {
+  const sheet = await readExecutiveMasterSheet(options);
+  return {
+    sheetName: sheet.sheetName,
+    sourceFile: sheet.sourceFile,
+    sourceUrl: sourceUrlFromMeta(sheet.meta.filePath),
+    sourceKind: sheet.sourceKind,
+    headers: [...sheet.headers],
+    fields: discoverExecutiveMasterFilters(sheet.headers, sheet.rows),
+  };
+}
+
+export async function queryExecutiveMasterSheet(
+  query: ExecutiveMasterSheetQuery,
+  options?: ExcelReaderOptions
+): Promise<ExecutiveMasterSheetPageResult> {
+  const sheet = await readExecutiveMasterSheet(options);
+  const filtered = applyExecutiveMasterFilters(sheet.rows, query);
+  const page = paginateExecutiveRows(filtered, query.page, query.pageSize);
+
+  return {
+    businessUnitId: "executive",
+    sheetName: sheet.sheetName,
+    sourceFile: sheet.sourceFile,
+    sourceUrl: sourceUrlFromMeta(sheet.meta.filePath),
+    sourceKind: sheet.sourceKind,
+    headers: [...sheet.headers],
+    rows: page.rows,
+    total: page.total,
+    page: page.page,
+    pageSize: page.pageSize as ExecutiveMasterPageSize,
+    pageCount: page.pageCount,
+    meta: sheet.meta,
+  };
 }

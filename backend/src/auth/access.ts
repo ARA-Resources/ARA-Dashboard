@@ -148,6 +148,14 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
     return "authenticated";
   }
 
+  // Stage 27: Executive Master Sheet GET (Excel/Drive-backed)
+  if (
+    path === "/api/excel/executive-master-sheet" &&
+    (verb === "GET" || verb === "HEAD")
+  ) {
+    return "authenticated";
+  }
+
   if (path.startsWith("/api/")) {
     if (verb === "GET" || verb === "HEAD") return "authenticated";
     return "operator";

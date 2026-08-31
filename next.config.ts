@@ -92,6 +92,11 @@ function nodeBackendRewrites(): NodeRewrite[] {
       source: "/api/excel/executive-p-dashboard",
       destination: `${target}/api/excel/executive-p-dashboard`,
     },
+    // Stage 27 — Executive Master Sheet GET (export remains on Next)
+    {
+      source: "/api/excel/executive-master-sheet",
+      destination: `${target}/api/excel/executive-master-sheet`,
+    },
     // Stage 8C-1 — authentication bridge (Next Route Handlers remain as rollback)
     {
       source: "/api/auth/login",
