@@ -6,11 +6,7 @@ services:
     container_name: ara-dashboard
     restart: unless-stopped
     ports:
-<<<<<<< HEAD
-      - "3001:3000"
-=======
       - "7000:7000"
->>>>>>> 42aef07 (ports change to 7000 for test)
     volumes:
       - ara_pgdata:/var/lib/postgresql/data
     env_file:
