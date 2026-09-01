@@ -10,16 +10,36 @@ import {
 import { isPostgresMode } from "@/lib/persistence/persistence-mode";
 import { getEncryptedConfigStore } from "@/lib/persistence/store-factory";
 
-function resolveEncryptedStoreDir() {
-  const isServerlessRuntime =
+/** File-mode encrypted JSON directory (matches other .data stores in this repo). */
+const LOCAL_ENCRYPTED_STORE_DIR = path.join(process.cwd(), ".data");
+
+function isServerlessRuntime(): boolean {
+  return (
     Boolean(process.env.VERCEL) ||
     Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
-    process.cwd().startsWith("/var/task");
+    process.cwd().startsWith("/var/task")
+  );
+}
 
-  if (isServerlessRuntime) {
-    return path.join(os.tmpdir(), "ara-dashboard", ".data");
-  }
-  return path.join(process.cwd(), ".data");
+function localEncryptedFilePath(fileName: string): string {
+  return path.join(LOCAL_ENCRYPTED_STORE_DIR, fileName);
+}
+
+function serverlessEncryptedFilePath(fileName: string): string {
+  return path.join(
+    /* turbopackIgnore: true */ os.tmpdir(),
+    "ara-dashboard",
+    ".data",
+    fileName
+  );
+}
+
+function serverlessEncryptedStoreDir(): string {
+  return path.join(
+    /* turbopackIgnore: true */ os.tmpdir(),
+    "ara-dashboard",
+    ".data"
+  );
 }
 
 function resolveSecretKey(): Buffer {
@@ -69,38 +89,37 @@ function decryptPayload(payload: {
   ]).toString("utf8");
 }
 
+function parseEncryptedEnvelope<T>(raw: string): T | null {
+  const envelope = JSON.parse(raw) as {
+    alg: string;
+    iv: string;
+    tag: string;
+    ciphertext: string;
+  };
+  if (envelope.alg !== "aes-256-gcm") return null;
+  return JSON.parse(decryptPayload(envelope)) as T;
+}
+
 export async function readEncryptedJson<T>(fileName: string): Promise<T | null> {
   if (isPostgresMode()) {
     try {
       const raw = await getEncryptedConfigStore().readRawEnvelope(fileName);
       if (raw) {
-        const envelope = JSON.parse(raw) as {
-          alg: string;
-          iv: string;
-          tag: string;
-          ciphertext: string;
-        };
-        if (envelope.alg === "aes-256-gcm") {
-          return JSON.parse(decryptPayload(envelope)) as T;
-        }
+        const parsed = parseEncryptedEnvelope<T>(raw);
+        if (parsed) return parsed;
       }
     } catch {
       // Fall through to local .data file (common during postgres migration).
     }
   }
   try {
-    const raw = await fs.readFile(
-      path.join(resolveEncryptedStoreDir(), fileName),
-      "utf8"
-    );
-    const envelope = JSON.parse(raw) as {
-      alg: string;
-      iv: string;
-      tag: string;
-      ciphertext: string;
-    };
-    if (envelope.alg !== "aes-256-gcm") return null;
-    return JSON.parse(decryptPayload(envelope)) as T;
+    const raw = isServerlessRuntime()
+      ? await fs.readFile(
+          /* turbopackIgnore: true */ serverlessEncryptedFilePath(fileName),
+          "utf8"
+        )
+      : await fs.readFile(localEncryptedFilePath(fileName), "utf8");
+    return parseEncryptedEnvelope<T>(raw);
   } catch {
     return null;
   }
@@ -120,9 +139,18 @@ export async function writeEncryptedJson(
     await getEncryptedConfigStore().writeRawEnvelope(fileName, envelopeStr);
     return;
   }
-  const storeDir = resolveEncryptedStoreDir();
-  await fs.mkdir(storeDir, { recursive: true });
-  await fs.writeFile(path.join(storeDir, fileName), envelopeStr, "utf8");
+  if (isServerlessRuntime()) {
+    const storeDir = serverlessEncryptedStoreDir();
+    await fs.mkdir(/* turbopackIgnore: true */ storeDir, { recursive: true });
+    await fs.writeFile(
+      /* turbopackIgnore: true */ serverlessEncryptedFilePath(fileName),
+      envelopeStr,
+      "utf8"
+    );
+    return;
+  }
+  await fs.mkdir(LOCAL_ENCRYPTED_STORE_DIR, { recursive: true });
+  await fs.writeFile(localEncryptedFilePath(fileName), envelopeStr, "utf8");
 }
 
 export async function deleteEncryptedJson(fileName: string): Promise<void> {
@@ -131,7 +159,13 @@ export async function deleteEncryptedJson(fileName: string): Promise<void> {
     return;
   }
   try {
-    await fs.unlink(path.join(resolveEncryptedStoreDir(), fileName));
+    if (isServerlessRuntime()) {
+      await fs.unlink(
+        /* turbopackIgnore: true */ serverlessEncryptedFilePath(fileName)
+      );
+      return;
+    }
+    await fs.unlink(localEncryptedFilePath(fileName));
   } catch {
     // ignore
   }
