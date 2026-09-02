@@ -138,6 +138,7 @@ function nodeBackendRewrites(): NodeRewrite[] {
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  serverExternalPackages: ["googleapis", "exceljs"],
   async rewrites() {
     // beforeFiles: required so these paths proxy to Node even while the
     // legacy Next Route Handlers still exist (afterFiles lose to static routes).

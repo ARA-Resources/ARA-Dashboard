@@ -3,10 +3,10 @@ version: '3.8'
 services:
   ara-dashboard:
     build: .
-    container_name: ara-dashboard
+    container_name: ara-dashboard-test
     restart: unless-stopped
     ports:
-      - "7000:7000"
+      - "7000:3000"   # host:container — Next.js must listen on 7000 inside (see PORT below)
     volumes:
       - ara_pgdata:/var/lib/postgresql/data
     env_file:
