@@ -127,7 +127,7 @@ export function useLateralMasterFilterSchema() {
   return useQuery({
     queryKey: lateralMasterSchemaQueryKey(),
     queryFn: () => fetchLateralMasterFilterSchema(),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -140,7 +140,7 @@ export function useLateralMasterSheet(query: LateralMasterSheetClientQuery) {
   return useQuery({
     queryKey: lateralMasterSheetQueryKey(query),
     queryFn: () => fetchLateralMasterSheet(query),
-    staleTime: 30_000,
+    staleTime: 60_000,
     // Keep previous page only while paging with the same filters.
     // Stale unfiltered rows make Job Description search look broken.
     placeholderData: hasActiveFilters ? undefined : (previous) => previous,

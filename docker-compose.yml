@@ -9,8 +9,10 @@ services:
       - "3000:3000"   # host:container — Next.js must listen on 7000 inside (see PORT below)
     volumes:
       - ara_pgdata:/var/lib/postgresql/data
+      - ara_appdata:/app/.data
     env_file:
       - .env
 
 volumes:
   ara_pgdata:
+  ara_appdata:

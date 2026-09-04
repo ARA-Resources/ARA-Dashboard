@@ -239,7 +239,7 @@ export function inferLateralFilterControl(
 }
 
 /** Order Job Status options from Excel; never add statuses that are not present. */
-function orderJobStatusValues(values: string[]): string[] {
+export function orderJobStatusValues(values: string[]): string[] {
   const byKey = new Map<string, string>();
   for (const value of values) {
     const key = value.toLowerCase();

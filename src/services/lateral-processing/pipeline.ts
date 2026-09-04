@@ -854,16 +854,23 @@ export async function runLateralDatasetPipeline(): Promise<LateralPipelineResult
       masterSheetName: runSetup.masterSheet,
     });
     if (!postedResult.ok) {
+      // Hard-fail only when Postgres posted sync did not complete.
+      // XLSM Column M is secondary; PG-primary soft failures return ok:true
+      // with xlsmMirrorWarning from the processor.
       return fail(18, postedResult.error, SUGGESTED_ACTIONS[18]);
     }
+    const xlsmNote = postedResult.xlsmMirrorWarning
+      ? ` WARNING (XLSM secondary mirror): ${postedResult.xlsmMirrorWarning}`
+      : "";
     markOk(
       18,
-      `Posted Sheet A/B/C: cleaned=${postedResult.counts.validAtciRows}/${postedResult.counts.postedSheetRowsRead}; ` +
+      `Posted Sheet A/B/C (Postgres primary): cleaned=${postedResult.counts.validAtciRows}/${postedResult.counts.postedSheetRowsRead}; ` +
         `Demand Yes=${postedResult.counts.demandYesCount} No=${postedResult.counts.demandNoCount}; ` +
-        `Master M Yes=${postedResult.counts.masterRowsMarkedYes}; ` +
+        `Master posted Yes=${postedResult.counts.masterRowsMarkedYes}; ` +
         `matched JRs=${postedResult.counts.matchingJrs}; ` +
         `Posted-only JRs=${postedResult.counts.nonMatchingPostedJrs}; ` +
-        `Column K unchanged`
+        `Column K unchanged` +
+        xlsmNote
     );
   } catch (err) {
     return fail(

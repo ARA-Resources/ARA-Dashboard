@@ -20,7 +20,8 @@
  *   3) Excel final write (Demand + Column M, keep_vba) — compatibility
  * If step 2 succeeds and step 3 fails, PostgreSQL and XLSM can diverge.
  * Failure reporting must not claim the workbook is unchanged when PG was updated
- * or the Posted Sheet was already cleaned.
+ * or the Posted Sheet was already cleaned. Pipeline treats XLSM-only failure as
+ * a warning and continues (Postgres-primary fail policy).
  *
  * Empty Posted JR list remains a safe no-op (no mass reset of posted='Yes').
  *
@@ -69,6 +70,13 @@ export interface PostedMatchingSuccess {
   postedColumnIndex: typeof MASTER_POSTED_COLUMN_M;
   postedSheetColumns: { a: "posting"; b: "Job Requisition ID"; c: "Demand" };
   helperColumnsWritten: true;
+  /** Postgres posted sync completed (primary). */
+  postgresPostedSynced: true;
+  /**
+   * When set, XLSM Column M / Posted Sheet final write failed or was skipped,
+   * but Postgres is authoritative — pipeline should continue with a warning.
+   */
+  xlsmMirrorWarning?: string;
 }
 
 export interface PostedMatchingFailure {
@@ -81,6 +89,8 @@ export interface PostedMatchingFailure {
   workbookUnchanged: boolean;
   columnKModified: false;
   postgresPostedUpdated?: boolean;
+  /** True when PG sync succeeded; caller may treat XLSM-only failures as soft. */
+  postgresPostedSynced?: boolean;
 }
 
 export type PostedMatchingResult = PostedMatchingSuccess | PostedMatchingFailure;
@@ -189,6 +199,8 @@ export async function applyPostedSheetMatchingToStagedWorkbook(options: {
     /*
      * Excel is used for Posted Sheet input/output and Column M mirror.
      * PostgreSQL lateral_master is the sole source of truth for matching.
+     * Avoid openpyxl delete_rows (very slow on large sheets); overwrite in place.
+     * Rows JSON is written to a temp file (not stdout) to avoid maxBuffer blowups.
      */
     const pythonScript = `
 import json
@@ -197,6 +209,7 @@ from openpyxl import load_workbook
 
 workbook_path = sys.argv[1]
 posted_sheet_name = sys.argv[2]
+out_json_path = sys.argv[3]
 
 def clean(value):
     if value is None:
@@ -247,31 +260,37 @@ try:
 
         rows.append((cleaned, jr))
 
-    max_clear = max(ws.max_row or 1, last_row)
-    if max_clear > 1:
-        ws.delete_rows(2, max_clear - 1)
-
+    # Overwrite in place (no delete_rows — too slow on 5k+ rows with VBA).
+    ws.cell(1, 1).value = ws.cell(1, 1).value or "Job Requisition"
     ws.cell(1, 2).value = "Job Requisition ID"
     ws.cell(1, 3).value = "Demand"
 
     for i, (cleaned, jr) in enumerate(rows, start=2):
         ws.cell(i, 1).value = cleaned
         ws.cell(i, 2).value = jr
-        # Demand is filled by the Node/PostgreSQL layer below.
+        ws.cell(i, 3).value = None
+
+    # Clear leftover trailing rows from a previous longer Posted list
+    for r in range(len(rows) + 2, last_row + 1):
+        ws.cell(r, 1).value = None
+        ws.cell(r, 2).value = None
+        ws.cell(r, 3).value = None
 
     wb.save(workbook_path)
     wb.close()
 
-    print(json.dumps({
-        "ok": True,
-        "postedSheetRowsRead": max(0, last_row - 1),
-        "validAtciRows": len(rows),
-        "removedNonAtciRows": removed,
-        "rows": [
-            {"posting": posting, "jr": jr}
-            for posting, jr in rows
-        ]
-    }))
+    with open(out_json_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "ok": True,
+            "postedSheetRowsRead": max(0, last_row - 1),
+            "validAtciRows": len(rows),
+            "removedNonAtciRows": removed,
+            "rows": [
+                {"posting": posting, "jr": jr}
+                for posting, jr in rows
+            ]
+        }, f)
+    print(json.dumps({"ok": True, "outPath": out_json_path, "validAtciRows": len(rows)}))
 
 except Exception as exc:
     print(json.dumps({
@@ -280,14 +299,37 @@ except Exception as exc:
     }))
 `;
 
+    const cleanOutJson = path.join(
+      os.tmpdir(),
+      `lateral-posted-rows-${Date.now()}.json`
+    );
     await fs.writeFile(scriptPath, pythonScript, "utf8");
 
-    const { stdout } = await execPython([scriptPath, workbookPath, postedSheetName], {
-      timeout: 300_000,
-      maxBuffer: 16 * 1024 * 1024,
-    });
+    const { stdout } = await execPython(
+      [scriptPath, workbookPath, postedSheetName, cleanOutJson],
+      {
+        timeout: 600_000,
+        maxBuffer: 32 * 1024 * 1024,
+      }
+    );
 
-    const payload = JSON.parse((stdout || "").trim() || "{}") as {
+    const meta = JSON.parse((stdout || "").trim() || "{}") as {
+      ok?: boolean;
+      error?: string;
+    };
+
+    if (!meta.ok) {
+      return {
+        ok: false,
+        error: meta.error || "Posted Sheet processing failed.",
+        workbookUnchanged: true,
+        columnKModified: false,
+      };
+    }
+
+    const payload = JSON.parse(
+      await fs.readFile(cleanOutJson, "utf8")
+    ) as {
       ok?: boolean;
       error?: string;
       postedSheetRowsRead?: number;
@@ -298,6 +340,7 @@ except Exception as exc:
         jr: string;
       }>;
     };
+    await fs.unlink(cleanOutJson).catch(() => undefined);
 
     if (!payload.ok) {
       return {
@@ -335,8 +378,25 @@ except Exception as exc:
     /*
      * Final workbook write MUST use openpyxl keep_vba=True.
      * Empty Posted JR list: do NOT mass-reset Master Column M to "-".
+     * Matched IDs + Posted rows passed via temp JSON files (not embedded in .py).
      */
     const skipMasterPostedRewrite = uniqueJrs.length === 0;
+    let xlsmMirrorWarning: string | undefined;
+
+    const matchedJsonPath = path.join(
+      os.tmpdir(),
+      `lateral-posted-matched-${Date.now()}.json`
+    );
+    const rowsJsonPath = path.join(
+      os.tmpdir(),
+      `lateral-posted-final-rows-${Date.now()}.json`
+    );
+    await fs.writeFile(
+      matchedJsonPath,
+      JSON.stringify([...matchedIds]),
+      "utf8"
+    );
+    await fs.writeFile(rowsJsonPath, JSON.stringify(rows), "utf8");
 
     const finalWriteScript = `
 import json
@@ -346,9 +406,15 @@ from openpyxl import load_workbook
 workbook_path = sys.argv[1]
 posted_sheet_name = sys.argv[2]
 master_sheet_name = sys.argv[3]
-matched_ids = set(json.loads(sys.argv[4]))
-skip_master_posted = sys.argv[5] == "1"
-posted_col_m = int(sys.argv[6])
+matched_json_path = sys.argv[4]
+rows_json_path = sys.argv[5]
+skip_master_posted = sys.argv[6] == "1"
+posted_col_m = int(sys.argv[7])
+
+with open(matched_json_path, "r", encoding="utf-8") as f:
+    matched_ids = set(json.load(f))
+with open(rows_json_path, "r", encoding="utf-8") as f:
+    rows = json.load(f)
 
 wb = load_workbook(workbook_path, keep_vba=True, data_only=False)
 
@@ -368,7 +434,7 @@ master_ws = wb[master_sheet_name]
 demand_yes = 0
 demand_no = 0
 
-for i, row in enumerate(${JSON.stringify(rows)}, start=2):
+for i, row in enumerate(rows, start=2):
     posting = str(row.get("posting") or "").strip()
     jr = str(row.get("jr") or "").strip()
     demand = "Yes" if jr in matched_ids else "No"
@@ -412,6 +478,7 @@ wb.save(workbook_path)
 wb.close()
 
 print(json.dumps({
+    "ok": True,
     "demandYes": demand_yes,
     "demandNo": demand_no,
     "masterYes": master_yes,
@@ -430,39 +497,60 @@ print(json.dumps({
     try {
       await fs.writeFile(finalWritePath, finalWriteScript, "utf8");
 
-      const { stdout: finalWriteStdout } = await execPython(
-        [
-          finalWritePath,
-          workbookPath,
-          postedSheetName,
-          masterSheetName,
-          JSON.stringify([...matchedIds]),
-          skipMasterPostedRewrite ? "1" : "0",
-          String(MASTER_POSTED_COLUMN_M),
-        ],
-        {
-          timeout: 300_000,
-          maxBuffer: 16 * 1024 * 1024,
+      try {
+        const { stdout: finalWriteStdout } = await execPython(
+          [
+            finalWritePath,
+            workbookPath,
+            postedSheetName,
+            masterSheetName,
+            matchedJsonPath,
+            rowsJsonPath,
+            skipMasterPostedRewrite ? "1" : "0",
+            String(MASTER_POSTED_COLUMN_M),
+          ],
+          {
+            timeout: 600_000,
+            maxBuffer: 32 * 1024 * 1024,
+          }
+        );
+
+        const finalWrite = JSON.parse(
+          (finalWriteStdout || "").trim() || "{}"
+        ) as {
+          ok?: boolean;
+          demandYes?: number;
+          demandNo?: number;
+          masterYes?: number;
+          masterDash?: number;
+          masterRowsMarkedYes?: number;
+          masterRowsResetToDash?: number;
+          error?: string;
+        };
+
+        if (finalWrite.ok === false) {
+          throw new Error(finalWrite.error || "XLSM Posted final write failed.");
         }
-      );
 
-      const finalWrite = JSON.parse(
-        (finalWriteStdout || "").trim() || "{}"
-      ) as {
-        demandYes?: number;
-        demandNo?: number;
-        masterYes?: number;
-        masterDash?: number;
-        masterRowsMarkedYes?: number;
-        masterRowsResetToDash?: number;
-      };
-
-      if (!persistDatabase) {
-        masterRowsMarkedYes = finalWrite.masterRowsMarkedYes ?? 0;
-        masterRowsResetToDash = finalWrite.masterRowsResetToDash ?? 0;
+        if (!persistDatabase) {
+          masterRowsMarkedYes = finalWrite.masterRowsMarkedYes ?? 0;
+          masterRowsResetToDash = finalWrite.masterRowsResetToDash ?? 0;
+        }
+      } catch (xlsmErr) {
+        // Postgres is primary. XLSM Column M is secondary compatibility only.
+        if (persistDatabase && postgresSyncCompleted) {
+          xlsmMirrorWarning = `XLSM Posted Sheet / Column M mirror failed after Postgres posted sync succeeded: ${
+            xlsmErr instanceof Error ? xlsmErr.message : String(xlsmErr)
+          }. Dashboard Master Sheet uses Postgres; re-run Step 18 later to refresh the XLSM mirror if needed.`;
+          console.warn("[lateral-posted]", xlsmMirrorWarning);
+        } else {
+          throw xlsmErr;
+        }
       }
     } finally {
       await fs.unlink(finalWritePath).catch(() => undefined);
+      await fs.unlink(matchedJsonPath).catch(() => undefined);
+      await fs.unlink(rowsJsonPath).catch(() => undefined);
     }
 
     return {
@@ -477,6 +565,8 @@ print(json.dumps({
         c: "Demand",
       },
       helperColumnsWritten: true,
+      postgresPostedSynced: true,
+      xlsmMirrorWarning,
       counts: {
         postedSheetRowsRead: payload.postedSheetRowsRead ?? 0,
         validAtciRows: payload.validAtciRows ?? 0,
@@ -514,12 +604,47 @@ print(json.dumps({
       );
     }
 
+    // If Postgres already synced, treat as soft success for pipeline continuation.
+    if (postgresSyncCompleted) {
+      return {
+        ok: true,
+        postedSheet: POSTED_SHEET_NAME,
+        masterSheet: "PostgreSQL lateral_master",
+        postedColumn: "M",
+        postedColumnIndex: MASTER_POSTED_COLUMN_M,
+        postedSheetColumns: {
+          a: "posting",
+          b: "Job Requisition ID",
+          c: "Demand",
+        },
+        helperColumnsWritten: true,
+        postgresPostedSynced: true,
+        xlsmMirrorWarning: warnings.length
+          ? `${base} ${warnings.join(" ")}`
+          : base,
+        counts: {
+          postedSheetRowsRead: 0,
+          validAtciRows: 0,
+          removedNonAtciRows: 0,
+          uniquePostedJrIds: 0,
+          matchingJrs: 0,
+          nonMatchingPostedJrs: 0,
+          demandYesCount: 0,
+          demandNoCount: 0,
+          masterRowsMarkedYes: 0,
+          masterRowsResetToDash: 0,
+          columnKUnchanged: true,
+        },
+      };
+    }
+
     return {
       ok: false,
       error: warnings.length ? `${base} ${warnings.join(" ")}` : base,
       workbookUnchanged: !(postedSheetCleaned || postgresPostedUpdated),
       columnKModified: false,
       postgresPostedUpdated,
+      postgresPostedSynced: postgresSyncCompleted,
     };
   } finally {
     await fs.unlink(scriptPath).catch(() => undefined);

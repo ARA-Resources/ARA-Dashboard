@@ -25,11 +25,15 @@ export function getDbClient(): ReturnType<typeof postgres> {
   }
 
   _sql = postgres(url, {
-    // Serverless-safe: max 1 connection per process to avoid exhausting the pool
-    // on Vercel. Increase if running on a persistent server.
-    max: 1,
+    // Persistent Docker/VPS: small pool. Neon pooler: disable prepared statements
+    // to avoid "cached plan must not change result type" after migrations.
+    max: Math.min(
+      10,
+      Math.max(1, Number(process.env.ARA_PG_POOL_MAX || "5") || 5)
+    ),
     idle_timeout: 20,
-    connect_timeout: 10,
+    connect_timeout: 15,
+    prepare: false,
     ssl: url.includes("localhost") || url.includes("127.0.0.1") ? false : "require",
   });
 

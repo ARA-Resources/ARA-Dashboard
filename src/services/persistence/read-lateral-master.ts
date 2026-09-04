@@ -99,6 +99,13 @@ export interface LateralMasterQueryFilters extends LateralMasterPRolesFilters {
   jobManagementLevel?: string[];
   primaryLocation?: string[];
   poc?: string[];
+  /** Free-text contains on Job Description (AND tokens when comma/semicolon/pipe). */
+  jobDescriptionContains?: string;
+  /** Free-text contains on Job Requisition ID. */
+  jobRequisitionIdContains?: string;
+  /** Inclusive date range on `date` (YYYY-MM-DD). */
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 export interface LateralMasterPageQuery {
@@ -320,6 +327,41 @@ function buildFilterFragments(
     if (ids.length > 0) {
       fragments.push(sql`job_requisition_id = ANY(${ids})`);
     }
+  }
+
+  const jrContains = String(filters.jobRequisitionIdContains ?? "").trim();
+  if (jrContains) {
+    fragments.push(
+      sql`LOWER(COALESCE(job_requisition_id, '')) LIKE ${`%${jrContains.toLowerCase()}%`}`
+    );
+  }
+
+  const jdRaw = String(filters.jobDescriptionContains ?? "").trim();
+  if (jdRaw) {
+    const tokens = jdRaw
+      .toLowerCase()
+      .replace(/\u00a0/g, " ")
+      .split(/[,;/|]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const needles =
+      tokens.length > 0
+        ? tokens
+        : [jdRaw.toLowerCase().replace(/\s+/g, " ").trim()].filter(Boolean);
+    for (const needle of needles) {
+      fragments.push(
+        sql`LOWER(COALESCE(job_description, '')) LIKE ${`%${needle}%`}`
+      );
+    }
+  }
+
+  const dateFrom = String(filters.dateFrom ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
+    fragments.push(sql`date >= ${dateFrom}::date`);
+  }
+  const dateTo = String(filters.dateTo ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+    fragments.push(sql`date <= ${dateTo}::date`);
   }
 
   return fragments;
@@ -678,7 +720,8 @@ export function toExcelStyleMasterRow(
 
 /**
  * Full Master Sheet payload from PostgreSQL (Excel header contract).
- * Used by GET /api/excel/lateral-master-sheet when source=postgres.
+ * Prefer queryLateralMasterAsExcelPage for dashboard UI (paginated).
+ * Kept for export / full dumps.
  */
 export async function listLateralMasterAsExcelRows(
   sqlClient?: SqlClient
@@ -696,5 +739,38 @@ export async function listLateralMasterAsExcelRows(
     headers: [...LATERAL_MASTER_EXCEL_HEADERS],
     rows: rows.map(toExcelStyleMasterRow),
     total: rows.length,
+  };
+}
+
+/**
+ * Paginated Master Sheet rows from PostgreSQL (Excel header contract).
+ * Does not load the full table into memory.
+ */
+export async function queryLateralMasterAsExcelPage(
+  query: LateralMasterPageQuery = {},
+  sqlClient?: SqlClient
+): Promise<{
+  headers: string[];
+  rows: Array<Record<string, string | number | null>>;
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+}> {
+  const page = await queryLateralMaster(
+    {
+      ...query,
+      sortBy: query.sortBy ?? "date",
+      sortDirection: query.sortDirection ?? "desc",
+    },
+    sqlClient
+  );
+  return {
+    headers: [...LATERAL_MASTER_EXCEL_HEADERS],
+    rows: page.rows.map(toExcelStyleMasterRow),
+    total: page.total,
+    page: page.page,
+    pageSize: page.pageSize,
+    pageCount: page.pageCount,
   };
 }

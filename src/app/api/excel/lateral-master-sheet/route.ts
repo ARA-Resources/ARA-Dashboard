@@ -42,7 +42,14 @@ export async function GET(request: Request) {
       const schema = await getLateralMasterFilterSchema({
         bypassCache: refresh,
       });
-      return NextResponse.json({ ok: true, schema });
+      return NextResponse.json(
+        { ok: true, schema },
+        {
+          headers: {
+            "Cache-Control": "private, max-age=60, stale-while-revalidate=120",
+          },
+        }
+      );
     }
 
     const page = Math.max(1, Number(searchParams.get("page") || "1") || 1);
@@ -70,7 +77,16 @@ export async function GET(request: Request) {
       { bypassCache: refresh }
     );
 
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json(
+      { ok: true, ...result },
+      {
+        headers: {
+          "Cache-Control": refresh
+            ? "no-store"
+            : "private, max-age=15, stale-while-revalidate=60",
+        },
+      }
+    );
   } catch (error) {
     const message =
       error instanceof Error

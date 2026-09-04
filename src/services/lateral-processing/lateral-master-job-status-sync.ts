@@ -350,39 +350,99 @@ export async function reconcileLateralMasterJobStatusFromNewSheet(options: {
 
   try {
     await sql.begin(async (tx) => {
-      for (const row of inserts) {
+      // Batch by status — never per-row round-trips (Neon pooler is too slow).
+      const closedIds = updates
+        .filter((u) => u.status === "Closed")
+        .map((u) => u.jr);
+      const activeIds = updates
+        .filter((u) => u.status === "Active")
+        .map((u) => u.jr);
+      const reopenIds = updates
+        .filter((u) => u.status === "Reopen" && u.updateDate)
+        .map((u) => u.jr);
+      const reopenKeepIds = updates
+        .filter((u) => u.status === "Reopen" && !u.updateDate)
+        .map((u) => u.jr);
+      const newStatusIds = updates
+        .filter((u) => u.status === "New")
+        .map((u) => u.jr);
+
+      if (closedIds.length) {
         await tx`
-          INSERT INTO lateral_master (
-            job_requisition_id,
-            date,
-            priority,
-            job_description,
-            skill_categorization,
-            primary_skills,
-            job_management_level,
-            primary_location,
-            market_map,
-            poc,
-            job_status,
-            posted,
-            created_at,
-            updated_at
-          ) VALUES (
-            ${row.job_requisition_id},
-            ${row.date},
-            ${row.priority},
-            ${row.job_description},
-            ${row.skill_categorization},
-            ${row.primary_skills},
-            ${row.job_management_level},
-            ${row.primary_location},
-            ${row.market_map},
-            ${row.poc},
-            ${"New"},
-            ${"-"},
-            NOW(),
-            NOW()
-          )
+          UPDATE lateral_master
+          SET job_status = ${"Closed"}, updated_at = NOW()
+          WHERE job_requisition_id = ANY(${closedIds})
+            AND job_status IS DISTINCT FROM ${"Closed"}
+        `;
+      }
+      if (activeIds.length) {
+        await tx`
+          UPDATE lateral_master
+          SET job_status = ${"Active"}, updated_at = NOW()
+          WHERE job_requisition_id = ANY(${activeIds})
+            AND job_status IS DISTINCT FROM ${"Active"}
+        `;
+      }
+      if (reopenIds.length) {
+        await tx`
+          UPDATE lateral_master
+          SET
+            job_status = ${"Reopen"},
+            date = ${processingDateIso}::date,
+            updated_at = NOW()
+          WHERE job_requisition_id = ANY(${reopenIds})
+        `;
+      }
+      if (reopenKeepIds.length) {
+        await tx`
+          UPDATE lateral_master
+          SET job_status = ${"Reopen"}, updated_at = NOW()
+          WHERE job_requisition_id = ANY(${reopenKeepIds})
+            AND job_status IS DISTINCT FROM ${"Reopen"}
+        `;
+      }
+      if (newStatusIds.length) {
+        await tx`
+          UPDATE lateral_master
+          SET job_status = ${"New"}, updated_at = NOW()
+          WHERE job_requisition_id = ANY(${newStatusIds})
+            AND job_status IS DISTINCT FROM ${"New"}
+        `;
+      }
+
+      // Batch inserts for NEW JRs (chunks of 200)
+      const INSERT_BATCH = 200;
+      for (let i = 0; i < inserts.length; i += INSERT_BATCH) {
+        const chunk = inserts.slice(i, i + INSERT_BATCH).map((row) => ({
+          job_requisition_id: row.job_requisition_id,
+          date: row.date,
+          priority: row.priority,
+          job_description: row.job_description,
+          skill_categorization: row.skill_categorization,
+          primary_skills: row.primary_skills,
+          job_management_level: row.job_management_level,
+          primary_location: row.primary_location,
+          market_map: row.market_map,
+          poc: row.poc,
+          job_status: "New" as const,
+          posted: "-" as const,
+        }));
+        await tx`
+          INSERT INTO lateral_master ${tx(
+            chunk,
+            "job_requisition_id",
+            "date",
+            "priority",
+            "job_description",
+            "skill_categorization",
+            "primary_skills",
+            "job_management_level",
+            "primary_location",
+            "market_map",
+            "poc",
+            "job_status",
+            "posted"
+          )}
           ON CONFLICT (job_requisition_id) DO UPDATE SET
             date = EXCLUDED.date,
             priority = EXCLUDED.priority,
@@ -396,27 +456,6 @@ export async function reconcileLateralMasterJobStatusFromNewSheet(options: {
             job_status = ${"New"},
             updated_at = NOW()
         `;
-      }
-
-      for (const u of updates) {
-        if (u.updateDate && u.dateIso) {
-          await tx`
-            UPDATE lateral_master
-            SET
-              job_status = ${u.status},
-              date = ${u.dateIso}::date,
-              updated_at = NOW()
-            WHERE job_requisition_id = ${u.jr}
-          `;
-        } else {
-          await tx`
-            UPDATE lateral_master
-            SET
-              job_status = ${u.status},
-              updated_at = NOW()
-            WHERE job_requisition_id = ${u.jr}
-          `;
-        }
       }
     });
   } catch (err) {
