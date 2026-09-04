@@ -3,6 +3,7 @@
   writeDatasetSetup,
 } from "@/services/dataset/secure-store";
 import { setDatasetSchedulerTimezone } from "@/services/dataset/scheduler";
+import { parseDriveFolderIdFromUrl } from "@/services/drive/folder";
 import {
   updateLateralScheduler,
   reloadLateralScheduler,
@@ -36,6 +37,24 @@ export async function saveLateralDatasetSetup(body: unknown): Promise<{
   }
 
   const config = parsed.config;
+  // Persist resolved folder IDs from URLs so later reads / Run All don't depend
+  // on re-parsing and so empty folderId + folderUrl alone cannot confuse UI.
+  const resolveId = (folder: typeof config.sourceFolder) => {
+    if (folder.folderId.trim()) return folder.folderId.trim();
+    if (folder.folderUrl.trim()) {
+      const parsedId = parseDriveFolderIdFromUrl(folder.folderUrl.trim());
+      if (parsedId) return parsedId;
+    }
+    return "";
+  };
+  config.sourceFolder = {
+    ...config.sourceFolder,
+    folderId: resolveId(config.sourceFolder),
+  };
+  config.destinationFolder = {
+    ...config.destinationFolder,
+    folderId: resolveId(config.destinationFolder),
+  };
   const schedule = config.schedule;
 
   if (schedule.frequency === "custom") {

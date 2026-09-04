@@ -137,6 +137,16 @@ export async function writeEncryptedJson(
   const envelopeStr = JSON.stringify(envelope, null, 2);
   if (isPostgresMode()) {
     await getEncryptedConfigStore().writeRawEnvelope(fileName, envelopeStr);
+    // Also mirror to .data so operators can inspect / recover after DB issues.
+    try {
+      await fs.mkdir(LOCAL_ENCRYPTED_STORE_DIR, { recursive: true });
+      await fs.writeFile(localEncryptedFilePath(fileName), envelopeStr, "utf8");
+    } catch (err) {
+      console.warn(
+        "[encrypted-json-store] postgres write ok; file mirror failed:",
+        err instanceof Error ? err.message : err
+      );
+    }
     return;
   }
   if (isServerlessRuntime()) {

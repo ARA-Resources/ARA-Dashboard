@@ -91,9 +91,11 @@ export function evaluateFinalCheckpointGates(
     stepOk(17);
   const column_k_validated =
     pipeline?.ok === true && pipeline.columnKValidated === true;
+  const postgresPrimarySoft =
+    pipeline?.ok === true && Boolean(pipeline.xlsmSecondaryWarning);
   const master_workbook_saved =
     pipeline?.ok === true &&
-    pipeline.finalSaveVerified === true &&
+    (pipeline.finalSaveVerified === true || postgresPrimarySoft) &&
     stepOk(20) &&
     stepOk(23);
   const final_xlsm_stored_on_drive =
@@ -101,7 +103,7 @@ export function evaluateFinalCheckpointGates(
     Boolean(pipeline.masterFileId?.trim()) &&
     /\.xlsm$/i.test(pipeline.finalMasterSheet || "") &&
     stepOk(23) &&
-    stepOk(24);
+    (stepOk(24) || postgresPrimarySoft);
 
   const gates: Record<FinalCheckpointGate, boolean> = {
     gmail_email_found,

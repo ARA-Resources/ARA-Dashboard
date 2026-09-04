@@ -529,12 +529,20 @@ export function DatasetManager() {
         const lateralSetupPayload = (await lateralSetupRes
           .json()
           .catch(() => null)) as {
+          configured?: boolean;
           setup?: LateralDataProcessingSetup | null;
+          draft?: LateralDataProcessingSetup | null;
         } | null;
 
         setDriveMetaByDataset(driveMetaPayload?.byDataset ?? {});
         setFolderStats(foldersPayload?.folders ?? []);
-        setLateralSetup(lateralSetupPayload?.setup ?? null);
+        // Only trust persisted setup (configured=true). Defaults/draft must not
+        // look like "Setup configured" — Run All reads the encrypted store.
+        setLateralSetup(
+          lateralSetupPayload?.configured
+            ? (lateralSetupPayload.setup ?? null)
+            : null
+        );
         const nextCurrent: typeof currentByDataset = {};
         for (const item of currentPayload?.datasets ?? []) {
           nextCurrent[item.datasetName] = {

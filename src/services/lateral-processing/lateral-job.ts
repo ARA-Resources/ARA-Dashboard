@@ -251,6 +251,11 @@ async function executeLateralDatasetJobBody(
         parts.push(
           `Pipeline: ${pipelineResult.message} (${pipelineResult.rowsImported} rows)`
         );
+        if (pipelineResult.xlsmSecondaryWarning) {
+          parts.push(
+            `WARNING (XLSM secondary): ${pipelineResult.xlsmSecondaryWarning}`
+          );
+        }
 
         const last =
           pendingCheckpointAdvances[pendingCheckpointAdvances.length - 1];

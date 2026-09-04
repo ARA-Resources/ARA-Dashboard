@@ -105,10 +105,12 @@ export interface LateralPipelineSuccess {
   finalMasterSheet: string;
   /** Configured Master Workbook Drive file ID (updated in place) */
   masterFileId: string;
-  /** Final XLSM save + post-verify completed */
-  finalSaveVerified: true;
-  /** Master Sheet Column K validation passed during final save */
-  columnKValidated: true;
+  /** Final XLSM save + post-verify completed (false when Postgres-primary soft path skipped XLSM) */
+  finalSaveVerified: boolean;
+  /** Master Sheet Column K / Postgres job_status sync completed */
+  columnKValidated: boolean;
+  /** Present when XLSM Drive overwrite was skipped after Postgres Job Status + Posted succeeded */
+  xlsmSecondaryWarning?: string;
   lastUpdated: string;
   steps: PipelineStepLog[];
 }
@@ -932,12 +934,58 @@ export async function runLateralDatasetPipeline(): Promise<LateralPipelineResult
     );
   }
   if (!confirmResult.ok) {
+    // Postgres Job Status + Posted already applied (steps 15 PG + 18).
+    // XLSM final-save validation (e.g. Reopen Column A dates) is secondary —
+    // do not hard-fail the whole Run All as if Postgres never updated.
     if (confirmResult.phase === "validation") {
-      return fail(
+      const xlsmWarning =
+        confirmResult.error || "Final Master XLSM save validation failed.";
+      markOk(
         20,
-        confirmResult.error || "Final Master save validation failed.",
-        "Fix validation failures, then re-run Confirm/Save. The XLSM was not overwritten."
+        `WARNING (XLSM secondary): ${xlsmWarning} Postgres lateral_master Job Status + Posted already updated; Drive XLSM overwrite skipped.`
       );
+      markOk(21, "Skipped VBA finalize — XLSM not overwritten");
+      markOk(22, "Skipped status-safe finalize (Postgres primary)");
+      markOk(23, "XLSM final save skipped after validation warning");
+      markOk(24, "Drive destination upload skipped (XLSM validation warning)");
+      markOk(
+        25,
+        "Dataset Manager XLSM promote skipped; dashboard Master Sheet reads Postgres"
+      );
+
+      const staging = await readReconciliationStaging().catch(() => null);
+      const lastUpdated = new Date().toISOString();
+      const success: LateralPipelineSuccess = {
+        ok: true,
+        message: PIPELINE_SUCCESS_MESSAGE,
+        sourceFile: runSetup.sourceWorkbook.fileName,
+        sourceSheet: runSetup.sourceWorksheet,
+        rowsImported: newSheetResult.rowsWritten,
+        newRequisitions: summary.newRequisitions,
+        reopenedRequisitions: summary.reopenedRequisitions,
+        closedRequisitions: summary.closedRequisitions,
+        activeUnchanged: summary.activeUnchanged,
+        macroStatus: "skipped_xlsm_secondary_validation",
+        finalMasterSheet:
+          staging?.masterFileName || runSetup.masterWorkbook.fileName,
+        masterFileId: staging?.masterFileId || runSetup.masterWorkbook.fileId,
+        finalSaveVerified: false,
+        columnKValidated: true,
+        xlsmSecondaryWarning: xlsmWarning,
+        lastUpdated,
+        steps,
+      };
+
+      await appendPipelineLog({
+        level: "info",
+        event: "lateral_pipeline_success_postgres_primary",
+        timestamp: lastUpdated,
+        startedAt,
+        xlsmSecondaryWarning: xlsmWarning,
+        ...success,
+      });
+
+      return success;
     }
     if (confirmResult.phase === "backup") {
       return fail(

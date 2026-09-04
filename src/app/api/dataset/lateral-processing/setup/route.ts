@@ -53,10 +53,19 @@ async function buildWizardPayload(setup: LateralDataProcessingSetup | null) {
 export async function GET() {
   const setup = await readLateralDataProcessingSetup();
   const merged = await buildWizardPayload(setup);
+  const configured = Boolean(setup);
   return NextResponse.json({
-    configured: Boolean(setup),
+    configured,
     updatedAt: setup?.updatedAt ?? null,
-    setup: merged,
+    /**
+     * Only return a persisted setup when configured=true.
+     * Returning defaults here previously made the UI show "Setup configured"
+     * while Run All still saw null from readLateralDataProcessingSetup().
+     * Wizard can still open with null and apply client-side defaults.
+     */
+    setup: configured ? merged : null,
+    /** Draft defaults for the wizard when not yet saved (optional). */
+    draft: configured ? undefined : merged,
   });
 }
 
