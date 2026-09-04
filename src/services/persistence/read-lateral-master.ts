@@ -13,6 +13,7 @@
  */
 import { getDbClient } from "@/lib/persistence/db-client";
 import type postgres from "postgres";
+import { LATERAL_MASTER_EXCEL_HEADERS } from "@/services/persistence/lateral-master-sheet-columns";
 
 export type SqlClient = ReturnType<typeof postgres>;
 
@@ -29,6 +30,7 @@ export const LATERAL_MASTER_READ_COLUMNS = [
   "market_map",
   "poc",
   "job_status",
+  "opened_on_oorwin",
   "posted",
   "created_at",
   "updated_at",
@@ -119,6 +121,7 @@ export interface LateralMasterRow {
   market_map: string | null;
   poc: string | null;
   job_status: string | null;
+  opened_on_oorwin: string | null;
   posted: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -182,60 +185,27 @@ function dateToIso(value: unknown): string | null {
   return text;
 }
 
+function textOrNull(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") return value;
+  return String(value);
+}
+
 function mapRow(row: Record<string, unknown>): LateralMasterRow {
   return {
     job_requisition_id: String(row.job_requisition_id ?? ""),
     date: dateToIso(row.date),
-    priority: typeof row.priority === "string" ? row.priority : row.priority == null ? null : String(row.priority),
-    job_description:
-      typeof row.job_description === "string"
-        ? row.job_description
-        : row.job_description == null
-          ? null
-          : String(row.job_description),
-    skill_categorization:
-      typeof row.skill_categorization === "string"
-        ? row.skill_categorization
-        : row.skill_categorization == null
-          ? null
-          : String(row.skill_categorization),
-    primary_skills:
-      typeof row.primary_skills === "string"
-        ? row.primary_skills
-        : row.primary_skills == null
-          ? null
-          : String(row.primary_skills),
-    job_management_level:
-      typeof row.job_management_level === "string"
-        ? row.job_management_level
-        : row.job_management_level == null
-          ? null
-          : String(row.job_management_level),
-    primary_location:
-      typeof row.primary_location === "string"
-        ? row.primary_location
-        : row.primary_location == null
-          ? null
-          : String(row.primary_location),
-    market_map:
-      typeof row.market_map === "string"
-        ? row.market_map
-        : row.market_map == null
-          ? null
-          : String(row.market_map),
-    poc: typeof row.poc === "string" ? row.poc : row.poc == null ? null : String(row.poc),
-    job_status:
-      typeof row.job_status === "string"
-        ? row.job_status
-        : row.job_status == null
-          ? null
-          : String(row.job_status),
-    posted:
-      typeof row.posted === "string"
-        ? row.posted
-        : row.posted == null
-          ? null
-          : String(row.posted),
+    priority: textOrNull(row.priority),
+    job_description: textOrNull(row.job_description),
+    skill_categorization: textOrNull(row.skill_categorization),
+    primary_skills: textOrNull(row.primary_skills),
+    job_management_level: textOrNull(row.job_management_level),
+    primary_location: textOrNull(row.primary_location),
+    market_map: textOrNull(row.market_map),
+    poc: textOrNull(row.poc),
+    job_status: textOrNull(row.job_status),
+    opened_on_oorwin: textOrNull(row.opened_on_oorwin),
+    posted: textOrNull(row.posted),
     created_at: (row.created_at as Date | string) ?? new Date().toISOString(),
     updated_at: (row.updated_at as Date | string) ?? new Date().toISOString(),
     last_seen_at: (row.last_seen_at as Date | string | null) ?? null,
@@ -471,6 +441,7 @@ export async function queryLateralMaster(
         market_map,
         poc,
         job_status,
+        opened_on_oorwin,
         posted,
         created_at,
         updated_at,
@@ -530,6 +501,7 @@ export async function listLateralMasterRows(
       market_map,
       poc,
       job_status,
+      opened_on_oorwin,
       posted,
       created_at,
       updated_at,
@@ -677,4 +649,52 @@ export async function getLateralMasterByJobRequisitionId(
     sqlClient
   );
   return page.rows[0] ?? null;
+}
+
+/**
+ * Map a PG Master row to Excel-style keys expected by Master Sheet UI/API.
+ * Preserves Job Description text exactly (no trim/collapse).
+ */
+export function toExcelStyleMasterRow(
+  row: LateralMasterRow
+): Record<string, string | number | null> {
+  return {
+    Date: row.date,
+    "Job Requisition ID": row.job_requisition_id || null,
+    Priority: row.priority,
+    // Intentionally no trim — JD popup parse/copy/download needs full text.
+    "Job Description": row.job_description,
+    "Skill Categorization": row.skill_categorization,
+    "Primary Skills": row.primary_skills,
+    "Job Management Level": row.job_management_level,
+    "Primary Location/Office lOcate": row.primary_location,
+    "Market Map": row.market_map,
+    POC: row.poc,
+    "Job Status": row.job_status,
+    "Opened on Oorwin": row.opened_on_oorwin,
+    Posted: row.posted,
+  };
+}
+
+/**
+ * Full Master Sheet payload from PostgreSQL (Excel header contract).
+ * Used by GET /api/excel/lateral-master-sheet when source=postgres.
+ */
+export async function listLateralMasterAsExcelRows(
+  sqlClient?: SqlClient
+): Promise<{
+  headers: string[];
+  rows: Array<Record<string, string | number | null>>;
+  total: number;
+}> {
+  const rows = await listLateralMasterRows(undefined, {
+    sqlClient,
+    sortBy: "date",
+    sortDirection: "desc",
+  });
+  return {
+    headers: [...LATERAL_MASTER_EXCEL_HEADERS],
+    rows: rows.map(toExcelStyleMasterRow),
+    total: rows.length,
+  };
 }

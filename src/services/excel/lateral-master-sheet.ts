@@ -173,11 +173,12 @@ export function inferLateralFilterControl(
   if (!name || name.toLowerCase() === "id") return null;
   if (stats.nonNull === 0) return null;
 
-  // Date columns
+  // Date columns (exclude "Opened on Oorwin" — free text in Master Sheet)
   if (
-    /^(date|opened|closed|updated|created)/i.test(name) ||
-    /\bdate\b/i.test(name) ||
-    stats.dateRatio >= 0.6
+    !/oorwin/i.test(name) &&
+    (/^(date|opened|closed|updated|created)/i.test(name) ||
+      /\bdate\b/i.test(name) ||
+      stats.dateRatio >= 0.6)
   ) {
     return "date";
   }

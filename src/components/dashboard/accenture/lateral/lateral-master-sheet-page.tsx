@@ -174,7 +174,7 @@ export function LateralMasterSheetPage() {
     <PageTransition>
       <PageHeader
         title="Lateral"
-        description="Lateral Master Sheet from the Google Drive XLSM workbook."
+        description="Lateral Master Sheet from PostgreSQL (lateral_master)."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button

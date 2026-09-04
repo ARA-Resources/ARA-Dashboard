@@ -410,7 +410,7 @@ async function main() {
   console.log("\n------- Excel/Drive regression smoke -------");
 
   await runExcelSmoke(
-    "F1. GET /api/excel/lateral-master-sheet still Excel-backed path",
+    "F1. GET /api/excel/lateral-master-sheet is Postgres-backed",
     async () => {
       const response = await getMasterSheet(
         new Request(
@@ -427,19 +427,21 @@ async function main() {
       assert(body.ok === true, `ok=${String(body.ok)}`);
       assert(Array.isArray(body.rows), "missing rows");
       const sourceFile = String(body.sourceFile ?? "");
-      if (sourceFile === "lateral_master") {
-        throw new Error(
-          "Master Sheet API unexpectedly reports sourceFile=lateral_master (should remain Excel/Drive)"
-        );
-      }
+      assert(
+        sourceFile === "lateral_master",
+        `expected sourceFile=lateral_master, got ${sourceFile || "(empty)"}`
+      );
+      const headers = body.headers as string[] | undefined;
+      assert(Array.isArray(headers) && headers.includes("Opened on Oorwin"), "missing Opened on Oorwin header");
+      assert(Array.isArray(headers) && headers.includes("Job Description"), "missing Job Description header");
       console.log(
-        `       master sheet page rows=${(body.rows as unknown[]).length} sourceFile=${sourceFile || "(set)"}`
+        `       master sheet page rows=${(body.rows as unknown[]).length} sourceFile=${sourceFile} headers=${headers?.length}`
       );
     }
   );
 
   await runExcelSmoke(
-    "F2. GET /api/excel/lateral-master-sheet/export still Excel path",
+    "F2. GET /api/excel/lateral-master-sheet/export from Postgres",
     async () => {
       const response = await getMasterExport(
         new Request("http://localhost/api/excel/lateral-master-sheet/export")
@@ -498,7 +500,7 @@ async function main() {
   );
 
   await run(
-    "F4. Static: Master Sheet + skill-clusters still import Excel readers",
+    "F4. Static: Master Sheet defaults to Postgres; skill-clusters stay Excel",
     async () => {
       const masterSvc = await fs.readFile(
         path.join(
@@ -507,6 +509,8 @@ async function main() {
         ),
         "utf8"
       );
+      assert(masterSvc.includes('ARA_LATERAL_MASTER_SOURCE'));
+      assert(masterSvc.includes("listLateralMasterAsExcelRows"));
       assert(masterSvc.includes("readLateralMasterSheetFromDriveXlsm"));
       const clusters = await fs.readFile(
         path.join(

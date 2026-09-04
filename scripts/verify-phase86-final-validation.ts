@@ -157,15 +157,16 @@ async function staticScopeChecks(): Promise<{
   }
   details.push("8.1 read layer present and read-only");
 
-  // Intentional Excel exceptions
+  // Master Sheet is Postgres-backed (Drive retained behind ARA_LATERAL_MASTER_SOURCE=drive)
   const master = await read(
     "src/services/excel/read-lateral-master-sheet.ts"
   );
   await assert(
-    master.includes("readLateralMasterSheetFromDriveXlsm"),
-    "Master Sheet no longer Drive/Excel"
+    master.includes("listLateralMasterAsExcelRows") &&
+      master.includes('ARA_LATERAL_MASTER_SOURCE'),
+    "Master Sheet must default to PostgreSQL lateral_master"
   );
-  details.push("EXCEPTION: Master Sheet remains Drive/Excel");
+  details.push("Master Sheet → PostgreSQL lateral_master (Drive optional via env)");
 
   const exportRoute = await read(
     "src/app/api/excel/lateral-master-sheet/export/route.ts"
@@ -174,7 +175,7 @@ async function staticScopeChecks(): Promise<{
     exportRoute.includes("exportLateralMasterSheetXlsx"),
     "Master export path changed unexpectedly"
   );
-  details.push("EXCEPTION: Master Sheet export remains Excel");
+  details.push("Master Sheet export uses same Postgres-or-Drive reader");
 
   const clusters = await read(
     "src/services/excel/extract-skill-clusters.ts"
@@ -290,10 +291,11 @@ async function main() {
   console.log("  ✓ /api/dataset/lateral/p-roles     → PostgreSQL lateral_master");
   console.log("  ✓ /api/excel/lateral/filters       → PostgreSQL lateral_master");
   console.log("  ✓ /api/home/widgets                → PostgreSQL home_metrics");
+  console.log("  ✓ /api/excel/lateral-master-sheet (+ export) → PostgreSQL lateral_master");
   console.log("------- Intentional Excel/Drive exceptions -------");
-  console.log("  · /api/excel/lateral-master-sheet (+ export)");
   console.log("  · /api/excel/lateral/skill-clusters (Allocations)");
   console.log("  · /api/excel/lateral/opening-skills (unused UI)");
+  console.log("  · Drive XLSM pipeline writers / Gmail staging / P-Roles Google pivot (unchanged)");
 
   const failedSuites = suiteResults.filter((r) => r.status === "FAIL");
   const suitesWithSkips = suiteResults.filter((r) => r.skipNote);

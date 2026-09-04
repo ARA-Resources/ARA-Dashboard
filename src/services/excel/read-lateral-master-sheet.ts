@@ -15,7 +15,12 @@ import {
 import { readLateralMasterSheetFromDriveXlsm } from "@/services/excel/read-lateral-master-from-drive-xlsm";
 import { buildMasterSheetXlsxBuffer } from "@/services/excel/build-master-sheet-xlsx";
 import { readSheetFromFileForLateralMaster } from "@/services/excel/reader";
-import type { ExcelReadResult, ExcelReaderOptions } from "@/types/excel";
+import {
+  LATERAL_MASTER_PG_SOURCE_FILE,
+  LATERAL_MASTER_PG_SOURCE_LABEL,
+} from "@/services/persistence/lateral-master-sheet-columns";
+import { listLateralMasterAsExcelRows } from "@/services/persistence/read-lateral-master";
+import type { ExcelDataRow, ExcelReadResult, ExcelReaderOptions } from "@/types/excel";
 
 function sourceUrlFromMeta(filePath?: string): string | undefined {
   if (!filePath) return undefined;
@@ -34,12 +39,58 @@ async function resolveMasterSheetName(): Promise<string> {
 }
 
 /**
- * Company → Accenture → Lateral → Master Sheet reads the Drive XLSM
- * (processing Master Workbook). Dataset Manager current file is fallback only.
+ * Master Sheet data source for the /lateral dashboard.
+ * Default: postgres (VPS `lateral_master`). Set ARA_LATERAL_MASTER_SOURCE=drive
+ * to fall back to the Drive XLSM pipeline reader (does not change import).
+ */
+export function resolveLateralMasterSheetSource(): "postgres" | "drive" {
+  const raw = (process.env.ARA_LATERAL_MASTER_SOURCE ?? "postgres")
+    .trim()
+    .toLowerCase();
+  return raw === "drive" ? "drive" : "postgres";
+}
+
+async function readLateralMasterSheetFromPostgres(): Promise<ExcelReadResult> {
+  const sheetName = await resolveMasterSheetName();
+  const payload = await listLateralMasterAsExcelRows();
+  const rows: ExcelDataRow[] = payload.rows.map((row, index) => {
+    const jr = String(row["Job Requisition ID"] ?? "").trim();
+    return {
+      id: jr ? `pg-master-${jr}` : `pg-master-row-${index + 1}`,
+      ...row,
+    };
+  });
+
+  return {
+    businessUnitId: "lateral",
+    sheetName,
+    sourceFile: LATERAL_MASTER_PG_SOURCE_FILE,
+    sourceLabel: LATERAL_MASTER_PG_SOURCE_LABEL,
+    headers: payload.headers,
+    rows,
+    meta: {
+      name: sheetName,
+      rowCount: rows.length,
+      columnCount: payload.headers.length,
+      headerRow: LATERAL_MASTER_HEADER_ROW,
+      filePath: LATERAL_MASTER_PG_SOURCE_LABEL,
+      totalRows: rows.length,
+    },
+  };
+}
+
+/**
+ * Company → Accenture → Lateral → Master Sheet.
+ * Default reads PostgreSQL `lateral_master`. Drive XLSM remains available when
+ * ARA_LATERAL_MASTER_SOURCE=drive (pipeline / other features unchanged).
  */
 export async function readLateralMasterSheet(
   options?: ExcelReaderOptions
 ): Promise<ExcelReadResult> {
+  if (resolveLateralMasterSheetSource() === "postgres") {
+    return readLateralMasterSheetFromPostgres();
+  }
+
   const sheetName = options?.sheetName?.trim() || (await resolveMasterSheetName());
   const headerRow = options?.headerRow ?? LATERAL_MASTER_HEADER_ROW;
 

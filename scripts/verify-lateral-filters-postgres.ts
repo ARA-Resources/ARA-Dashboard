@@ -213,7 +213,7 @@ async function main() {
     assert(
       masterRoute.includes("queryLateralMasterSheet") ||
         masterRoute.includes("read-lateral-master-sheet"),
-      "Master Sheet API should remain Excel-backed"
+      "Master Sheet API route should still call queryLateralMasterSheet"
     );
     const clustersRoute = await fs.readFile(
       path.join(

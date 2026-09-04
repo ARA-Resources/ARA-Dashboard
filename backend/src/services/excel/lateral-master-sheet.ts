@@ -151,9 +151,10 @@ export function inferLateralFilterControl(
   if (stats.nonNull === 0) return null;
 
   if (
-    /^(date|opened|closed|updated|created)/i.test(name) ||
-    /\bdate\b/i.test(name) ||
-    stats.dateRatio >= 0.6
+    !/oorwin/i.test(name) &&
+    (/^(date|opened|closed|updated|created)/i.test(name) ||
+      /\bdate\b/i.test(name) ||
+      stats.dateRatio >= 0.6)
   ) {
     return "date";
   }

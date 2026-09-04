@@ -213,7 +213,7 @@ export function buildSidebarSections(): NavSection[] {
     },
     {
       id: "company",
-      label: "Company",
+      label: "Demands",
       href: "/company",
       icon: Building2,
       workspace: "company",
@@ -223,7 +223,7 @@ export function buildSidebarSections(): NavSection[] {
     },
     {
       id: "candidate",
-      label: "Candidate",
+      label: "Candidates",
       href: "/candidate/dashboard",
       icon: UserRound,
       workspace: "candidate",

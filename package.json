@@ -9,6 +9,7 @@
     "lint": "eslint",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:import-lateral-master": "tsx scripts/import-lateral-master-to-postgres.ts",
+    "db:import-lateral-master-xlsx": "tsx scripts/import-lateral-master-from-xlsx.ts",
     "db:import-lateral-staging": "tsx scripts/import-atci-ds-to-staging.ts",
     "db:sync-lateral-master": "tsx scripts/sync-lateral-master-from-staging.ts",
     "test:persistence": "tsx scripts/verify-postgres-persistence-step13.ts",

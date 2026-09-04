@@ -34,6 +34,8 @@ COPY --from=build /app/.next ./.next
 COPY --from=build /app/public ./public
 COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/db ./db
+COPY --from=build /app/data ./data
+COPY --from=build /app/src ./src
 COPY --from=build /app/next.config.ts ./
 COPY --from=build /app/tsconfig.json ./
 
