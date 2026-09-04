@@ -4,6 +4,30 @@ export type LateralJobTrigger = "scheduler" | "manual";
 
 export type LateralJobStatus = "success" | "partial" | "failed";
 
+export interface LateralRunLastSummary {
+  result: LateralJobStatus;
+  ranAt: string;
+  trigger: LateralJobTrigger;
+  /** Source attachment / Adhoc DS filename when a new file was processed */
+  sourceFilename: string | null;
+  /**
+   * Best "which Adhoc DS this run is for" date as DD-MM-YYYY
+   * (email receivedAt preferred), or null when no new source.
+   */
+  adhocDsDate: string | null;
+  /** Ready-to-show line, e.g. "Last Adhoc DS: 03-09-2026" */
+  adhocDsDateLabel: string;
+  failureReason: string | null;
+  noNewSource: boolean;
+  counts: {
+    rowsImported: number;
+    newCount: number;
+    activeCount: number;
+    reopenCount: number;
+    closedCount: number;
+  } | null;
+}
+
 export interface LateralSchedulerConfig {
   version: 1;
   frequency: ScheduleFrequency;
@@ -24,6 +48,8 @@ export interface LateralSchedulerConfig {
   lastRunMessage: string | null;
   lastDurationMs: number | null;
   lastTrigger: LateralJobTrigger | null;
+  /** Durable last Run All summary for Master Sheet banner + notifications */
+  lastRunSummary: LateralRunLastSummary | null;
 }
 
 export interface LateralSchedulerStatus extends LateralSchedulerConfig {
@@ -70,6 +96,8 @@ export interface LateralJobOutcome {
     sourceEmail: string;
     originalFilename: string;
     googleDriveFileId: string;
+    /** ISO receivedAt of the Adhoc DS / source email when available */
+    sourceReceivedAt: string | null;
     rowsImported: number;
     newCount: number;
     activeCount: number;
@@ -122,5 +150,7 @@ export interface LateralProcessingStatusView {
   nextScheduledRun: string | null;
   running: boolean;
   lastRunMessage: string | null;
+  /** Last Run All summary for Master Sheet status strip */
+  lastRunSummary: LateralRunLastSummary | null;
   runProgress: LateralRunProgressSnapshot | null;
 }

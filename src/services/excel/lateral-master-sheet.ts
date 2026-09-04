@@ -44,6 +44,24 @@ export interface LateralMasterFilterSchema {
   sourceUrl?: string;
   fields: LateralMasterFilterField[];
   headers: string[];
+  /** Last Run All summary for the Master Sheet status strip */
+  lastRun?: {
+    result: "success" | "partial" | "failed";
+    ranAt: string;
+    trigger: "scheduler" | "manual";
+    sourceFilename: string | null;
+    adhocDsDate: string | null;
+    adhocDsDateLabel: string;
+    failureReason: string | null;
+    noNewSource: boolean;
+    counts: {
+      rowsImported: number;
+      newCount: number;
+      activeCount: number;
+      reopenCount: number;
+      closedCount: number;
+    } | null;
+  } | null;
 }
 
 export interface LateralMasterDateFilter {

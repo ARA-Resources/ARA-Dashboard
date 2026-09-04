@@ -15,6 +15,7 @@ import type { LateralGmailCheckpoint } from "@/types/lateral-gmail-checkpoint";
 import { readLateralDataProcessingSetup } from "@/services/lateral-processing/setup-store";
 import type {
   LateralProcessingStatusView,
+  LateralRunLastSummary,
   LateralSchedulerConfig,
   LateralSchedulerStatus,
 } from "@/types/lateral-scheduler";
@@ -63,6 +64,26 @@ function validateTimezone(timezone: string): string {
   }
 }
 
+/** Format ISO / Date to DD-MM-YYYY in Asia/Kolkata for Adhoc DS labels. */
+export function formatAdhocDsDateDdMmYyyy(
+  isoOrNull: string | null | undefined
+): string | null {
+  if (!isoOrNull) return null;
+  const d = new Date(isoOrNull);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: DEFAULT_LATERAL_TIMEZONE,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).formatToParts(d);
+  const day = parts.find((p) => p.type === "day")?.value;
+  const month = parts.find((p) => p.type === "month")?.value;
+  const year = parts.find((p) => p.type === "year")?.value;
+  if (!day || !month || !year) return null;
+  return `${day}-${month}-${year}`;
+}
+
 function normalizeFrequency(value: unknown): ScheduleFrequency {
   if (
     value === "hourly" ||
@@ -93,6 +114,7 @@ function emptyConfig(): LateralSchedulerConfig {
     lastRunMessage: null,
     lastDurationMs: null,
     lastTrigger: null,
+    lastRunSummary: null,
   };
 }
 
@@ -140,6 +162,49 @@ function normalizeConfig(
       parsed.lastTrigger === "scheduler" || parsed.lastTrigger === "manual"
         ? parsed.lastTrigger
         : null,
+    lastRunSummary: normalizeLastRunSummary(parsed.lastRunSummary),
+  };
+}
+
+function normalizeLastRunSummary(
+  value: unknown
+): LateralRunLastSummary | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const result =
+    v.result === "success" || v.result === "partial" || v.result === "failed"
+      ? v.result
+      : null;
+  const trigger =
+    v.trigger === "scheduler" || v.trigger === "manual" ? v.trigger : null;
+  if (!result || !trigger || typeof v.ranAt !== "string") return null;
+  const countsRaw =
+    v.counts && typeof v.counts === "object"
+      ? (v.counts as Record<string, unknown>)
+      : null;
+  return {
+    result,
+    ranAt: v.ranAt,
+    trigger,
+    sourceFilename:
+      typeof v.sourceFilename === "string" ? v.sourceFilename : null,
+    adhocDsDate: typeof v.adhocDsDate === "string" ? v.adhocDsDate : null,
+    adhocDsDateLabel:
+      typeof v.adhocDsDateLabel === "string"
+        ? v.adhocDsDateLabel
+        : "No new Adhoc DS on last run",
+    failureReason:
+      typeof v.failureReason === "string" ? v.failureReason : null,
+    noNewSource: Boolean(v.noNewSource),
+    counts: countsRaw
+      ? {
+          rowsImported: Number(countsRaw.rowsImported) || 0,
+          newCount: Number(countsRaw.newCount) || 0,
+          activeCount: Number(countsRaw.activeCount) || 0,
+          reopenCount: Number(countsRaw.reopenCount) || 0,
+          closedCount: Number(countsRaw.closedCount) || 0,
+        }
+      : null,
   };
 }
 
@@ -367,16 +432,61 @@ export async function invokeLateralJob(
   try {
     console.info(`[lateral-scheduler] Starting Lateral job (${trigger})`);
     const outcome = await executeLateralDatasetJob(trigger);
+
+    const summary = outcome.syncSummary;
+    const noNewSource =
+      outcome.status !== "failed" &&
+      !outcome.checkpointAdvanced &&
+      (summary?.rowsImported ?? 0) === 0 &&
+      /no new lateral dataset/i.test(outcome.message);
+
+    const adhocDsDate = formatAdhocDsDateDdMmYyyy(summary?.sourceReceivedAt);
+    const adhocDsDateLabel = noNewSource
+      ? "No new Adhoc DS on last run"
+      : adhocDsDate
+        ? `Last Adhoc DS: ${adhocDsDate}`
+        : summary?.originalFilename && summary.originalFilename !== "—"
+          ? `Last source file: ${summary.originalFilename}`
+          : "No new Adhoc DS on last run";
+
+    const lastRunSummary: LateralRunLastSummary = {
+      result: outcome.status,
+      ranAt: outcome.ranAt,
+      trigger,
+      sourceFilename:
+        summary?.originalFilename && summary.originalFilename !== "—"
+          ? summary.originalFilename
+          : null,
+      adhocDsDate: noNewSource ? null : adhocDsDate,
+      adhocDsDateLabel,
+      failureReason:
+        outcome.status === "failed"
+          ? outcome.failure?.message || outcome.message
+          : outcome.status === "partial"
+            ? outcome.message
+            : null,
+      noNewSource,
+      counts: summary
+        ? {
+            rowsImported: summary.rowsImported,
+            newCount: summary.newCount,
+            activeCount: summary.activeCount,
+            reopenCount: summary.reopenCount,
+            closedCount: summary.closedCount,
+          }
+        : null,
+    };
+
     await writeLateralSchedulerConfig({
       lastRunAt: outcome.ranAt,
       lastRunStatus: outcome.status,
       lastRunMessage: outcome.message,
       lastDurationMs: outcome.durationMs,
       lastTrigger: trigger,
+      lastRunSummary,
     });
 
     // Persist UI sync history (never stores OAuth tokens)
-    const summary = outcome.syncSummary;
     const checkpoint = await readLateralGmailCheckpoint();
     await appendLateralSyncHistory({
       syncTime: outcome.ranAt,
@@ -575,6 +685,7 @@ export async function getLateralProcessingStatusView(): Promise<LateralProcessin
     nextScheduledRun: scheduler.nextRunAt,
     running: scheduler.running,
     lastRunMessage: scheduler.lastRunMessage,
+    lastRunSummary: scheduler.lastRunSummary ?? null,
     runProgress: (() => {
       const progress = getLateralRunProgress();
       return progress.stages.length > 0 ? progress : null;

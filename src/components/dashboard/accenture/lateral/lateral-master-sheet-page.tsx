@@ -268,6 +268,50 @@ export function LateralMasterSheetPage() {
         </div>
       </FadeIn>
 
+      {schema?.lastRun ? (
+        <FadeIn>
+          <div
+            className={cn(
+              "mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border px-3 py-2 text-sm",
+              schema.lastRun.result === "success"
+                ? "border-emerald-500/30 bg-emerald-500/5 text-foreground"
+                : schema.lastRun.result === "partial"
+                  ? "border-amber-500/30 bg-amber-500/5 text-foreground"
+                  : "border-destructive/30 bg-destructive/5 text-foreground"
+            )}
+            role="status"
+            aria-label="Last Lateral Run All status"
+          >
+            <span className="font-medium">
+              Last Run All:{" "}
+              {schema.lastRun.result === "success"
+                ? "Success"
+                : schema.lastRun.result === "partial"
+                  ? "Partial"
+                  : "Failed"}
+            </span>
+            <span className="text-muted-foreground">
+              {new Date(schema.lastRun.ranAt).toLocaleString("en-IN")}
+              {" · "}
+              {schema.lastRun.trigger}
+            </span>
+            <span className="text-muted-foreground">
+              {schema.lastRun.adhocDsDateLabel}
+            </span>
+            {schema.lastRun.sourceFilename ? (
+              <span className="max-w-[18rem] truncate text-muted-foreground">
+                {schema.lastRun.sourceFilename}
+              </span>
+            ) : null}
+            {schema.lastRun.failureReason ? (
+              <span className="w-full text-xs text-destructive">
+                {schema.lastRun.failureReason.slice(0, 280)}
+              </span>
+            ) : null}
+          </div>
+        </FadeIn>
+      ) : null}
+
       {filtersOpen ? (
         <FadeIn>
           <div

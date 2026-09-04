@@ -236,6 +236,21 @@ function rowToLateralSchedulerConfig(row: Record<string, unknown>): LateralSched
     lastRunMessage: typeof row.last_run_message === "string" ? row.last_run_message : null,
     lastDurationMs: typeof row.last_duration_ms === "number" ? row.last_duration_ms : null,
     lastTrigger: normalizeJobTrigger(row.last_trigger),
+    lastRunSummary: (() => {
+      const raw = row.last_run_summary;
+      if (!raw) return null;
+      if (typeof raw === "string") {
+        try {
+          return JSON.parse(raw) as LateralSchedulerConfig["lastRunSummary"];
+        } catch {
+          return null;
+        }
+      }
+      if (typeof raw === "object") {
+        return raw as LateralSchedulerConfig["lastRunSummary"];
+      }
+      return null;
+    })(),
   };
 }
 
@@ -264,6 +279,7 @@ export class PostgresSchedulerStateStore implements SchedulerStateStore {
         lastRunMessage: null,
         lastDurationMs: null,
         lastTrigger: null,
+        lastRunSummary: null,
       };
     }
     return rowToLateralSchedulerConfig(rows[0]);
@@ -288,6 +304,7 @@ export class PostgresSchedulerStateStore implements SchedulerStateStore {
         last_run_message = ${config.lastRunMessage},
         last_duration_ms = ${config.lastDurationMs},
         last_trigger     = ${config.lastTrigger},
+        last_run_summary = ${config.lastRunSummary ? sql.json(config.lastRunSummary as never) : null},
         updated_at       = NOW()
       WHERE id = (SELECT id FROM lateral_scheduler_state ORDER BY id LIMIT 1)
     `;

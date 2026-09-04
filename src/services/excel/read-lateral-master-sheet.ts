@@ -114,12 +114,17 @@ export async function getLateralMasterFilterSchema(
   options?: ExcelReaderOptions
 ): Promise<LateralMasterFilterSchema> {
   const sheet = await readLateralMasterSheet(options);
+  const { getLateralMasterLastRunBanner } = await import(
+    "@/services/persistence/lateral-master-last-run"
+  );
+  const lastRun = await getLateralMasterLastRunBanner().catch(() => null);
   return {
     sheetName: sheet.sheetName,
     sourceFile: sheet.sourceFile,
     sourceUrl: sourceUrlFromMeta(sheet.meta.filePath),
     headers: sheet.headers,
     fields: discoverLateralMasterFilters(sheet.headers, sheet.rows),
+    lastRun,
   };
 }
 

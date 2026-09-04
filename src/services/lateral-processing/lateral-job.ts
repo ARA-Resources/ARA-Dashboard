@@ -350,6 +350,80 @@ async function executeLateralDatasetJobBody(
 
   const message = parts.join(" · ");
 
+  const pending = pendingCheckpointAdvances[pendingCheckpointAdvances.length - 1];
+  const lastUploaded = syncResult?.items
+    ?.slice()
+    .reverse()
+    .find((i) => i.status === "uploaded_drive" || i.driveFileId);
+
+  const sourceReceivedAt =
+    pending?.receivedAt ||
+    lastUploaded?.receivedAt ||
+    syncResult?.checkpointBefore.receivedAt ||
+    null;
+  const sourceFilename =
+    pending?.attachmentFilename ||
+    lastUploaded?.attachmentName ||
+    syncResult?.checkpointBefore.attachmentFilename ||
+    null;
+  const adhocDsDateLabel = (() => {
+    if (pendingCheckpointAdvances.length === 0 && !hardFailure?.isHardFailure) {
+      return "No new Adhoc DS on last run";
+    }
+    if (!sourceReceivedAt) {
+      return sourceFilename
+        ? `Source file: ${sourceFilename}`
+        : "Adhoc DS date: (unknown)";
+    }
+    try {
+      const d = new Date(sourceReceivedAt);
+      if (Number.isNaN(d.getTime())) return `Adhoc DS date: ${sourceReceivedAt}`;
+      const partsFmt = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      }).formatToParts(d);
+      const day = partsFmt.find((p) => p.type === "day")?.value;
+      const month = partsFmt.find((p) => p.type === "month")?.value;
+      const year = partsFmt.find((p) => p.type === "year")?.value;
+      if (day && month && year) return `Adhoc DS date: ${day}-${month}-${year}`;
+    } catch {
+      // fall through
+    }
+    return `Adhoc DS date: ${sourceReceivedAt}`;
+  })();
+
+  const countsLine = pipelineSummary
+    ? `Rows ${pipelineSummary.rowsImported}; New ${pipelineSummary.newCount}; Reopen ${pipelineSummary.reopenCount}; Closed ${pipelineSummary.closedCount}; Active ${pipelineSummary.activeCount}`
+    : null;
+
+  const successHref = "/company/accenture/lateral/master-sheet";
+  const failureHref = "/dataset/lateral";
+
+  const notificationTitle =
+    effectiveStatus === "failed"
+      ? `Lateral Run All failed${hardFailure?.failedStage ? `: ${hardFailure.failedStage}` : ""}`
+      : effectiveStatus === "partial"
+        ? "Lateral Run All completed with warnings"
+        : pendingCheckpointAdvances.length === 0
+          ? "Lateral Run All: no new Adhoc DS"
+          : "Lateral Run All succeeded";
+
+  const notificationBodyParts = [
+    `Trigger: ${trigger}`,
+    sourceFilename ? `Source: ${sourceFilename}` : null,
+    adhocDsDateLabel,
+    countsLine,
+    hardFailure?.isHardFailure
+      ? hardFailure.message
+      : effectiveStatus === "success" && pendingCheckpointAdvances.length === 0
+        ? "No new Lateral dataset found. Master was not modified."
+        : effectiveStatus === "success"
+          ? "Job Status + Posted updated in PostgreSQL lateral_master."
+          : message,
+  ].filter(Boolean);
+
   await pushAppNotification({
     kind:
       effectiveStatus === "failed"
@@ -357,14 +431,9 @@ async function executeLateralDatasetJobBody(
         : effectiveStatus === "partial"
           ? "dataset_sync_partial"
           : "dataset_sync_success",
-    title:
-      effectiveStatus === "failed"
-        ? `Lateral failed: ${hardFailure?.failedStage || "processing"}`
-        : effectiveStatus === "partial"
-          ? "Lateral Dataset job completed with warnings"
-          : "Lateral Dataset job completed",
-    body: hardFailure?.isHardFailure ? hardFailure.message : message,
-    href: "/dataset/lateral",
+    title: notificationTitle,
+    body: notificationBodyParts.join(" · "),
+    href: effectiveStatus === "failed" ? failureHref : successHref,
     meta: {
       trigger,
       datasetName: "Lateral",
@@ -374,14 +443,16 @@ async function executeLateralDatasetJobBody(
       failedStage: hardFailure?.failedStage ?? null,
       previousMasterPreserved: true,
       retryable: true,
+      sourceFilename,
+      sourceReceivedAt,
+      adhocDsDateLabel,
+      rowsImported: pipelineSummary?.rowsImported ?? 0,
+      newCount: pipelineSummary?.newCount ?? 0,
+      reopenCount: pipelineSummary?.reopenCount ?? 0,
+      closedCount: pipelineSummary?.closedCount ?? 0,
+      activeCount: pipelineSummary?.activeCount ?? 0,
     },
   }).catch(() => undefined);
-
-  const pending = pendingCheckpointAdvances[pendingCheckpointAdvances.length - 1];
-  const lastUploaded = syncResult?.items
-    ?.slice()
-    .reverse()
-    .find((i) => i.status === "uploaded_drive" || i.driveFileId);
 
   const formatEmailInfo = (parts: {
     sender?: string | null;
@@ -413,21 +484,15 @@ async function executeLateralDatasetJobBody(
         pending?.messageId ||
         lastUploaded?.messageId ||
         syncResult?.checkpointBefore.messageId,
-      receivedAt:
-        pending?.receivedAt ||
-        lastUploaded?.receivedAt ||
-        syncResult?.checkpointBefore.receivedAt,
+      receivedAt: sourceReceivedAt,
     }),
-    originalFilename:
-      pending?.attachmentFilename ||
-      lastUploaded?.attachmentName ||
-      syncResult?.checkpointBefore.attachmentFilename ||
-      "—",
+    originalFilename: sourceFilename || "—",
     googleDriveFileId:
       pending?.driveFileId ||
       lastUploaded?.driveFileId ||
       syncResult?.checkpointBefore.driveFileId ||
       "—",
+    sourceReceivedAt,
     rowsImported: pipelineSummary?.rowsImported ?? 0,
     newCount: pipelineSummary?.newCount ?? 0,
     activeCount: pipelineSummary?.activeCount ?? 0,

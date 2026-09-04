@@ -788,10 +788,56 @@ export async function runLateralDatasetPipeline(): Promise<LateralPipelineResult
   }
   markOk(17, "New Sheet + reconciliation report validated");
 
+  // ── Postgres Job Status authority (New Sheet ↔ lateral_master) ────────────
+  // Dashboard Master Sheet reads Postgres. Excel Column K above remains for
+  // XLSM workbook compatibility only — not the status source of truth.
+  try {
+    const { reconcileLateralMasterJobStatusFromNewSheet } = await import(
+      "@/services/lateral-processing/lateral-master-job-status-sync"
+    );
+    const { parseExcelDateToIso } = await import(
+      "@/services/lateral-processing/lateral-master-pg-backfill"
+    );
+    const processingDateParsed = parseExcelDateToIso(
+      newSheetResult.processingDate
+    );
+    const pgStatus = await reconcileLateralMasterJobStatusFromNewSheet({
+      localWorkbookPath:
+        (await readReconciliationStaging())?.stagedFilePath ||
+        stagedNewSheetPath,
+      newSheetName: runSetup.masterNewSheet,
+      processingDateIso: processingDateParsed.ok
+        ? processingDateParsed.iso || undefined
+        : undefined,
+    });
+    if (!pgStatus.ok) {
+      return fail(
+        15,
+        pgStatus.error ||
+          "Postgres Job Status reconciliation failed. Checkpoint will not advance."
+      );
+    }
+    markOk(
+      15,
+      `Postgres lateral_master job_status: New=${pgStatus.counts.added}, Reopen=${pgStatus.counts.reopened}, Closed=${pgStatus.counts.closed}, Active=${pgStatus.counts.activated}, Unchanged=${pgStatus.counts.unchanged} (authority=Postgres; XLSM Column K updated for compatibility)`
+    );
+  } catch (err) {
+    return fail(
+      15,
+      err instanceof Error
+        ? err.message
+        : "Unexpected error during Postgres Job Status reconciliation."
+    );
+  }
+
   // ── STEP 18: Posted Sheet A/B/C + Master Column M matching ──
   // A = cleaned posting text, B = JR ID, C = Demand Yes/No.
-  // Runs on the staged local XLSM after Column K is finalized and before
+  // Matching authority: PostgreSQL lateral_master.posted (primary).
+  // Excel Column M is still written for XLSM compatibility after PG sync.
+  // Runs on the staged local XLSM after Column K / Postgres status and before
   // confirmReconciliationSave(). Does not write Column K / Job Status.
+  // TODO(next phase): migrate P-Roles (step 19) to Postgres-backed feeds;
+  // leave XLSM/Google P-Roles pivot behavior unchanged until then.
   try {
     const { applyPostedSheetMatchingToStagedWorkbook } = await import(
       "@/services/lateral-processing/lateral-posted-sheet-processor"
@@ -831,6 +877,8 @@ export async function runLateralDatasetPipeline(): Promise<LateralPipelineResult
 
   // ── STEP 19: Refresh P-Roles PivotTable1 (Master Sheet → Posted filter) ──
   // Runs on staged XLSM after Posted Column M update. Does not modify Master Sheet.
+  // TODO(next phase): migrate P-Roles openings/pivot to Postgres `lateral_master`
+  // after New Sheet + job_status + posted PG path is proven. Do not change here.
   try {
     const stagingForPRoles = await readReconciliationStaging();
     if (!stagingForPRoles?.stagedFilePath) {

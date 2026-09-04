@@ -5,22 +5,26 @@
  *   A = cleaned posting text (not JR-only)
  *   B = Job Requisition ID (extracted from A)
  *   C = Demand Yes/No (Posted B matched to lateral_master JR)
- *   Master Column M = Posted Yes / -
+ *   Master Column M = Posted Yes / -  (XLSM compatibility write)
  *   Job Status / Column K is never written
  *
- * Matching authority: PostgreSQL `lateral_master` (not Excel Master alone).
+ * Matching + write authority: PostgreSQL `lateral_master.posted` (primary).
+ * Excel Column M is a secondary compatibility write for the Drive workbook;
+ * the Lateral Master Sheet dashboard reads Postgres only.
  * PG writes (when persistDatabase=true): only `posted` + `updated_at` via
  * syncLateralPostedStatus().
  *
  * Ordering (documented, not a cross-system transaction):
  *   1) Clean Posted Sheet (may save workbook)
- *   2) PostgreSQL posted sync (when persistDatabase=true)
- *   3) Excel final write (Demand + Column M, keep_vba)
+ *   2) PostgreSQL posted sync (when persistDatabase=true) — primary
+ *   3) Excel final write (Demand + Column M, keep_vba) — compatibility
  * If step 2 succeeds and step 3 fails, PostgreSQL and XLSM can diverge.
  * Failure reporting must not claim the workbook is unchanged when PG was updated
  * or the Posted Sheet was already cleaned.
  *
- * Runs on the staged local XLSM after Column K reconciliation and before
+ * Empty Posted JR list remains a safe no-op (no mass reset of posted='Yes').
+ *
+ * Runs on the staged local XLSM after Job Status reconciliation and before
  * confirmReconciliationSave().
  */
 

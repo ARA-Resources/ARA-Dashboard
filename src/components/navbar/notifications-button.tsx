@@ -56,6 +56,12 @@ export function NotificationsButton() {
         void queryClient.invalidateQueries({ queryKey: ["excel-openings"] });
         void queryClient.invalidateQueries({ queryKey: ["excel-filters"] });
         void queryClient.invalidateQueries({ queryKey: ["skill-clusters"] });
+        void queryClient.invalidateQueries({
+          queryKey: ["lateral-master-sheet-schema"],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: ["lateral-master-sheet"],
+        });
       }
 
       setNotifications(next);
