@@ -78,6 +78,8 @@ export interface LateralMasterSheetQuery {
   textFilters: Record<string, string>;
   /** Inclusive date range filters (ISO date strings YYYY-MM-DD) */
   dateFilters: Record<string, LateralMasterDateFilter>;
+  /** Global search across JR / skills / JD / location / etc. */
+  search?: string;
 }
 
 function asText(value: ExcelCellValue): string {
@@ -359,7 +361,7 @@ export function applyLateralMasterFilters(
   rows: ExcelDataRow[],
   query: Pick<
     LateralMasterSheetQuery,
-    "columnFilters" | "textFilters" | "dateFilters"
+    "columnFilters" | "textFilters" | "dateFilters" | "search"
   >
 ): ExcelDataRow[] {
   const columnEntries = Object.entries(query.columnFilters).filter(
@@ -371,11 +373,13 @@ export function applyLateralMasterFilters(
   const dateEntries = Object.entries(query.dateFilters).filter(
     ([, range]) => Boolean(range.from || range.to)
   );
+  const search = String(query.search ?? "").trim().toLowerCase();
 
   if (
     columnEntries.length === 0 &&
     textEntries.length === 0 &&
-    dateEntries.length === 0
+    dateEntries.length === 0 &&
+    !search
   ) {
     return rows;
   }
@@ -406,6 +410,13 @@ export function applyLateralMasterFilters(
         const to = parseFilterBoundary(range.to);
         if (to && stamp > toDayStamp(to)) return false;
       }
+    }
+
+    if (search) {
+      const haystack = Object.values(row)
+        .map((v) => asText(v as ExcelCellValue).toLowerCase())
+        .join(" ");
+      if (!haystack.includes(search)) return false;
     }
 
     return true;

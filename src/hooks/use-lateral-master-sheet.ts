@@ -14,6 +14,7 @@ export interface LateralMasterSheetClientQuery {
   columnFilters: Record<string, string[]>;
   textFilters: Record<string, string>;
   dateFilters: Record<string, LateralMasterDateFilter>;
+  search?: string;
 }
 
 export function lateralMasterSchemaQueryKey() {
@@ -39,6 +40,9 @@ function buildParams(
     params.set("columnFilters", JSON.stringify(query.columnFilters ?? {}));
     params.set("textFilters", JSON.stringify(query.textFilters ?? {}));
     params.set("dateFilters", JSON.stringify(query.dateFilters ?? {}));
+    if (query.search?.trim()) {
+      params.set("search", query.search.trim());
+    }
   }
   if (options?.refresh) params.set("refresh", "1");
   return params;
@@ -135,7 +139,8 @@ export function useLateralMasterSheet(query: LateralMasterSheetClientQuery) {
   const hasActiveFilters =
     Object.values(query.columnFilters).some((v) => v.length > 0) ||
     Object.values(query.textFilters).some((v) => v.trim().length > 0) ||
-    Object.values(query.dateFilters).some((v) => Boolean(v.from || v.to));
+    Object.values(query.dateFilters).some((v) => Boolean(v.from || v.to)) ||
+    Boolean(query.search?.trim());
 
   return useQuery({
     queryKey: lateralMasterSheetQueryKey(query),

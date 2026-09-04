@@ -457,7 +457,8 @@ function unitSnapshotNeedsBootstrap(
  * L1: in-memory widgetsCache · L2: metrics snapshot (file / Postgres `home_metrics`).
  *
  * File mode: may bootstrap Lateral + Executive KPIs from Drive/Excel when empty.
- * Postgres mode (Phase 8.4): read-only from `home_metrics` — no Drive/Excel I/O.
+ * Postgres mode: bootstrap Lateral from `lateral_master` when home_metrics is
+ * empty/all-zeros; Executive still stays 0 unless a snapshot exists.
  */
 export async function getHomeDashboardWidgets(options?: {
   bypassCache?: boolean;
@@ -465,15 +466,38 @@ export async function getHomeDashboardWidgets(options?: {
   let snapshot = await readHomeWidgetsMetricsSnapshot();
   const bypass = Boolean(options?.bypassCache);
   const allowExcelBootstrap = homeWidgetsAllowsExcelBootstrap();
+  const postgresMode = isPostgresMode();
 
-  const shouldRefreshLateral =
+  const shouldRefreshLateralExcel =
     allowExcelBootstrap &&
+    (bypass || unitSnapshotNeedsBootstrap(snapshot, "lateral"));
+  const shouldRefreshLateralPostgres =
+    postgresMode &&
     (bypass || unitSnapshotNeedsBootstrap(snapshot, "lateral"));
   const shouldRefreshExecutive =
     allowExcelBootstrap &&
     (bypass || unitSnapshotNeedsBootstrap(snapshot, "executive"));
 
-  if (shouldRefreshLateral) {
+  if (shouldRefreshLateralPostgres) {
+    try {
+      const { refreshLateralHomeWidgetsMetricsFromPostgres } = await import(
+        "@/services/home/refresh-lateral-home-widgets-metrics"
+      );
+      const result = await refreshLateralHomeWidgetsMetricsFromPostgres();
+      if (!result.ok) {
+        console.warn(
+          "[home-widgets] Lateral Postgres bootstrap failed; keeping last snapshot",
+          result.error
+        );
+      }
+      snapshot = await readHomeWidgetsMetricsSnapshot();
+    } catch (error) {
+      console.warn(
+        "[home-widgets] Lateral Postgres bootstrap failed; keeping last snapshot",
+        error instanceof Error ? error.message : error
+      );
+    }
+  } else if (shouldRefreshLateralExcel) {
     try {
       const { refreshLateralHomeWidgetsMetricsFromDriveXlsm } = await import(
         "@/services/home/refresh-lateral-home-widgets-metrics"

@@ -494,7 +494,15 @@ const BU_IDS: BusinessUnitId[] = ["lateral", "executive", "consulting"];
 
 function rowToUnit(row: Record<string, unknown>): HomeUnitWidgetsMetrics {
   const normalizeSource = (v: unknown): HomeWidgetsMetricsSource => {
-    if (v === "pipeline" || v === "bootstrap" || v === "manual" || v === "drive-xlsm") return v;
+    if (
+      v === "pipeline" ||
+      v === "bootstrap" ||
+      v === "manual" ||
+      v === "drive-xlsm" ||
+      v === "postgres"
+    ) {
+      return v;
+    }
     return "unknown";
   };
   return {

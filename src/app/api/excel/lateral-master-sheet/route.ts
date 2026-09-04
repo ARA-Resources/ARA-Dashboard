@@ -65,6 +65,7 @@ export async function GET(request: Request) {
     const dateFilters = parseJsonRecord<
       Record<string, LateralMasterDateFilter>
     >(searchParams.get("dateFilters"), {});
+    const search = (searchParams.get("search") || "").trim();
 
     const result = await queryLateralMasterSheet(
       {
@@ -73,6 +74,7 @@ export async function GET(request: Request) {
         columnFilters,
         textFilters,
         dateFilters,
+        search: search || undefined,
       },
       { bypassCache: refresh }
     );

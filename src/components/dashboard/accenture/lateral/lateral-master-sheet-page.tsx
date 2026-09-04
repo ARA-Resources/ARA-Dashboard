@@ -2,13 +2,14 @@
 
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Download, Filter, Loader2, RefreshCw, X } from "lucide-react";
+import { Download, Filter, Loader2, RefreshCw, Search, X } from "lucide-react";
 import { PageHeader } from "@/components/layouts/page-header";
 import { PageTransition } from "@/animations/page-transition";
 import { FadeIn } from "@/animations/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { LateralMasterFiltersPanel } from "@/components/dashboard/accenture/lateral/lateral-master-filters-panel";
 import { LateralMasterSheetTable } from "@/components/dashboard/accenture/lateral/lateral-master-sheet-table";
 import {
@@ -37,6 +38,27 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
+/** DD/MM/YYYY , HH:MM:SS am/pm (12h, zero-padded). */
+function formatLastRunDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  let hours = d.getHours();
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  const seconds = String(d.getSeconds()).padStart(2, "0");
+  const ampm = hours >= 12 ? "pm" : "am";
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  const hh = String(hours).padStart(2, "0");
+  return `${dd}/${mm}/${yyyy} , ${hh}:${minutes}:${seconds} ${ampm}`;
+}
+
+function formatLastRunTrigger(trigger: string): "manual" | "auto" {
+  return trigger === "scheduler" ? "auto" : "manual";
+}
+
 export function LateralMasterSheetPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = React.useState(1);
@@ -52,12 +74,16 @@ export function LateralMasterSheetPage() {
   const [dateFilters, setDateFilters] = React.useState<
     Record<string, LateralMasterDateFilter>
   >({});
+  const [searchInput, setSearchInput] = React.useState("");
   const [refreshing, setRefreshing] = React.useState(false);
   const [downloading, setDownloading] = React.useState(false);
   const [downloadError, setDownloadError] = React.useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = React.useState(false);
+  const [searchOpen, setSearchOpen] = React.useState(false);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   const debouncedTextFilters = useDebouncedValue(textFilters, 450);
+  const debouncedSearch = useDebouncedValue(searchInput, 450);
 
   const query: LateralMasterSheetClientQuery = React.useMemo(
     () => ({
@@ -66,8 +92,16 @@ export function LateralMasterSheetPage() {
       columnFilters,
       textFilters: debouncedTextFilters,
       dateFilters,
+      search: debouncedSearch.trim() || undefined,
     }),
-    [page, pageSize, columnFilters, debouncedTextFilters, dateFilters]
+    [
+      page,
+      pageSize,
+      columnFilters,
+      debouncedTextFilters,
+      dateFilters,
+      debouncedSearch,
+    ]
   );
 
   const {
@@ -80,7 +114,19 @@ export function LateralMasterSheetPage() {
 
   React.useEffect(() => {
     setPage(1);
-  }, [columnFilters, debouncedTextFilters, dateFilters, pageSize]);
+  }, [
+    columnFilters,
+    debouncedTextFilters,
+    dateFilters,
+    debouncedSearch,
+    pageSize,
+  ]);
+
+  React.useEffect(() => {
+    if (searchOpen) {
+      window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    }
+  }, [searchOpen]);
 
   const activeFilterCount =
     Object.values(columnFilters).filter((v) => v.length > 0).length +
@@ -121,38 +167,40 @@ export function LateralMasterSheetPage() {
     setColumnFilters((prev) => {
       const current = prev[column] ?? [];
       const next = current.includes(value)
-        ? current.filter((item) => item !== value)
+        ? current.filter((v) => v !== value)
         : [...current, value];
-      const copy = { ...prev };
-      if (next.length === 0) delete copy[column];
-      else copy[column] = next;
-      return copy;
+      if (next.length === 0) {
+        const { [column]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [column]: next };
     });
   }
 
   function clearColumn(column: string) {
     setColumnFilters((prev) => {
-      const copy = { ...prev };
-      delete copy[column];
-      return copy;
+      const { [column]: _, ...rest } = prev;
+      return rest;
     });
   }
 
   function onTextChange(column: string, value: string) {
     setTextFilters((prev) => {
-      const copy = { ...prev };
-      if (!value.trim()) delete copy[column];
-      else copy[column] = value;
-      return copy;
+      if (!value.trim()) {
+        const { [column]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [column]: value };
     });
   }
 
-  function onDateChange(column: string, range: LateralMasterDateFilter) {
+  function onDateChange(column: string, next: LateralMasterDateFilter) {
     setDateFilters((prev) => {
-      const copy = { ...prev };
-      if (!range.from && !range.to) delete copy[column];
-      else copy[column] = range;
-      return copy;
+      if (!next.from && !next.to) {
+        const { [column]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [column]: next };
     });
   }
 
@@ -179,12 +227,45 @@ export function LateralMasterSheetPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
+              variant={searchOpen || searchInput.trim() ? "default" : "outline"}
+              className={cn(
+                "rounded-xl gap-2",
+                (searchOpen || searchInput.trim()) &&
+                  "bg-primary text-primary-foreground"
+              )}
+              onClick={() => {
+                setSearchOpen((open) => !open);
+                if (filtersOpen) setFiltersOpen(false);
+              }}
+              aria-expanded={searchOpen}
+              aria-controls="lateral-master-search-popup"
+            >
+              <Search className="size-4" />
+              Search
+              {searchInput.trim() ? (
+                <Badge
+                  variant="secondary"
+                  className={cn(
+                    "rounded-md px-1.5",
+                    (searchOpen || searchInput.trim()) &&
+                      "bg-background/20 text-primary-foreground"
+                  )}
+                >
+                  1
+                </Badge>
+              ) : null}
+            </Button>
+            <Button
+              type="button"
               variant={filtersOpen ? "default" : "outline"}
               className={cn(
                 "rounded-xl gap-2",
                 filtersOpen && "bg-primary text-primary-foreground"
               )}
-              onClick={() => setFiltersOpen((open) => !open)}
+              onClick={() => {
+                setFiltersOpen((open) => !open);
+                if (searchOpen) setSearchOpen(false);
+              }}
               aria-expanded={filtersOpen}
               aria-controls="lateral-master-filters-popup"
             >
@@ -239,8 +320,8 @@ export function LateralMasterSheetPage() {
               Sheet: {data.sheetName}
             </Badge>
           ) : null}
-          {(data?.sourceFile || schema?.sourceFile) ? (
-            (data?.sourceUrl || schema?.sourceUrl) ? (
+          {data?.sourceFile || schema?.sourceFile ? (
+            data?.sourceUrl || schema?.sourceUrl ? (
               <a
                 href={data?.sourceUrl || schema?.sourceUrl}
                 target="_blank"
@@ -272,42 +353,95 @@ export function LateralMasterSheetPage() {
         <FadeIn>
           <div
             className={cn(
-              "mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border px-3 py-2 text-sm",
+              "mb-3 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-lg border px-2.5 py-1 text-[11px] leading-snug text-muted-foreground",
               schema.lastRun.result === "success"
-                ? "border-emerald-500/30 bg-emerald-500/5 text-foreground"
+                ? "border-border/60 bg-muted/30"
                 : schema.lastRun.result === "partial"
-                  ? "border-amber-500/30 bg-amber-500/5 text-foreground"
-                  : "border-destructive/30 bg-destructive/5 text-foreground"
+                  ? "border-amber-500/25 bg-amber-500/5"
+                  : "border-destructive/25 bg-destructive/5"
             )}
             role="status"
             aria-label="Last Lateral Run All status"
           >
-            <span className="font-medium">
+            <span>
               Last Run All:{" "}
-              {schema.lastRun.result === "success"
-                ? "Success"
-                : schema.lastRun.result === "partial"
-                  ? "Partial"
-                  : "Failed"}
-            </span>
-            <span className="text-muted-foreground">
-              {new Date(schema.lastRun.ranAt).toLocaleString("en-IN")}
-              {" · "}
-              {schema.lastRun.trigger}
-            </span>
-            <span className="text-muted-foreground">
-              {schema.lastRun.adhocDsDateLabel}
-            </span>
-            {schema.lastRun.sourceFilename ? (
-              <span className="max-w-[18rem] truncate text-muted-foreground">
-                {schema.lastRun.sourceFilename}
+              <span
+                className={cn(
+                  "font-medium",
+                  schema.lastRun.result === "failed"
+                    ? "text-destructive"
+                    : "text-foreground/80"
+                )}
+              >
+                {schema.lastRun.result === "success"
+                  ? "Success"
+                  : schema.lastRun.result === "partial"
+                    ? "Partial"
+                    : "Failed"}
               </span>
+              {" · "}
+              {formatLastRunDateTime(schema.lastRun.ranAt)}
+              {" · "}
+              {formatLastRunTrigger(schema.lastRun.trigger)}
+            </span>
+            {schema.lastRun.adhocDsDateLabel ? (
+              <span className="opacity-80">{schema.lastRun.adhocDsDateLabel}</span>
             ) : null}
             {schema.lastRun.failureReason ? (
-              <span className="w-full text-xs text-destructive">
-                {schema.lastRun.failureReason.slice(0, 280)}
+              <span className="w-full text-[10px] text-destructive/90">
+                {schema.lastRun.failureReason.slice(0, 180)}
               </span>
             ) : null}
+          </div>
+        </FadeIn>
+      ) : null}
+
+      {searchOpen ? (
+        <FadeIn>
+          <div
+            id="lateral-master-search-popup"
+            className="mb-4 rounded-2xl border border-border/70 bg-card px-4 py-3 shadow-sm"
+            role="search"
+            aria-label="Master Sheet search"
+          >
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-foreground">Search</p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 rounded-lg"
+                onClick={() => setSearchOpen(false)}
+                aria-label="Close search"
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Input
+                ref={searchInputRef}
+                type="search"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="JR ID, skills, location, JD…"
+                className="rounded-xl"
+                aria-label="Search Master Sheet"
+              />
+              {searchInput.trim() ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="shrink-0 rounded-xl"
+                  onClick={() => setSearchInput("")}
+                >
+                  Clear
+                </Button>
+              ) : null}
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Searches Job Requisition ID, skills, description, location, and
+              other text columns (server-side).
+            </p>
           </div>
         </FadeIn>
       ) : null}
@@ -351,24 +485,33 @@ export function LateralMasterSheetPage() {
         </FadeIn>
       ) : null}
 
+      {errorMessage ? (
+        <FadeIn>
+          <div className="mb-4 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {errorMessage}
+          </div>
+        </FadeIn>
+      ) : null}
+
       <FadeIn>
-        <Card className="rounded-2xl border-border/70">
-          <CardHeader className="pb-2">
-            <p className="text-sm font-semibold text-foreground">Master Sheet</p>
-            <p className="text-xs text-muted-foreground">
-              Columns preserve exact Master Sheet names and order.
-            </p>
-          </CardHeader>
-          <CardContent>
+        <Card className="overflow-hidden border-border/70 shadow-sm">
+          <CardHeader className="sr-only">Master Sheet table</CardHeader>
+          <CardContent className="p-0">
             <LateralMasterSheetTable
-              headers={data?.headers ?? schema?.headers ?? []}
+              headers={data?.headers ?? []}
               rows={data?.rows ?? []}
               total={data?.total ?? 0}
-              page={data?.page ?? page}
+              page={page}
               pageSize={pageSize}
-              pageCount={data?.pageCount ?? 0}
-              isLoading={isLoading && !data}
-              errorMessage={errorMessage}
+              pageCount={data?.pageCount ?? 1}
+              isLoading={isLoading || schemaLoading}
+              errorMessage={
+                error instanceof Error
+                  ? error.message
+                  : schemaError instanceof Error
+                    ? schemaError.message
+                    : null
+              }
               onPageChange={setPage}
               onPageSizeChange={setPageSize}
             />

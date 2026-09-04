@@ -985,6 +985,30 @@ export async function runLateralDatasetPipeline(): Promise<LateralPipelineResult
         ...success,
       });
 
+      // Home KPIs: refresh from Postgres (XLSM promote skipped on this path).
+      try {
+        updateLateralHomeMetricsProgress("active");
+        const { refreshLateralHomeWidgetsMetricsFromPostgres } = await import(
+          "@/services/home/refresh-lateral-home-widgets-metrics"
+        );
+        const metricsResult =
+          await refreshLateralHomeWidgetsMetricsFromPostgres({
+            computedAt: lastUpdated,
+          });
+        if (metricsResult.ok && !metricsResult.skipped) {
+          updateLateralHomeMetricsProgress("ok");
+        } else if (metricsResult.ok && metricsResult.skipped) {
+          updateLateralHomeMetricsProgress("skipped", metricsResult.reason);
+        } else if (!metricsResult.ok) {
+          updateLateralHomeMetricsProgress("failed", metricsResult.error);
+        }
+      } catch (metricsErr) {
+        updateLateralHomeMetricsProgress(
+          "failed",
+          metricsErr instanceof Error ? metricsErr.message : String(metricsErr)
+        );
+      }
+
       return success;
     }
     if (confirmResult.phase === "backup") {
@@ -1236,6 +1260,25 @@ export async function runLateralDatasetPipeline(): Promise<LateralPipelineResult
             : "Unexpected Home metrics error",
       }).catch(() => undefined);
     }
+  }
+
+  // When dashboard Master Sheet is Postgres-backed, keep home_metrics aligned
+  // with lateral_master (authoritative for /home KPIs).
+  try {
+    const { isPostgresMode } = await import("@/lib/persistence/persistence-mode");
+    if (isPostgresMode()) {
+      const { refreshLateralHomeWidgetsMetricsFromPostgres } = await import(
+        "@/services/home/refresh-lateral-home-widgets-metrics"
+      );
+      const pgMetrics = await refreshLateralHomeWidgetsMetricsFromPostgres({
+        computedAt: lastUpdated,
+      });
+      if (pgMetrics.ok && !pgMetrics.skipped) {
+        updateLateralHomeMetricsProgress("ok");
+      }
+    }
+  } catch {
+    // Secondary — pipeline success already decided.
   }
 
   return success;

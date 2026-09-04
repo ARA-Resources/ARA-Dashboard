@@ -190,8 +190,87 @@ export async function refreshLateralHomeWidgetsMetricsFromFinalMaster(
 }
 
 /**
- * Refresh Lateral Home KPIs from the primary Google Drive XLSM Master Sheet.
- * Use this so Overview cards match Company → Accenture → Dashboard.
+ * Refresh Lateral Home KPIs from PostgreSQL `lateral_master` (VPS primary).
+ * Same open/posted/new rules as countOpeningsFromRows for Master Sheet rows.
+ */
+export async function refreshLateralHomeWidgetsMetricsFromPostgres(options?: {
+  computedAt?: string;
+}): Promise<RefreshLateralHomeWidgetsMetricsResult> {
+  const computedAt = options?.computedAt || new Date().toISOString();
+
+  try {
+    const { getDbClient } = await import("@/lib/persistence/db-client");
+    const sql = getDbClient();
+    const rows = await sql<
+      {
+        totals: number;
+        active: number;
+        posted: number;
+        fresh: number;
+        row_count: number;
+      }[]
+    >`
+      SELECT
+        COUNT(*) FILTER (
+          WHERE LOWER(COALESCE(job_status, '')) IN ('active', 'new', 'reopen')
+        )::int AS totals,
+        COUNT(*) FILTER (
+          WHERE LOWER(COALESCE(job_status, '')) = 'active'
+        )::int AS active,
+        COUNT(*) FILTER (
+          WHERE LOWER(COALESCE(job_status, '')) IN ('active', 'new', 'reopen')
+            AND LOWER(COALESCE(posted, '')) = 'yes'
+        )::int AS posted,
+        COUNT(*) FILTER (
+          WHERE LOWER(COALESCE(job_status, '')) = 'new'
+        )::int AS fresh,
+        COUNT(*)::int AS row_count
+      FROM lateral_master
+    `;
+
+    const counts = rows[0] ?? {
+      totals: 0,
+      active: 0,
+      posted: 0,
+      fresh: 0,
+      row_count: 0,
+    };
+
+    await mergeHomeUnitWidgetsMetrics("lateral", {
+      totals: counts.totals,
+      active: counts.active,
+      posted: counts.posted,
+      fresh: counts.fresh,
+      fileName: "lateral_master",
+      mtimeMs: Date.now(),
+      source: "postgres",
+      computedAt,
+      error: null,
+    });
+
+    invalidateHomeWidgetsCache();
+
+    return {
+      ok: true,
+      totals: counts.totals,
+      active: counts.active,
+      posted: counts.posted,
+      fresh: counts.fresh,
+      rowCount: counts.row_count,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to compute Lateral Home metrics from PostgreSQL.",
+    };
+  }
+}
+
+/**
+ * Refresh Lateral Home KPIs from Drive Master XLSM (file-mode bootstrap only).
  */
 export async function refreshLateralHomeWidgetsMetricsFromDriveXlsm(options?: {
   bypassCache?: boolean;

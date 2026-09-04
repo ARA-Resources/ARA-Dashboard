@@ -163,7 +163,7 @@ function normalizeHeaderKey(header: string): string {
 export function mapMasterSheetQueryToPgFilters(
   query: Pick<
     LateralMasterSheetQuery,
-    "columnFilters" | "textFilters" | "dateFilters"
+    "columnFilters" | "textFilters" | "dateFilters" | "search"
   >
 ): LateralMasterQueryFilters {
   const filters: LateralMasterQueryFilters = {};
@@ -199,6 +199,11 @@ export function mapMasterSheetQueryToPgFilters(
     } else if (key.includes("job requisition")) {
       filters.jobRequisitionIdContains = needle;
     }
+  }
+
+  const search = String(query.search ?? "").trim();
+  if (search) {
+    filters.globalSearch = search;
   }
 
   const dateRange =

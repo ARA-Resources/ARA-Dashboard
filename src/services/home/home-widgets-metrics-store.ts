@@ -21,6 +21,7 @@ export type HomeWidgetsMetricsSource =
   | "bootstrap"
   | "manual"
   | "drive-xlsm"
+  | "postgres"
   | "unknown";
 
 export interface HomeUnitWidgetsMetrics {
@@ -65,6 +66,7 @@ function normalizeSource(value: unknown): HomeWidgetsMetricsSource {
     value === "bootstrap" ||
     value === "manual" ||
     value === "drive-xlsm" ||
+    value === "postgres" ||
     value === "unknown"
   ) {
     return value;

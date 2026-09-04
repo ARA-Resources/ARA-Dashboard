@@ -103,6 +103,11 @@ export interface LateralMasterQueryFilters extends LateralMasterPRolesFilters {
   jobDescriptionContains?: string;
   /** Free-text contains on Job Requisition ID. */
   jobRequisitionIdContains?: string;
+  /**
+   * Global Master Sheet search (OR across JR / skills / JD / location / etc.).
+   * Separate from per-column textFilters.
+   */
+  globalSearch?: string;
   /** Inclusive date range on `date` (YYYY-MM-DD). */
   dateFrom?: string;
   dateTo?: string;
@@ -353,6 +358,24 @@ function buildFilterFragments(
         sql`LOWER(COALESCE(job_description, '')) LIKE ${`%${needle}%`}`
       );
     }
+  }
+
+  const globalRaw = String(filters.globalSearch ?? "").trim();
+  if (globalRaw) {
+    const needle = `%${globalRaw.toLowerCase().replace(/\s+/g, " ")}%`;
+    fragments.push(sql`(
+      LOWER(COALESCE(job_requisition_id, '')) LIKE ${needle}
+      OR LOWER(COALESCE(primary_skills, '')) LIKE ${needle}
+      OR LOWER(COALESCE(skill_categorization, '')) LIKE ${needle}
+      OR LOWER(COALESCE(job_description, '')) LIKE ${needle}
+      OR LOWER(COALESCE(primary_location, '')) LIKE ${needle}
+      OR LOWER(COALESCE(market_map, '')) LIKE ${needle}
+      OR LOWER(COALESCE(poc, '')) LIKE ${needle}
+      OR LOWER(COALESCE(priority, '')) LIKE ${needle}
+      OR LOWER(COALESCE(job_management_level, '')) LIKE ${needle}
+      OR LOWER(COALESCE(job_status, '')) LIKE ${needle}
+      OR LOWER(COALESCE(posted, '')) LIKE ${needle}
+    )`);
   }
 
   const dateFrom = String(filters.dateFrom ?? "").trim();
