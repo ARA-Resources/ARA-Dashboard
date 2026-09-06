@@ -1,5 +1,9 @@
 # ARA Dashboard — Stage 1 Design Freeze
 
+> **STATUS: ON HOLD — not in production.** Production runs the Next.js monolith.
+> `backend/` and `worker/` are dormant. See
+> [`../CLAUDE_PROJECT_CONTEXT.md`](../CLAUDE_PROJECT_CONTEXT.md).
+
 **Migration:** Next.js 16 → React/Vite + Node.js/Express + PostgreSQL  
 **Branch:** `node-test` only  
 **Status:** DESIGN ONLY — no application code, Docker, env, or schema changes in this stage.

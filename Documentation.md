@@ -1,5 +1,12 @@
 # ARA Dashboard - Codebase & Deployment Documentation
 
+> **Partly out of date.** For the accurate current picture see
+> [`CLAUDE_PROJECT_CONTEXT.md`](./CLAUDE_PROJECT_CONTEXT.md). Notably: deploy with
+> `docker compose up -d --build` (see `docker-compose.yml`), **not** the `docker
+> run` flow below; the DB is `ara_db` on `ara_pgdata`; persistence is PostgreSQL
+> (`ARA_PERSISTENCE=postgres`); there are 5 migrations; and Lateral dashboard
+> reads come from the `lateral_master` table, not Excel.
+
 This document provides an in-depth explanation of the ARA Dashboard codebase, its architecture, and detailed instructions on how to deploy it using Docker on a VPS.
 
 ---

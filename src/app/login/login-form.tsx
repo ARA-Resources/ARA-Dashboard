@@ -92,7 +92,7 @@ export function LoginForm() {
         <CardTitle>{isSignup ? "Create account" : "Sign in"}</CardTitle>
         <CardDescription>
           {isSignup
-            ? "Create an ARA Dashboard account to continue."
+            ? "Create an account with your @araresources.com email to continue."
             : "ARA Dashboard access is restricted to authorized operators."}
         </CardDescription>
       </CardHeader>

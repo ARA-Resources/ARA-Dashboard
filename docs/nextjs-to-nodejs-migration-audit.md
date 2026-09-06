@@ -1,5 +1,10 @@
 # ARA Dashboard — Next.js → Node.js + Vite/React Migration Audit
 
+> **STATUS: ON HOLD — not in production.** Production runs the Next.js monolith
+> (`docker compose up -d --build`). `backend/` and `worker/` are the partial
+> output of this migration and are not built or run. See
+> [`../CLAUDE_PROJECT_CONTEXT.md`](../CLAUDE_PROJECT_CONTEXT.md).
+
 **Status:** READ-ONLY investigation. No application code, Docker, env, git, or database was changed by this audit (this file is the audit deliverable only).
 
 **Audited at:** 2026-08-30  

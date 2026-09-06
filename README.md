@@ -1,46 +1,54 @@
 # ARA Dashboard
 
-Enterprise analytics dashboard for ARA Resources.
+Internal recruitment-pipeline dashboard for ARA Resources, tracking Accenture
+hiring (Lateral, Executive, Consulting).
+
+> **Full project context:** see [`CLAUDE_PROJECT_CONTEXT.md`](./CLAUDE_PROJECT_CONTEXT.md).
+> It is the accurate, current reference — this README is a short overview and
+> `Documentation.md` is partly out of date.
 
 ## Stack
 
-- Next.js (App Router) + TypeScript
-- Tailwind CSS v4 + shadcn/ui
-- Zustand · React Query · Framer Motion · ExcelJS · Recharts · TanStack Table
+- Next.js 16 (App Router) + React 19 + TypeScript — serves UI **and** all `/api/*`
+- Tailwind CSS v4 + shadcn/ui · Zustand · React Query · TanStack Table
+- PostgreSQL via `postgres` (postgres.js), raw SQL, no ORM
+- `exceljs` + Python `openpyxl` · `googleapis` (Gmail + Drive) · `node-cron`
 
-## Getting started
+## Production
+
+Single Docker container (`docker-compose.yml`) running Next.js + an embedded
+PostgreSQL. Deploy from the repo root on the VPS:
+
+```bash
+docker compose up -d --build
+docker compose logs -f
+```
+
+Migrations run automatically on container start (`scripts/db-migrate.mjs`).
+
+`backend/` and `worker/` are a **dormant** Next.js→Express migration and are not
+built or run in production.
+
+## Local development
 
 ```bash
 npm install
-npm run dev
+npm run dev            # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) — redirects to `/overview`.
+Copy `.env.example` → `.env.local` and fill in values. Never commit real secrets.
 
-## Excel sources
+## Data
 
-Place master workbooks in `data/excel/` using the stable filenames:
+- **Source of truth** for the Lateral dashboard: PostgreSQL `lateral_master`
+  (`ARA_PERSISTENCE=postgres`, `ARA_LATERAL_MASTER_SOURCE=postgres`).
+- Lateral **Run All** (Dataset → Lateral) pulls the latest ATCI DS from Gmail →
+  Drive, runs a 25-step pipeline, writes `job_status` / `posted` to Postgres, and
+  still refreshes the P-Roles pivot in the Drive Master XLSM.
+- `data/excel/ATCI Lateral Master Data Updated.xlsx` is an import source only:
+  `npm run db:import-lateral-master-xlsx -- --replace`.
 
-| Business unit | File | Primary sheet |
-|---------------|------|---------------|
-| Lateral | `lateral-mastersheet.xlsm` | `P-Roles` |
-| Executive | `executive-mastersheet.xlsm` | `P - Dashboard` |
-| Consulting | `consulting-demand.xlsx` | `Sheet1` |
+## Business units
 
-Replace a file in place to update data. Do not rename registry keys unless remapping intentionally.
-
-## Architecture
-
-```
-src/
-  app/                 # routes
-  components/          # ui, layouts, sidebar, navbar, dashboard, tables, charts, filters
-  constants/           # colors, routes, sidebar, business-unit registry
-  services/excel/      # Excel I/O only
-  stores/              # zustand (sidebar, filters, search)
-  hooks/ utils/ types/ animations/ providers/
-data/excel/            # master workbooks
-public/assets/         # ARA logo
-```
-
-Dashboard data features are intentionally not implemented yet — architecture only.
+Lateral — production-complete. Executive — partial. Consulting — stub.
+See `src/constants/companies.ts`.
