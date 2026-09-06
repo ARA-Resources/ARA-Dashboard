@@ -6,7 +6,8 @@ services:
     container_name: ara-dashboard-prod
     restart: unless-stopped
     ports:
-      - "3000:3000"   # host:container — Next.js must listen on 7000 inside (see PORT below)
+      - "3000:3000"   # Frontend, Backend
+      - "5433:5432"   # host:container — Database
     volumes:
       - ara_pgdata:/var/lib/postgresql/data
       - ara_appdata:/app/.data
