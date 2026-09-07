@@ -70,6 +70,25 @@ async function writeStore(store: UserStore): Promise<void> {
   await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf8");
 }
 
+/**
+ * Email domains allowed to self-register. Mirror of the Next.js side
+ * (src/lib/auth/users-store.ts). Configurable via ARA_SIGNUP_EMAIL_DOMAINS;
+ * default araresources.com.
+ */
+export function allowedSignupDomains(): string[] {
+  const raw = process.env.ARA_SIGNUP_EMAIL_DOMAINS?.trim();
+  const domains: string[] = raw ? raw.split(",") : ["araresources.com"];
+  return domains
+    .map((domain: string) => domain.trim().toLowerCase().replace(/^@/, ""))
+    .filter(Boolean);
+}
+
+export function isAllowedSignupEmail(username: string): boolean {
+  const match = username.trim().toLowerCase().match(/^[^@\s]+@([^@\s]+)$/);
+  if (!match) return false;
+  return allowedSignupDomains().includes(match[1]);
+}
+
 export function validateUsername(username: string): string | null {
   const value = normalizeUsername(username);
   if (!value) return "Enter an email or username.";

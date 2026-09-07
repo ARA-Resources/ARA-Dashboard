@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { authorizeRequest } from "@/lib/auth/dal";
 import {
   listDatasetVersions,
   rollbackDatasetVersion,
@@ -17,6 +18,8 @@ export const runtime = "nodejs";
 
 /** Enterprise ops read model: versions, filters, dedupe, alerts */
 export async function GET(request: Request) {
+  const gate = await authorizeRequest(request);
+  if (!gate.ok) return gate.response;
   const { searchParams } = new URL(request.url);
   const dataset = searchParams.get("dataset") ?? undefined;
   const setup = await readDatasetSetup();
@@ -68,6 +71,9 @@ export async function GET(request: Request) {
  * - rollback { datasetName, fileName }
  */
 export async function POST(request: Request) {
+  const gate = await authorizeRequest(request);
+  if (!gate.ok) return gate.response;
+
   let body: {
     action?: string;
     historyEntryId?: string;

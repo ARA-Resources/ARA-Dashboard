@@ -1,4 +1,5 @@
 ﻿import { NextResponse } from "next/server";
+import { authorizeRequest } from "@/lib/auth/dal";
 import {
   ensureLateralSchedulerStarted,
   getLateralProcessingStatusView,
@@ -13,7 +14,9 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-export async function GET() {
+export async function GET(request: Request) {
+  const gate = await authorizeRequest(request);
+  if (!gate.ok) return gate.response;
   await ensureLateralSchedulerStarted();
   const [status, processing] = await Promise.all([
     getLateralSchedulerStatus(),
@@ -32,6 +35,8 @@ export async function GET() {
  * Run Now and the daily cron both call invokeLateralJob → executeLateralDatasetJob.
  */
 export async function POST(request: Request) {
+  const gate = await authorizeRequest(request);
+  if (!gate.ok) return gate.response;
   await ensureLateralSchedulerStarted();
 
   let body: Record<string, unknown> = {};

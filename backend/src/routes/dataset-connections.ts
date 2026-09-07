@@ -31,7 +31,7 @@ export function createDatasetConnectionsRouter(): Router {
 
   router.delete(
     "/api/dataset/connections",
-    requireAccess("operator"),
+    requireAccess("editor"),
     async (_req, res) => {
       try {
         await clearGmailAuth();

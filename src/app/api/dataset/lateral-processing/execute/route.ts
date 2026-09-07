@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs/promises";
+import { authorizeRequest } from "@/lib/auth/dal";
 import { readLateralDataProcessingSetup } from "@/services/lateral-processing/setup-store";
 import { executeNewSheetUpdate } from "@/services/lateral-processing/new-sheet-writer";
 import { stageMasterReconciliation } from "@/services/lateral-processing/master-reconcile";
@@ -9,7 +10,10 @@ export const runtime = "nodejs";
 // New Sheet write + staged reconciliation can take several minutes
 export const maxDuration = 300;
 
-export async function POST() {
+export async function POST(request: Request) {
+  const gate = await authorizeRequest(request);
+  if (!gate.ok) return gate.response;
+
   const setup = await readLateralDataProcessingSetup();
   if (!setup) {
     return NextResponse.json(

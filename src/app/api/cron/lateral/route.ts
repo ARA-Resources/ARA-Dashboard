@@ -1,11 +1,13 @@
 /**
  * Vercel Cron endpoint for the Lateral Dataset Sync job.
  *
- * Called automatically by Vercel Cron on the configured schedule (see vercel.json).
- * May also be called manually by an operator for testing (same auth applies).
+ * External trigger for the Lateral Dataset Sync job (VPS cron / manual curl).
  *
  * Security:
- *   - Vercel passes `Authorization: Bearer <CRON_SECRET>` on every cron call.
+ *   - Caller must pass `Authorization: Bearer <CRON_SECRET>`.
+ *   - proxy.ts lets a valid CRON_SECRET bearer through without a session, and
+ *     also accepts an `editor`+ dashboard session; this handler then still
+ *     requires the CRON_SECRET (session alone cannot trigger it).
  *   - Requests without a valid secret are rejected with 401.
  *   - Timing-safe comparison via `timingSafeEqual` to prevent timing attacks.
  *

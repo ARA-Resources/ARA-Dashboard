@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { authorizeRequest } from "@/lib/auth/dal";
 import { runLateralDatasetPipeline } from "@/services/lateral-processing/pipeline";
 
 export const runtime = "nodejs";
@@ -6,7 +7,10 @@ export const runtime = "nodejs";
 /** Full Lateral pipeline (config → Drive → New Sheet → reconcile → VBA → Dataset Manager). */
 export const maxDuration = 300;
 
-export async function POST() {
+export async function POST(request: Request) {
+  // Defense in depth — proxy already gated this, DAL re-checks at the data.
+  const gate = await authorizeRequest(request);
+  if (!gate.ok) return gate.response;
   try {
     const result = await runLateralDatasetPipeline();
     if (!result.ok) {

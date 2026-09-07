@@ -1,4 +1,26 @@
-export type AccessLevel = "public" | "authenticated" | "operator";
+/**
+ * Access policy for the Express layer — mirror of src/lib/auth/access.ts.
+ * Role model: viewer < editor < admin < super_admin. No "operator".
+ * "viewer" means "any authenticated, active user".
+ */
+import type { Role } from "./roles.js";
+
+/**
+ * "authenticated" is a legacy alias for "viewer" (any signed-in active user),
+ * kept so existing `requireAccess("authenticated")` call sites in
+ * backend/src/routes/* keep working. When the Express layer is revived, those
+ * call sites should be tightened to the exact role from requiredAccess() —
+ * e.g. Dataset routes are "editor", not "viewer".
+ */
+export type AccessLevel = "public" | "authenticated" | Role;
+
+const OPERATOR_LEGACY_GET_PATHS = new Set<string>([
+  "/api/dataset/gmail/oauth/start",
+  "/api/dataset/gmail/messages",
+  "/api/dataset/gmail/sync",
+]);
+
+const SUPER_ADMIN_API_PREFIXES = ["/api/admin/users", "/api/admin/invites"];
 
 function normalizePath(pathname: string): string {
   if (!pathname) return "/";
@@ -8,187 +30,45 @@ function normalizePath(pathname: string): string {
   return pathname;
 }
 
-/**
- * Access policy for Node APIs.
- * Stage 8B-1: auth endpoint public/authenticated rules match Next.js.
- * Does not yet reproduce the full Next page/API matrix.
- */
+export function isApiPath(pathname: string): boolean {
+  return normalizePath(pathname).startsWith("/api/");
+}
+
 export function requiredAccess(pathname: string, method: string): AccessLevel {
   const path = normalizePath(pathname);
   const verb = method.toUpperCase();
+  const isRead = verb === "GET" || verb === "HEAD";
 
-  if (path === "/api/health" && (verb === "GET" || verb === "HEAD")) {
+  if (path === "/api/health" && isRead) return "public";
+  if (path === "/api/db-health" && isRead) return "public";
+  if (path === "/api/auth/login" && (isRead || verb === "POST")) return "public";
+  if (path === "/api/auth/signup" && verb === "POST") return "public";
+  // Phase 3 — invite acceptance (invited person has no session yet).
+  if (path === "/api/auth/accept-invite" && (isRead || verb === "POST")) {
     return "public";
   }
-  if (path === "/api/db-health" && (verb === "GET" || verb === "HEAD")) {
-    return "public";
-  }
+  if (path === "/api/dataset/gmail/oauth/callback" && isRead) return "public";
 
-  if (path === "/api/auth/login" && (verb === "GET" || verb === "POST")) {
-    return "public";
-  }
-  if (path === "/api/auth/signup" && verb === "POST") {
-    return "public";
-  }
-  if (path === "/api/auth/logout" && verb === "POST") {
-    return "authenticated";
-  }
-  if (path === "/api/auth/me" && verb === "GET") {
-    return "authenticated";
-  }
+  if (path === "/api/auth/logout" || path === "/api/auth/me") return "viewer";
+  // Phase 4: self-service account actions — any authenticated user, own account.
+  if (path === "/api/auth/change-password" && verb === "POST") return "viewer";
+  if (path === "/api/auth/profile" && verb === "POST") return "viewer";
+  if (path === "/api/dataset/notifications") return "viewer";
+  if (path === "/api/home/widgets" && isRead) return "viewer";
+  if (path.startsWith("/api/excel/") && isRead) return "viewer";
+  if (path === "/api/dataset/lateral/p-roles" && isRead) return "viewer";
 
   if (
-    path === "/api/dataset/lateral/sync-history" &&
-    (verb === "GET" || verb === "HEAD")
+    SUPER_ADMIN_API_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`))
   ) {
-    return "authenticated";
+    return "super_admin";
   }
 
-  if (
-    path === "/api/dataset/lateral/p-roles" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
+  if (OPERATOR_LEGACY_GET_PATHS.has(path)) return "editor";
+  if (path === "/api/cron/lateral") return "editor";
+  if (path.startsWith("/api/dataset/")) return "editor";
 
-  if (
-    path === "/api/home/widgets" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
+  if (isApiPath(path)) return isRead ? "viewer" : "editor";
 
-  // Stage 11: POST must remain authenticated (not operator) — matches Next access.ts
-  if (path === "/api/dataset/notifications") {
-    if (verb === "GET" || verb === "HEAD" || verb === "POST") {
-      return "authenticated";
-    }
-  }
-
-  // Stage 13: Dataset Sync History (file-backed) — authenticated GETs
-  if (
-    path === "/api/dataset/sync-history" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
-  if (
-    /^\/api\/dataset\/sync-history\/[^/]+\/log$/.test(path) &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
-
-  // Stage 16/21: Dataset Setup GET (authenticated) + POST/DELETE (operator)
-  if (path === "/api/dataset/setup") {
-    if (verb === "GET" || verb === "HEAD") {
-      return "authenticated";
-    }
-    if (verb === "POST" || verb === "DELETE") {
-      return "operator";
-    }
-  }
-
-  // Stage 18: Drive metadata GET (encrypted local store; no Google Drive API)
-  if (
-    path === "/api/dataset/drive/metadata" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
-
-  // Stage 19/22: Connections GET (authenticated) + DELETE (operator)
-  if (path === "/api/dataset/connections") {
-    if (verb === "GET" || verb === "HEAD") {
-      return "authenticated";
-    }
-    if (verb === "DELETE") {
-      return "operator";
-    }
-  }
-
-  // Stage 20: Dataset current GET (filesystem read-only; ?seed=1 not supported)
-  if (
-    path === "/api/dataset/current" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
-
-  // Stage 20: Drive folders GET (local metadata only; ?live=1 not supported)
-  if (
-    path === "/api/dataset/drive/folders" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
-
-  // Stage 24: Lateral processing setup GET only (POST remains Next.js)
-  if (
-    path === "/api/dataset/lateral-processing/setup" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
-
-  // Stage 29A: Lateral processing wizard Drive discovery GETs
-  if (
-    (path === "/api/dataset/lateral-processing/workbooks" ||
-      path === "/api/dataset/lateral-processing/worksheets") &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
-
-  // Stage 30A: Lateral processing preview GET
-  if (
-    path === "/api/dataset/lateral-processing/preview" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
-
-  // Stage 25: Consulting Excel dashboard GETs (filesystem-backed)
-  if (
-    (path === "/api/excel/consulting" ||
-      path === "/api/excel/consulting/filters") &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
-
-  // Stage 26: Executive P-Dashboard GET (Excel/Drive-backed)
-  if (
-    path === "/api/excel/executive-p-dashboard" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
-
-  // Stage 27: Executive Master Sheet GET (Excel/Drive-backed)
-  if (
-    path === "/api/excel/executive-master-sheet" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
-
-  // Stage 28: Lateral Master Sheet GET (Excel/Drive-backed)
-  if (
-    path === "/api/excel/lateral-master-sheet" &&
-    (verb === "GET" || verb === "HEAD")
-  ) {
-    return "authenticated";
-  }
-
-  if (path.startsWith("/api/")) {
-    if (verb === "GET" || verb === "HEAD") return "authenticated";
-    return "operator";
-  }
-
-  return "authenticated";
-}
-
-export function isApiPath(pathname: string): boolean {
-  return normalizePath(pathname).startsWith("/api/");
+  return "viewer";
 }

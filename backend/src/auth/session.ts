@@ -1,14 +1,17 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { isRole, type Role } from "./roles.js";
 
 export const SESSION_COOKIE = "ara_session";
 export const SESSION_TTL_SECONDS = 60 * 60 * 12;
 
-export type SessionRole = "viewer" | "operator";
+/** @deprecated alias — use `Role` from "./roles.js". */
+export type SessionRole = Role;
 
 export type DashboardSession = {
   v: 1;
+  uid: string;
   username: string;
-  role: SessionRole;
+  role: Role;
   exp: number;
 };
 
@@ -20,29 +23,8 @@ export function getDashboardPassword(): string {
   return process.env.ARA_DASHBOARD_PASSWORD?.trim() ?? "";
 }
 
-/**
- * Matches Next.js isAuthConfigured(): both env vars must be present.
- */
 export function isAuthConfigured(): boolean {
   return Boolean(getSessionSecret() && getDashboardPassword());
-}
-
-export function parseOperatorAllowlist(): string[] {
-  return (process.env.ARA_OPERATOR_ALLOWLIST ?? "")
-    .split(",")
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-/**
- * Matches Next.js resolveRole(): empty allowlist ⇒ everyone is operator.
- */
-export function resolveRole(username: string): SessionRole {
-  const allowlist = parseOperatorAllowlist();
-  if (allowlist.length === 0) return "operator";
-  return allowlist.includes(username.trim().toLowerCase())
-    ? "operator"
-    : "viewer";
 }
 
 function toBase64Url(bytes: Uint8Array): string {
@@ -78,16 +60,10 @@ function signPayload(payloadB64: string, secret: string): string {
   return toBase64Url(digest);
 }
 
-function isSessionRole(value: unknown): value is SessionRole {
-  return value === "viewer" || value === "operator";
-}
-
-/**
- * Mint a session token compatible with Next.js src/lib/auth/session.ts.
- */
 export async function createSessionToken(input: {
+  uid: string;
   username: string;
-  role: SessionRole;
+  role: Role;
 }): Promise<string> {
   const secret = getSessionSecret();
   if (!secret) {
@@ -95,6 +71,7 @@ export async function createSessionToken(input: {
   }
   const session: DashboardSession = {
     v: 1,
+    uid: input.uid,
     username: input.username.trim(),
     role: input.role,
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
@@ -125,19 +102,22 @@ export async function verifySessionToken(
   try {
     const parsed = JSON.parse(new TextDecoder().decode(raw)) as {
       v?: unknown;
+      uid?: unknown;
       username?: unknown;
       role?: unknown;
       exp?: unknown;
     };
     if (parsed.v !== 1) return null;
+    if (typeof parsed.uid !== "string" || !parsed.uid) return null;
     if (typeof parsed.username !== "string" || !parsed.username) return null;
-    if (!isSessionRole(parsed.role)) return null;
+    if (!isRole(parsed.role)) return null;
     if (typeof parsed.exp !== "number" || !Number.isFinite(parsed.exp)) {
       return null;
     }
     if (parsed.exp < Math.floor(Date.now() / 1000)) return null;
     return {
       v: 1,
+      uid: parsed.uid,
       username: parsed.username,
       role: parsed.role,
       exp: parsed.exp,
@@ -163,7 +143,6 @@ export function readSessionCookie(cookieHeader: string | null): string | null {
   return null;
 }
 
-/** Secure flag matches Next: HTTPS app URL ⇒ Secure. */
 export function sessionCookieSecure(): boolean {
   const appUrl = (
     process.env.ARA_APP_URL?.trim() ||

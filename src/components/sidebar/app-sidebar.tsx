@@ -6,6 +6,7 @@ import { SIDEBAR_SECTIONS, isNavHrefActive } from "@/constants/navigation";
 import { SIDEBAR } from "@/constants/sidebar";
 import { useSidebar } from "@/hooks/use-sidebar";
 import { useNavigation } from "@/hooks/use-navigation";
+import { useVisibleNavSections } from "@/hooks/use-visible-nav-sections";
 import {
   SidebarExpandable,
   SidebarLink,
@@ -44,6 +45,10 @@ export function AppSidebar({
 
   const isCollapsed = forceExpanded ? false : collapsed;
 
+  // Role-based section gating. UI convenience only — proxy.ts + the DAL
+  // (Phase 2) are the real enforcement; forcing the URL still 403s server-side.
+  const { sections: visibleSections } = useVisibleNavSections();
+
   React.useEffect(() => {
     syncFromPathname(pathname);
   }, [pathname, syncFromPathname]);
@@ -70,7 +75,7 @@ export function AppSidebar({
     >
       <ScrollArea className="flex-1 px-2 py-3">
         <nav className="flex flex-col gap-1" aria-label="Primary">
-          {SIDEBAR_SECTIONS.map((section) => {
+          {visibleSections.map((section) => {
             const sectionExpanded = expandedSectionIds.includes(section.id);
             const sectionActive = workspace === section.workspace;
 

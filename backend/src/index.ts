@@ -2,6 +2,11 @@ import express from "express";
 import type { NextFunction, Request, Response } from "express";
 import { readDatabaseIdentity, selectOne } from "./db.js";
 import { createAuthRouter } from "./routes/auth.js";
+import { createAdminInvitesRouter } from "./routes/admin-invites.js";
+import {
+  createAdminUsersRouter,
+  createAccountRouter,
+} from "./routes/admin-users.js";
 import { createHomeWidgetsRouter } from "./routes/home-widgets.js";
 import { createLateralFiltersRouter } from "./routes/lateral-filters.js";
 import { createLateralPRolesRouter } from "./routes/lateral-p-roles.js";
@@ -97,6 +102,9 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.use(createAuthRouter());
+app.use(createAccountRouter());
+app.use(createAdminInvitesRouter());
+app.use(createAdminUsersRouter());
 app.use(createLateralSyncHistoryRouter());
 app.use(createLateralFiltersRouter());
 app.use(createLateralPRolesRouter());

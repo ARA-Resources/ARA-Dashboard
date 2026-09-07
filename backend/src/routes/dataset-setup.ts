@@ -32,7 +32,7 @@ export function createDatasetSetupRouter(): Router {
 
   router.post(
     "/api/dataset/setup",
-    requireAccess("operator"),
+    requireAccess("editor"),
     async (req, res) => {
       try {
         const result = await postDatasetSetup(req.body);
@@ -58,7 +58,7 @@ export function createDatasetSetupRouter(): Router {
 
   router.delete(
     "/api/dataset/setup",
-    requireAccess("operator"),
+    requireAccess("editor"),
     async (_req, res) => {
       try {
         const payload = await deleteDatasetSetup();

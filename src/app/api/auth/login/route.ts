@@ -1,24 +1,16 @@
 import { NextResponse } from "next/server";
-import { passwordMatches } from "@/lib/auth/passwords";
 import {
   buildSessionCookie,
   createSessionToken,
-  getDashboardPassword,
   isAuthConfigured,
-  resolveRole,
 } from "@/lib/auth/session";
-import { findUserByUsername, verifyUserPassword } from "@/lib/auth/users-store";
+import { recordLogin, verifyLoginCredentials } from "@/lib/auth/users-db";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   return NextResponse.json(
-    {
-      configured: isAuthConfigured(),
-      allowlistEnabled: Boolean(
-        process.env.ARA_OPERATOR_ALLOWLIST?.trim()
-      ),
-    },
+    { configured: isAuthConfigured() },
     { headers: { "Cache-Control": "no-store" } }
   );
 }
@@ -42,28 +34,31 @@ export async function POST(request: Request) {
     body = {};
   }
 
-  const username = (body.username?.trim() || "operator").slice(0, 80);
+  const email = (body.username?.trim() || "").slice(0, 200).toLowerCase();
   const password = body.password ?? "";
 
-  const registered = await findUserByUsername(username);
-  const matchedUser = registered
-    ? await verifyUserPassword(username, password)
-    : null;
-  const sharedOk =
-    !registered && passwordMatches(password, getDashboardPassword());
+  // Phase 2: authenticate ONLY against the Postgres `users` table.
+  // The shared ARA_DASHBOARD_PASSWORD login path has been removed.
+  const user = email ? await verifyLoginCredentials(email, password) : null;
 
-  if (!matchedUser && !sharedOk) {
+  if (!user) {
     return NextResponse.json(
-      { error: "Invalid username or password.", code: "INVALID_CREDENTIALS" },
+      { error: "Invalid email or password.", code: "INVALID_CREDENTIALS" },
       { status: 401, headers: { "Cache-Control": "no-store" } }
     );
   }
 
-  const sessionUsername = matchedUser?.username ?? username;
-  const role = resolveRole(sessionUsername);
-  const token = await createSessionToken({ username: sessionUsername, role });
+  await recordLogin(user.id).catch((err) => {
+    console.warn("[auth/login] failed to record last_login_at", err);
+  });
+
+  const token = await createSessionToken({
+    uid: user.id,
+    username: user.email,
+    role: user.role,
+  });
   const response = NextResponse.json(
-    { ok: true, username: sessionUsername, role },
+    { ok: true, username: user.email, role: user.role },
     { headers: { "Cache-Control": "no-store" } }
   );
   response.headers.set("Set-Cookie", buildSessionCookie(token));

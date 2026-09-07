@@ -1,9 +1,7 @@
 "use client";
 
-import Image from "next/image";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,21 +11,33 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { NAVBAR, PROFILE_MENU } from "@/constants/navbar";
+import { PROFILE_MENU } from "@/constants/navbar";
 import { useNavigation } from "@/hooks/use-navigation";
 import { useSidebar } from "@/hooks/use-sidebar";
+import { useCurrentUser } from "@/hooks/use-current-user";
+import { isSectionVisibleForRole } from "@/hooks/use-visible-nav-sections";
+import { UserAvatar } from "@/components/navbar/user-avatar";
 import type { WorkspaceId } from "@/constants/navigation";
 
 export function ProfileMenu() {
   const { workspace, goToWorkspace } = useNavigation();
   const { setCollapsed } = useSidebar();
+  const { user, role } = useCurrentUser();
 
-  const navigateItems = PROFILE_MENU.filter((item) => item.action !== "logout");
+  // Same role gating as the sidebar — UI convenience only (proxy.ts + DAL enforce).
+  const navigateItems = PROFILE_MENU.filter(
+    (item) =>
+      item.action !== "logout" &&
+      isSectionVisibleForRole(item.workspace, role)
+  );
   const logoutItem = PROFILE_MENU.find((item) => item.action === "logout");
   const LogoutIcon = logoutItem?.icon;
 
+  const email = user?.email ?? "";
+  const displayName = user?.displayName ?? null;
+  const name = displayName || email || "ARA User";
+
   function handleSelect(nextWorkspace: WorkspaceId) {
-    // Keep sidebar expanded so the activated section is visible
     setCollapsed(false);
     goToWorkspace(nextWorkspace);
   }
@@ -48,18 +58,12 @@ export function ProfileMenu() {
           whileTap={{ scale: 0.96 }}
           className="flex items-center justify-center"
         >
-          <Avatar size="default" className="size-9 ring-2 ring-primary/20">
-            <AvatarImage src={NAVBAR.logoPath} alt="ARA" />
-            <AvatarFallback className="overflow-hidden bg-primary/10 p-0">
-              <Image
-                src={NAVBAR.logoPath}
-                alt="ARA"
-                width={36}
-                height={36}
-                className="size-full object-cover"
-              />
-            </AvatarFallback>
-          </Avatar>
+          <UserAvatar
+            email={email}
+            displayName={displayName}
+            avatarColor={user?.avatarColor ?? null}
+            className="size-9 ring-2 ring-primary/20"
+          />
         </motion.div>
       </DropdownMenuTrigger>
 
@@ -67,24 +71,20 @@ export function ProfileMenu() {
         <DropdownMenuGroup>
           <DropdownMenuLabel className="font-normal">
             <div className="flex items-center gap-2.5">
-              <Avatar size="sm" className="size-8 ring-1 ring-border">
-                <AvatarImage src={NAVBAR.logoPath} alt="ARA" />
-                <AvatarFallback className="overflow-hidden bg-primary/10 p-0">
-                  <Image
-                    src={NAVBAR.logoPath}
-                    alt="ARA"
-                    width={32}
-                    height={32}
-                    className="size-full object-cover"
-                  />
-                </AvatarFallback>
-              </Avatar>
+              <UserAvatar
+                email={email}
+                displayName={displayName}
+                avatarColor={user?.avatarColor ?? null}
+                size="sm"
+                className="size-8"
+              />
               <div className="flex min-w-0 flex-col gap-0.5">
-                <span className="text-sm font-medium text-foreground">
-                  ARA User
+                <span className="truncate text-sm font-medium text-foreground">
+                  {name}
                 </span>
-                <span className="text-xs text-muted-foreground">
-                  admin@ara.resources
+                <span className="truncate text-xs text-muted-foreground">
+                  {email || "Not signed in"}
+                  {user ? ` · ${role}` : ""}
                 </span>
               </div>
             </div>

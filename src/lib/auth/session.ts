@@ -1,16 +1,27 @@
 /**
  * Dashboard session cookies (HMAC-SHA256). Edge-safe (Web Crypto).
  * Separate from Gmail/Drive OAuth tokens.
+ *
+ * Phase 2: the token carries the user's Postgres id (`uid`) and the role that
+ * was current at login. The role in the token is only an OPTIMISTIC hint —
+ * every authoritative check re-reads role + active from the `users` table
+ * (see src/lib/auth/dal.ts). Tokens minted before Phase 2 (no `uid`, legacy
+ * role) fail verification and force a fresh login.
  */
+import { isRole, type Role } from "@/lib/auth/roles";
+
 export const SESSION_COOKIE = "ara_session";
 export const SESSION_TTL_SECONDS = 60 * 60 * 12;
 
-export type SessionRole = "viewer" | "operator";
+/** @deprecated Use `Role` from "@/lib/auth/roles". Kept as an alias only. */
+export type SessionRole = Role;
 
 export type DashboardSession = {
   v: 1;
+  /** Postgres users.id (UUID). Required since Phase 2. */
+  uid: string;
   username: string;
-  role: SessionRole;
+  role: Role;
   exp: number;
 };
 
@@ -58,23 +69,14 @@ export function getDashboardPassword(): string {
   return process.env.ARA_DASHBOARD_PASSWORD?.trim() ?? "";
 }
 
+/**
+ * Both env vars must be present for auth to be considered configured.
+ * NOTE (Phase 2): ARA_DASHBOARD_PASSWORD is no longer accepted as a login
+ * credential — it only gates this "configured" flag. It can be retired in a
+ * later phase once nothing else references it.
+ */
 export function isAuthConfigured(): boolean {
   return Boolean(getSessionSecret() && getDashboardPassword());
-}
-
-export function parseOperatorAllowlist(): string[] {
-  return (process.env.ARA_OPERATOR_ALLOWLIST ?? "")
-    .split(",")
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-export function resolveRole(username: string): SessionRole {
-  const allowlist = parseOperatorAllowlist();
-  if (allowlist.length === 0) return "operator";
-  return allowlist.includes(username.trim().toLowerCase())
-    ? "operator"
-    : "viewer";
 }
 
 async function hmacKey(secret: string): Promise<CryptoKey> {
@@ -98,8 +100,9 @@ async function signPayload(payloadB64: string, secret: string): Promise<string> 
 }
 
 export async function createSessionToken(input: {
+  uid: string;
   username: string;
-  role: SessionRole;
+  role: Role;
 }): Promise<string> {
   const secret = getSessionSecret();
   if (!secret) {
@@ -107,6 +110,7 @@ export async function createSessionToken(input: {
   }
   const session: DashboardSession = {
     v: 1,
+    uid: input.uid,
     username: input.username.trim(),
     role: input.role,
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
@@ -133,11 +137,21 @@ export async function verifySessionToken(
   const raw = fromBase64Url(payloadB64);
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(new TextDecoder().decode(raw)) as DashboardSession;
-    if (parsed.v !== 1 || !parsed.username) return null;
-    if (parsed.role !== "operator" && parsed.role !== "viewer") return null;
-    if (parsed.exp < Math.floor(Date.now() / 1000)) return null;
-    return parsed;
+    const parsed = JSON.parse(new TextDecoder().decode(raw)) as Partial<DashboardSession>;
+    if (parsed.v !== 1) return null;
+    if (typeof parsed.uid !== "string" || !parsed.uid) return null;
+    if (typeof parsed.username !== "string" || !parsed.username) return null;
+    if (!isRole(parsed.role)) return null;
+    if (typeof parsed.exp !== "number" || parsed.exp < Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+    return {
+      v: 1,
+      uid: parsed.uid,
+      username: parsed.username,
+      role: parsed.role,
+      exp: parsed.exp,
+    };
   } catch {
     return null;
   }

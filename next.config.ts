@@ -138,7 +138,9 @@ function nodeBackendRewrites(): NodeRewrite[] {
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  serverExternalPackages: ["googleapis", "exceljs"],
+  // `postgres` is used by proxy.ts (Node runtime) + Route Handlers for the
+  // Phase 2 auth checks — keep it external so Next never tries to bundle it.
+  serverExternalPackages: ["googleapis", "exceljs", "postgres"],
   async rewrites() {
     // beforeFiles: required so these paths proxy to Node even while the
     // legacy Next Route Handlers still exist (afterFiles lose to static routes).
