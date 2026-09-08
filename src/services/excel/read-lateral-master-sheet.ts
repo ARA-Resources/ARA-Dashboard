@@ -132,11 +132,8 @@ const MASTER_SHEET_DISTINCT_FILTERS: ReadonlyArray<{
     pg: "skill_categorization",
     control: "multi-select",
   },
-  {
-    excelHeader: "Primary Skills",
-    pg: "primary_skills",
-    control: "searchable-multi-select",
-  },
+  // Primary Skills has ~950 distinct values — served as a free-text "contains"
+  // filter (like Job Description), not a checkbox list. See base fields below.
   {
     excelHeader: "Job Management Level",
     pg: "job_management_level",
@@ -150,6 +147,11 @@ const MASTER_SHEET_DISTINCT_FILTERS: ReadonlyArray<{
   { excelHeader: "Market Map", pg: "market_map", control: "multi-select" },
   { excelHeader: "POC", pg: "poc", control: "searchable-multi-select" },
   { excelHeader: "Job Status", pg: "job_status", control: "multi-select" },
+  {
+    excelHeader: "Opened on Oorwin",
+    pg: "opened_on_oorwin",
+    control: "multi-select",
+  },
   { excelHeader: "Posted", pg: "posted", control: "multi-select" },
 ];
 
@@ -181,7 +183,6 @@ export function mapMasterSheetQueryToPgFilters(
 
   filters.priority = take("Priority");
   filters.skillCategorization = take("Skill Categorization");
-  filters.primarySkills = take("Primary Skills");
   filters.jobManagementLevel = take("Job Management Level");
   filters.primaryLocation =
     take("Primary Location/Office lOcate") ??
@@ -189,6 +190,7 @@ export function mapMasterSheetQueryToPgFilters(
   filters.marketMap = take("Market Map");
   filters.poc = take("POC");
   filters.jobStatus = take("Job Status");
+  filters.openedOnOorwin = take("Opened on Oorwin");
   filters.posted = take("Posted");
 
   for (const [header, needle] of Object.entries(query.textFilters ?? {})) {
@@ -198,6 +200,8 @@ export function mapMasterSheetQueryToPgFilters(
       filters.jobDescriptionContains = needle;
     } else if (key.includes("job requisition")) {
       filters.jobRequisitionIdContains = needle;
+    } else if (key.includes("primary skill")) {
+      filters.primarySkillsContains = needle;
     }
   }
 
@@ -233,6 +237,12 @@ async function getLateralMasterFilterSchemaFromPostgres(): Promise<LateralMaster
     },
     {
       column: "Job Description",
+      control: "text",
+      values: [],
+      valueCount: 0,
+    },
+    {
+      column: "Primary Skills",
       control: "text",
       values: [],
       valueCount: 0,

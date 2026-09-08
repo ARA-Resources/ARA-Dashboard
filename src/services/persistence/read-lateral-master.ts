@@ -72,6 +72,7 @@ export const LATERAL_MASTER_FILTER_VALUE_COLUMNS = [
   "job_management_level",
   "primary_location",
   "poc",
+  "opened_on_oorwin",
 ] as const;
 
 export type LateralMasterFilterValueColumn =
@@ -99,10 +100,13 @@ export interface LateralMasterQueryFilters extends LateralMasterPRolesFilters {
   jobManagementLevel?: string[];
   primaryLocation?: string[];
   poc?: string[];
+  openedOnOorwin?: string[];
   /** Free-text contains on Job Description (AND tokens when comma/semicolon/pipe). */
   jobDescriptionContains?: string;
   /** Free-text contains on Job Requisition ID. */
   jobRequisitionIdContains?: string;
+  /** Free-text contains on Primary Skills (AND tokens when comma/semicolon/pipe). */
+  primarySkillsContains?: string;
   /**
    * Global Master Sheet search (OR across JR / skills / JD / location / etc.).
    * Separate from per-column textFilters.
@@ -267,7 +271,8 @@ function buildFilterFragments(
       | "primary_skills"
       | "job_management_level"
       | "primary_location"
-      | "poc",
+      | "poc"
+      | "opened_on_oorwin",
     values: string[] | undefined
   ) => {
     const normalized = normalizeFilterValues(values);
@@ -309,6 +314,11 @@ function buildFilterFragments(
       case "poc":
         fragments.push(sql`LOWER(COALESCE(poc, '')) = ANY(${normalized})`);
         break;
+      case "opened_on_oorwin":
+        fragments.push(
+          sql`LOWER(COALESCE(opened_on_oorwin, '')) = ANY(${normalized})`
+        );
+        break;
     }
   };
 
@@ -321,6 +331,7 @@ function buildFilterFragments(
   pushLowerIn("job_management_level", filters.jobManagementLevel);
   pushLowerIn("primary_location", filters.primaryLocation);
   pushLowerIn("poc", filters.poc);
+  pushLowerIn("opened_on_oorwin", filters.openedOnOorwin);
 
   if (filters.jobRequisitionIds?.length) {
     const ids = [
@@ -357,6 +368,25 @@ function buildFilterFragments(
     for (const needle of needles) {
       fragments.push(
         sql`LOWER(COALESCE(job_description, '')) LIKE ${`%${needle}%`}`
+      );
+    }
+  }
+
+  const skillsRaw = String(filters.primarySkillsContains ?? "").trim();
+  if (skillsRaw) {
+    const tokens = skillsRaw
+      .toLowerCase()
+      .replace(/ /g, " ")
+      .split(/[,;/|]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const needles =
+      tokens.length > 0
+        ? tokens
+        : [skillsRaw.toLowerCase().replace(/\s+/g, " ").trim()].filter(Boolean);
+    for (const needle of needles) {
+      fragments.push(
+        sql`LOWER(COALESCE(primary_skills, '')) LIKE ${`%${needle}%`}`
       );
     }
   }
@@ -690,6 +720,13 @@ export async function listLateralMasterDistinctValues(
       rows = await sql<{ value: string }[]>`
         SELECT DISTINCT poc AS value FROM lateral_master
         WHERE poc IS NOT NULL AND btrim(poc) <> ''
+        ORDER BY value ASC
+      `;
+      break;
+    case "opened_on_oorwin":
+      rows = await sql<{ value: string }[]>`
+        SELECT DISTINCT opened_on_oorwin AS value FROM lateral_master
+        WHERE opened_on_oorwin IS NOT NULL AND btrim(opened_on_oorwin) <> ''
         ORDER BY value ASC
       `;
       break;

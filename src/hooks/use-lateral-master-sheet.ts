@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type {
   LateralMasterDateFilter,
   LateralMasterFilterSchema,
@@ -136,18 +136,14 @@ export function useLateralMasterFilterSchema() {
 }
 
 export function useLateralMasterSheet(query: LateralMasterSheetClientQuery) {
-  const hasActiveFilters =
-    Object.values(query.columnFilters).some((v) => v.length > 0) ||
-    Object.values(query.textFilters).some((v) => v.trim().length > 0) ||
-    Object.values(query.dateFilters).some((v) => Boolean(v.from || v.to)) ||
-    Boolean(query.search?.trim());
-
   return useQuery({
     queryKey: lateralMasterSheetQueryKey(query),
     queryFn: () => fetchLateralMasterSheet(query),
     staleTime: 60_000,
-    // Keep previous page only while paging with the same filters.
-    // Stale unfiltered rows make Job Description search look broken.
-    placeholderData: hasActiveFilters ? undefined : (previous) => previous,
+    // Keep the last result on screen (dimmed via isFetching) while a filter /
+    // page change refetches. Header-filter dropdowns live inside <thead>, so the
+    // table must NOT unmount into a skeleton on every filter change — that tears
+    // down whatever dropdown the user has open.
+    placeholderData: keepPreviousData,
   });
 }

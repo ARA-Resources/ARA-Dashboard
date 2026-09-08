@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Download, Filter, Loader2, RefreshCw, Search, X } from "lucide-react";
+import { Download, Loader2, RefreshCw, Search, X } from "lucide-react";
 import { PageHeader } from "@/components/layouts/page-header";
 import { PageTransition } from "@/animations/page-transition";
 import { FadeIn } from "@/animations/fade-in";
@@ -10,7 +10,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { LateralMasterFiltersPanel } from "@/components/dashboard/accenture/lateral/lateral-master-filters-panel";
 import { LateralMasterSheetTable } from "@/components/dashboard/accenture/lateral/lateral-master-sheet-table";
 import {
   DEFAULT_LATERAL_MASTER_PAGE_SIZE,
@@ -78,11 +77,11 @@ export function LateralMasterSheetPage() {
   const [refreshing, setRefreshing] = React.useState(false);
   const [downloading, setDownloading] = React.useState(false);
   const [downloadError, setDownloadError] = React.useState<string | null>(null);
-  const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   const debouncedTextFilters = useDebouncedValue(textFilters, 450);
+  const debouncedDateFilters = useDebouncedValue(dateFilters, 450);
   const debouncedSearch = useDebouncedValue(searchInput, 450);
 
   const query: LateralMasterSheetClientQuery = React.useMemo(
@@ -91,7 +90,7 @@ export function LateralMasterSheetPage() {
       pageSize,
       columnFilters,
       textFilters: debouncedTextFilters,
-      dateFilters,
+      dateFilters: debouncedDateFilters,
       search: debouncedSearch.trim() || undefined,
     }),
     [
@@ -99,7 +98,7 @@ export function LateralMasterSheetPage() {
       pageSize,
       columnFilters,
       debouncedTextFilters,
-      dateFilters,
+      debouncedDateFilters,
       debouncedSearch,
     ]
   );
@@ -117,7 +116,7 @@ export function LateralMasterSheetPage() {
   }, [
     columnFilters,
     debouncedTextFilters,
-    dateFilters,
+    debouncedDateFilters,
     debouncedSearch,
     pageSize,
   ]);
@@ -132,6 +131,24 @@ export function LateralMasterSheetPage() {
     Object.values(columnFilters).filter((v) => v.length > 0).length +
     Object.values(textFilters).filter((v) => v.trim()).length +
     Object.values(dateFilters).filter((v) => v.from || v.to).length;
+
+  const activeFilterSummary = React.useMemo(() => {
+    const chips: string[] = [];
+    for (const [col, values] of Object.entries(columnFilters)) {
+      if (values.length > 0) {
+        chips.push(`${col}: ${values.slice(0, 2).join(", ")}${values.length > 2 ? ` +${values.length - 2}` : ""}`);
+      }
+    }
+    for (const [col, value] of Object.entries(textFilters)) {
+      if (value.trim()) chips.push(`${col}: “${value.trim()}”`);
+    }
+    for (const [col, range] of Object.entries(dateFilters)) {
+      if (range.from || range.to) {
+        chips.push(`${col}: ${range.from ?? "…"} → ${range.to ?? "…"}`);
+      }
+    }
+    return chips;
+  }, [columnFilters, textFilters, dateFilters]);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -233,10 +250,7 @@ export function LateralMasterSheetPage() {
                 (searchOpen || searchInput.trim()) &&
                   "bg-primary text-primary-foreground"
               )}
-              onClick={() => {
-                setSearchOpen((open) => !open);
-                if (filtersOpen) setFiltersOpen(false);
-              }}
+              onClick={() => setSearchOpen((open) => !open)}
               aria-expanded={searchOpen}
               aria-controls="lateral-master-search-popup"
             >
@@ -252,34 +266,6 @@ export function LateralMasterSheetPage() {
                   )}
                 >
                   1
-                </Badge>
-              ) : null}
-            </Button>
-            <Button
-              type="button"
-              variant={filtersOpen ? "default" : "outline"}
-              className={cn(
-                "rounded-xl gap-2",
-                filtersOpen && "bg-primary text-primary-foreground"
-              )}
-              onClick={() => {
-                setFiltersOpen((open) => !open);
-                if (searchOpen) setSearchOpen(false);
-              }}
-              aria-expanded={filtersOpen}
-              aria-controls="lateral-master-filters-popup"
-            >
-              <Filter className="size-4" />
-              Filters
-              {activeFilterCount > 0 ? (
-                <Badge
-                  variant="secondary"
-                  className={cn(
-                    "rounded-md px-1.5",
-                    filtersOpen && "bg-background/20 text-primary-foreground"
-                  )}
-                >
-                  {activeFilterCount}
                 </Badge>
               ) : null}
             </Button>
@@ -446,41 +432,28 @@ export function LateralMasterSheetPage() {
         </FadeIn>
       ) : null}
 
-      {filtersOpen ? (
+      {activeFilterCount > 0 ? (
         <FadeIn>
-          <div
-            id="lateral-master-filters-popup"
-            className="mb-4 rounded-2xl border border-border/70 bg-card px-4 py-3 shadow-sm"
-            role="dialog"
-            aria-label="Master Sheet filters"
-          >
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-foreground">
-                Master Sheet filters
-              </p>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8 rounded-lg"
-                onClick={() => setFiltersOpen(false)}
-                aria-label="Close filters"
-              >
-                <X className="size-4" />
-              </Button>
-            </div>
-            <LateralMasterFiltersPanel
-              schema={schema}
-              isLoading={schemaLoading}
-              columnFilters={columnFilters}
-              textFilters={textFilters}
-              dateFilters={dateFilters}
-              onToggleColumnValue={toggleColumnValue}
-              onClearColumn={clearColumn}
-              onTextChange={onTextChange}
-              onDateChange={onDateChange}
-              onClearAll={clearAllFilters}
-            />
+          <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs">
+            <span className="font-medium text-primary">
+              {activeFilterCount} column{activeFilterCount === 1 ? "" : "s"}{" "}
+              filtered
+            </span>
+            {activeFilterSummary.map((chip) => (
+              <span key={chip} className="text-muted-foreground">
+                {chip}
+              </span>
+            ))}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="ml-auto h-6 gap-1 rounded-md px-2 text-xs"
+              onClick={clearAllFilters}
+            >
+              <X className="size-3.5" />
+              Clear all
+            </Button>
           </div>
         </FadeIn>
       ) : null}
@@ -505,6 +478,7 @@ export function LateralMasterSheetPage() {
               pageSize={pageSize}
               pageCount={data?.pageCount ?? 1}
               isLoading={isLoading || schemaLoading}
+              isFetching={isFetching}
               errorMessage={
                 error instanceof Error
                   ? error.message
@@ -514,6 +488,14 @@ export function LateralMasterSheetPage() {
               }
               onPageChange={setPage}
               onPageSizeChange={setPageSize}
+              filterSchema={schema}
+              columnFilters={columnFilters}
+              textFilters={textFilters}
+              dateFilters={dateFilters}
+              onToggleColumnValue={toggleColumnValue}
+              onClearColumn={clearColumn}
+              onTextChange={onTextChange}
+              onDateChange={onDateChange}
             />
           </CardContent>
         </Card>
