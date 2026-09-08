@@ -159,6 +159,7 @@ export interface LateralMasterPRolesRow {
   jobStatus: string;
   posted: string;
   marketMap: string;
+  priority: string;
 }
 
 const DEFAULT_PAGE = 1;
@@ -589,6 +590,7 @@ export function toPRolesRowFromMaster(row: LateralMasterRow): LateralMasterPRole
     jobStatus: row.job_status ?? "",
     posted: row.posted ?? "",
     marketMap: row.market_map ?? "",
+    priority: row.priority ?? "",
   };
 }
 

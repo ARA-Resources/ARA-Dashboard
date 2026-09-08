@@ -22,7 +22,8 @@ export const DEFAULT_FILTER_CONFIG: Record<BusinessUnitId, OpeningsFilterDefault
     lateral: {
       sortByPatterns: [/^grand\s*total$/i, /total/i],
       sortDirection: "desc",
-      topN: 10,
+      // Show every matching skill group by default; the table paginates client-side.
+      topN: null,
       preferredStatusValues: ["Active", "Reopen", "New"],
       preferredPostedValues: ["Yes"],
     },

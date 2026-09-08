@@ -31,6 +31,8 @@ export function extractPRolesFilters(
     jobStatus: filters?.columnFilters?.["Job Status"] ?? [],
     posted: filters?.columnFilters?.["Posted"] ?? [],
     marketMap: filters?.columnFilters?.["Market Map"] ?? [],
+    priority: filters?.columnFilters?.["Priority"] ?? [],
+    skillCategorization: filters?.columnFilters?.["Skill Categorization"] ?? [],
   };
 }
 
@@ -46,6 +48,7 @@ async function loadMasterRowsFromPostgres(): Promise<PRolesMasterRow[]> {
     jobStatus: row.jobStatus,
     posted: row.posted,
     marketMap: row.marketMap,
+    priority: row.priority,
   }));
 }
 

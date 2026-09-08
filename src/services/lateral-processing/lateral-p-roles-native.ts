@@ -18,6 +18,7 @@ const REQUIRED_MASTER_HEADERS = {
   jobStatus: "Job Status",
   posted: "Posted",
   marketMap: "Market Map",
+  priority: "Priority",
 } as const;
 
 function asText(value: unknown): string {
@@ -50,6 +51,7 @@ export function toPRolesMasterRows(sheet: ExcelReadResult): PRolesMasterRow[] {
   const jobStatusCol = requireHeader(indexMap, REQUIRED_MASTER_HEADERS.jobStatus);
   const postedCol = requireHeader(indexMap, REQUIRED_MASTER_HEADERS.posted);
   const marketMapCol = requireHeader(indexMap, REQUIRED_MASTER_HEADERS.marketMap);
+  const priorityCol = requireHeader(indexMap, REQUIRED_MASTER_HEADERS.priority);
 
   return sheet.rows.map((row) => {
     const values = sheet.headers.map((header) => row[header]);
@@ -61,6 +63,7 @@ export function toPRolesMasterRows(sheet: ExcelReadResult): PRolesMasterRow[] {
       jobStatus: asText(values[jobStatusCol]),
       posted: asText(values[postedCol]),
       marketMap: asText(values[marketMapCol]),
+      priority: asText(values[priorityCol]),
     };
   });
 }
@@ -77,11 +80,18 @@ function filterRows(
   const jobStatusSelection = toLowerSet(filters.jobStatus);
   const postedSelection = toLowerSet(filters.posted);
   const marketMapSelection = toLowerSet(filters.marketMap);
+  const prioritySelection = toLowerSet(filters.priority);
+  const skillCategorizationSelection = toLowerSet(filters.skillCategorization);
 
   return rows.filter((row) => {
     if (!matchesSelection(row.jobStatus, jobStatusSelection)) return false;
     if (!matchesSelection(row.posted, postedSelection)) return false;
     if (!matchesSelection(row.marketMap, marketMapSelection)) return false;
+    if (!matchesSelection(row.priority, prioritySelection)) return false;
+    if (
+      !matchesSelection(row.skillCategorization, skillCategorizationSelection)
+    )
+      return false;
     return true;
   });
 }

@@ -19,12 +19,15 @@ export type PRolesMasterRow = {
   jobStatus: string;
   posted: string;
   marketMap: string;
+  priority: string;
 };
 
 export type PRolesFilterSelection = {
   jobStatus?: string[];
   posted?: string[];
   marketMap?: string[];
+  priority?: string[];
+  skillCategorization?: string[];
 };
 
 export type PRolesRow = {
@@ -77,6 +80,8 @@ export function normalizePRolesFilters(
     jobStatus: normalizeFilterValues(filters?.jobStatus),
     posted: normalizeFilterValues(filters?.posted),
     marketMap: normalizeFilterValues(filters?.marketMap),
+    priority: normalizeFilterValues(filters?.priority),
+    skillCategorization: normalizeFilterValues(filters?.skillCategorization),
   };
 }
 

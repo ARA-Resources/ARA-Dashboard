@@ -13,14 +13,25 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { ExcelDataRow } from "@/types/excel";
-import { OPENINGS_TABLE } from "@/constants/accenture-dashboard";
+import {
+  OPENINGS_TABLE,
+  OPENINGS_TABLE_PAGE_SIZE_OPTIONS,
+} from "@/constants/accenture-dashboard";
 import { cn } from "@/lib/utils";
 import { polishExcelDisplayValue } from "@/utils/excel-display";
 
@@ -37,6 +48,38 @@ interface OpeningsDataTableProps {
   globalFilter: string;
   isLoading?: boolean;
   errorMessage?: string | null;
+  /**
+   * Render a pinned "Grand Total" footer row with column-wise sums across every
+   * filtered row (not just the current page). Used by the Lateral P-Roles pivot.
+   */
+  showGrandTotalRow?: boolean;
+}
+
+const GRAND_TOTAL_LABEL_COLUMNS = new Set([
+  "Primary Skills",
+  "Skill Categorization",
+]);
+
+/** Column-wise sums over the filtered rows, for the Grand Total footer. */
+function computeColumnTotals(
+  rows: ExcelDataRow[],
+  headers: string[]
+): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const header of headers) {
+    if (GRAND_TOTAL_LABEL_COLUMNS.has(header)) continue;
+    let sum = 0;
+    let sawNumber = false;
+    for (const row of rows) {
+      const value = row[header];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        sum += value;
+        sawNumber = true;
+      }
+    }
+    if (sawNumber) totals[header] = sum;
+  }
+  return totals;
 }
 
 function matchesSearch(row: ExcelDataRow, headers: string[], query: string) {
@@ -62,6 +105,7 @@ export function OpeningsDataTable({
   globalFilter,
   isLoading = false,
   errorMessage = null,
+  showGrandTotalRow = false,
 }: OpeningsDataTableProps) {
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -97,6 +141,12 @@ export function OpeningsDataTable({
   const filteredData = useMemo(() => {
     return data.filter((row) => matchesSearch(row, headers, globalFilter));
   }, [data, headers, globalFilter]);
+
+  const columnTotals = useMemo(
+    () =>
+      showGrandTotalRow ? computeColumnTotals(filteredData, headers) : null,
+    [showGrandTotalRow, filteredData, headers]
+  );
 
   useEffect(() => {
     setPagination((current) =>
@@ -189,6 +239,34 @@ export function OpeningsDataTable({
               </TableRow>
             )}
           </TableBody>
+          {columnTotals && rows.length > 0 ? (
+            <TableFooter className="sticky bottom-0 bg-muted/60">
+              <TableRow className="hover:bg-muted/60">
+                {headers.map((header, index) => {
+                  if (index === 0) {
+                    return (
+                      <TableCell
+                        key={header}
+                        className="px-3 py-3 font-semibold text-primary"
+                      >
+                        Grand Total
+                      </TableCell>
+                    );
+                  }
+                  const total = columnTotals[header];
+                  return (
+                    <TableCell key={header} className="px-3 py-3">
+                      {typeof total === "number" ? (
+                        <span className="font-semibold tabular-nums text-primary">
+                          {total}
+                        </span>
+                      ) : null}
+                    </TableCell>
+                  );
+                })}
+              </TableRow>
+            </TableFooter>
+          ) : null}
         </Table>
       </div>
 
@@ -205,28 +283,51 @@ export function OpeningsDataTable({
           of <span className="font-medium text-foreground">{rowCount}</span>
         </p>
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="rounded-lg"
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
-          >
-            Previous
-          </Button>
-          <span className="min-w-16 text-center text-sm text-muted-foreground">
-            {pageCount === 0 ? 0 : pageIndex + 1} / {Math.max(pageCount, 1)}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            className="rounded-lg"
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
-          >
-            Next
-          </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Rows per page</span>
+            <Select
+              value={String(pageSize)}
+              onValueChange={(value) => {
+                setPagination({ pageIndex: 0, pageSize: Number(value) });
+              }}
+            >
+              <SelectTrigger className="h-9 w-[100px] rounded-lg">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {OPENINGS_TABLE_PAGE_SIZE_OPTIONS.map((size) => (
+                  <SelectItem key={size} value={String(size)}>
+                    {size}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-lg"
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
+            >
+              Previous
+            </Button>
+            <span className="min-w-16 text-center text-sm text-muted-foreground">
+              {pageCount === 0 ? 0 : pageIndex + 1} / {Math.max(pageCount, 1)}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-lg"
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       </div>
     </div>

@@ -358,6 +358,7 @@ export function AccentureDashboard() {
                 globalFilter={search}
                 isLoading={isLoading}
                 errorMessage={error instanceof Error ? error.message : null}
+                showGrandTotalRow={businessUnit === "lateral"}
               />
             )}
           </CardContent>

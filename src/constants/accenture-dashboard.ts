@@ -30,6 +30,10 @@ export function getAccentureDashboardBusinessUnits(): DashboardBusinessUnitOptio
 export const DEFAULT_DASHBOARD_BUSINESS_UNIT: BusinessUnitId = "lateral";
 
 export const OPENINGS_TABLE = {
-  title: "Top 10 Openings",
+  title: "Openings",
   pageSize: 10,
 } as const;
+
+export const OPENINGS_TABLE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+export type OpeningsTablePageSize =
+  (typeof OPENINGS_TABLE_PAGE_SIZE_OPTIONS)[number];
