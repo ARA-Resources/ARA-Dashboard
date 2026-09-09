@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Download, Loader2, RefreshCw, Search, X } from "lucide-react";
 import { PageHeader } from "@/components/layouts/page-header";
@@ -58,15 +59,58 @@ function formatLastRunTrigger(trigger: string): "manual" | "auto" {
   return trigger === "scheduler" ? "auto" : "manual";
 }
 
+/**
+ * Filter params the page accepts on navigation (e.g. from the dashboard pivot's
+ * clickable Primary Skill). `skill` / `skillCat` are exact single values; the
+ * rest are repeatable. They seed `columnFilters` once, then get stripped from
+ * the URL so a later refresh / edit behaves like a normal visit.
+ */
+const INCOMING_FILTER_PARAM_KEYS = [
+  "skill",
+  "skillCat",
+  "jobStatus",
+  "posted",
+  "priority",
+] as const;
+
+function readIncomingColumnFilters(
+  params: URLSearchParams
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  const one = (key: string) => params.get(key)?.trim() ?? "";
+  const many = (key: string) =>
+    params
+      .getAll(key)
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+  const skill = one("skill");
+  if (skill) out["Primary Skills"] = [skill];
+  const skillCat = one("skillCat");
+  if (skillCat) out["Skill Categorization"] = [skillCat];
+  const jobStatus = many("jobStatus");
+  if (jobStatus.length > 0) out["Job Status"] = jobStatus;
+  const posted = many("posted");
+  if (posted.length > 0) out["Posted"] = posted;
+  const priority = many("priority");
+  if (priority.length > 0) out["Priority"] = priority;
+  return out;
+}
+
 export function LateralMasterSheetPage() {
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState<LateralMasterPageSize>(
     DEFAULT_LATERAL_MASTER_PAGE_SIZE
   );
+  // Seed once from navigation params (dashboard pivot → "show this skill").
   const [columnFilters, setColumnFilters] = React.useState<
     Record<string, string[]>
-  >({});
+  >(() => readIncomingColumnFilters(new URLSearchParams(searchParams.toString())));
   const [textFilters, setTextFilters] = React.useState<Record<string, string>>(
     {}
   );
@@ -127,28 +171,51 @@ export function LateralMasterSheetPage() {
     }
   }, [searchOpen]);
 
+  // Drop the navigation params after they've seeded the filter state, so a
+  // refresh or a subsequent filter edit isn't overridden by stale URL values.
+  React.useEffect(() => {
+    if (INCOMING_FILTER_PARAM_KEYS.some((key) => searchParams.has(key))) {
+      router.replace(pathname, { scroll: false });
+    }
+  }, [searchParams, router, pathname]);
+
   const activeFilterCount =
     Object.values(columnFilters).filter((v) => v.length > 0).length +
     Object.values(textFilters).filter((v) => v.trim()).length +
     Object.values(dateFilters).filter((v) => v.from || v.to).length;
 
-  const activeFilterSummary = React.useMemo(() => {
-    const chips: string[] = [];
-    for (const [col, values] of Object.entries(columnFilters)) {
-      if (values.length > 0) {
-        chips.push(`${col}: ${values.slice(0, 2).join(", ")}${values.length > 2 ? ` +${values.length - 2}` : ""}`);
-      }
-    }
-    for (const [col, value] of Object.entries(textFilters)) {
-      if (value.trim()) chips.push(`${col}: “${value.trim()}”`);
-    }
-    for (const [col, range] of Object.entries(dateFilters)) {
-      if (range.from || range.to) {
-        chips.push(`${col}: ${range.from ?? "…"} → ${range.to ?? "…"}`);
-      }
-    }
-    return chips;
-  }, [columnFilters, textFilters, dateFilters]);
+  // Each active filter as a removable chip. `remove` clears just that one
+  // filter (by column key), leaving every other filter untouched.
+  const activeFilterChips: Array<{
+    key: string;
+    label: string;
+    remove: () => void;
+  }> = [];
+  for (const [col, values] of Object.entries(columnFilters)) {
+    if (values.length === 0) continue;
+    const more = values.length > 2 ? ` +${values.length - 2}` : "";
+    activeFilterChips.push({
+      key: `col:${col}`,
+      label: `${col}: ${values.slice(0, 2).join(", ")}${more}`,
+      remove: () => clearColumn(col),
+    });
+  }
+  for (const [col, value] of Object.entries(textFilters)) {
+    if (!value.trim()) continue;
+    activeFilterChips.push({
+      key: `text:${col}`,
+      label: `${col}: “${value.trim()}”`,
+      remove: () => onTextChange(col, ""),
+    });
+  }
+  for (const [col, range] of Object.entries(dateFilters)) {
+    if (!range.from && !range.to) continue;
+    activeFilterChips.push({
+      key: `date:${col}`,
+      label: `${col}: ${range.from ?? "…"} → ${range.to ?? "…"}`,
+      remove: () => onDateChange(col, {}),
+    });
+  }
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -439,9 +506,20 @@ export function LateralMasterSheetPage() {
               {activeFilterCount} column{activeFilterCount === 1 ? "" : "s"}{" "}
               filtered
             </span>
-            {activeFilterSummary.map((chip) => (
-              <span key={chip} className="text-muted-foreground">
-                {chip}
+            {activeFilterChips.map((chip) => (
+              <span
+                key={chip.key}
+                className="inline-flex items-center gap-1 rounded-md border border-primary/15 bg-background/60 px-1.5 py-0.5 text-muted-foreground"
+              >
+                {chip.label}
+                <button
+                  type="button"
+                  onClick={chip.remove}
+                  aria-label={`Remove ${chip.label} filter`}
+                  className="-mr-0.5 rounded-sm p-0.5 hover:bg-primary/10 hover:text-primary"
+                >
+                  <X className="size-3" />
+                </button>
               </span>
             ))}
             <Button

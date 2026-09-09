@@ -53,7 +53,15 @@ interface OpeningsDataTableProps {
    * filtered row (not just the current page). Used by the Lateral P-Roles pivot.
    */
   showGrandTotalRow?: boolean;
+  /**
+   * When set, the "Primary Skills" cell becomes a link. Clicking it hands the
+   * clicked pivot row back (skill + Skill Categorization) so the caller can
+   * navigate to the Master Sheet with matching filters. Lateral pivot only.
+   */
+  onPrimarySkillClick?: (row: ExcelDataRow) => void;
 }
+
+const PRIMARY_SKILLS_COLUMN = "Primary Skills";
 
 const GRAND_TOTAL_LABEL_COLUMNS = new Set([
   "Primary Skills",
@@ -106,6 +114,7 @@ export function OpeningsDataTable({
   isLoading = false,
   errorMessage = null,
   showGrandTotalRow = false,
+  onPrimarySkillClick,
 }: OpeningsDataTableProps) {
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -123,20 +132,41 @@ export function OpeningsDataTable({
           cell: (info) => {
             const value = info.getValue();
             const isNumeric = typeof value === "number";
+            const text = formatCellValue(value);
+
+            if (
+              header === PRIMARY_SKILLS_COLUMN &&
+              onPrimarySkillClick &&
+              typeof value === "string" &&
+              value.trim() &&
+              value.trim() !== "—"
+            ) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => onPrimarySkillClick(info.row.original)}
+                  className="text-left font-medium text-primary underline-offset-2 hover:underline focus-visible:underline"
+                  title={`Open Master Sheet filtered to “${value.trim()}”`}
+                >
+                  {text}
+                </button>
+              );
+            }
+
             return (
               <span
                 className={cn(
                   isNumeric && "font-semibold tabular-nums text-primary"
                 )}
               >
-                {formatCellValue(value)}
+                {text}
               </span>
             );
           },
         })
       )
     );
-  }, [headers]);
+  }, [headers, onPrimarySkillClick]);
 
   const filteredData = useMemo(() => {
     return data.filter((row) => matchesSearch(row, headers, globalFilter));

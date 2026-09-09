@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import {
   getCompanyBySlug,
@@ -66,7 +67,13 @@ export default async function CompanyModuleSectionPage({
     moduleConfig.slug === "lateral" &&
     section.slug === "master-sheet"
   ) {
-    return <LateralMasterSheetPage />;
+    // Suspense boundary: LateralMasterSheetPage reads navigation params
+    // (useSearchParams) to seed its filters when opened from the dashboard pivot.
+    return (
+      <Suspense fallback={null}>
+        <LateralMasterSheetPage />
+      </Suspense>
+    );
   }
 
   if (

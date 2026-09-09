@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/layouts/page-header";
 import { PageTransition } from "@/animations/page-transition";
@@ -27,12 +28,15 @@ import {
 import { HOME_WIDGETS_QUERY_KEY } from "@/services/home/fetch-home-widgets";
 import { useDashboardFilterStore } from "@/stores/dashboard-filter-store";
 import { countActiveColumnFilters } from "@/services/excel/apply-filters";
+import { ROUTES } from "@/constants/routes";
 import type { BusinessUnitId } from "@/types/business-unit";
+import type { ExcelDataRow } from "@/types/excel";
 import { FadeIn } from "@/animations/fade-in";
 import { downloadCsv, toCsv } from "@/utils/csv";
 
 export function AccentureDashboard() {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [businessUnit, setBusinessUnit] = React.useState<BusinessUnitId>(
     DEFAULT_DASHBOARD_BUSINESS_UNIT
   );
@@ -169,6 +173,43 @@ export function AccentureDashboard() {
     const csv = toCsv(data.headers, data.rows);
     downloadCsv(`${businessUnit}-openings.csv`, csv);
   }
+
+  /**
+   * Lateral P-Roles pivot: clicking a Primary Skill opens the Master Sheet
+   * filtered to that skill + its Skill Categorization (exact), plus whatever
+   * Job Status / Posted (and Priority, only if the user has one) is currently
+   * active on the dashboard — so the Master Sheet row count matches the pivot
+   * cell the user just clicked.
+   */
+  const handlePrimarySkillNavigate = React.useCallback(
+    (row: ExcelDataRow) => {
+      const skill = String(row["Primary Skills"] ?? "").trim();
+      if (!skill || skill === "—") return;
+
+      const live = useDashboardFilterStore
+        .getState()
+        .getUserFilters("lateral").columnFilters;
+
+      const params = new URLSearchParams();
+      params.set("skill", skill);
+
+      const skillCat = String(row["Skill Categorization"] ?? "").trim();
+      if (skillCat && skillCat !== "—") params.set("skillCat", skillCat);
+
+      for (const value of live["Job Status"] ?? []) {
+        params.append("jobStatus", value);
+      }
+      for (const value of live["Posted"] ?? []) {
+        params.append("posted", value);
+      }
+      for (const value of live["Priority"] ?? []) {
+        params.append("priority", value);
+      }
+
+      router.push(`${ROUTES.lateralMasterSheet}?${params.toString()}`);
+    },
+    [router]
+  );
 
   const title =
     businessUnit === "executive"
@@ -359,6 +400,11 @@ export function AccentureDashboard() {
                 isLoading={isLoading}
                 errorMessage={error instanceof Error ? error.message : null}
                 showGrandTotalRow={businessUnit === "lateral"}
+                onPrimarySkillClick={
+                  businessUnit === "lateral"
+                    ? handlePrimarySkillNavigate
+                    : undefined
+                }
               />
             )}
           </CardContent>

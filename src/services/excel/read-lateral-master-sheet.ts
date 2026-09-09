@@ -183,6 +183,10 @@ export function mapMasterSheetQueryToPgFilters(
 
   filters.priority = take("Priority");
   filters.skillCategorization = take("Skill Categorization");
+  // Exact skill match — used by the "clickable Primary Skill" navigation from the
+  // dashboard pivot. The Master Sheet's own Primary Skills header filter is still
+  // a separate free-text "contains" search (primarySkillsContains, below).
+  filters.primarySkills = take("Primary Skills");
   filters.jobManagementLevel = take("Job Management Level");
   filters.primaryLocation =
     take("Primary Location") ??

@@ -292,13 +292,15 @@ function buildFilterFragments(
         fragments.push(sql`LOWER(COALESCE(priority, '')) = ANY(${normalized})`);
         break;
       case "skill_categorization":
+        // btrim so a value picked from the dashboard pivot (which trims its
+        // group labels) still matches whitespace-dirty rows exactly.
         fragments.push(
-          sql`LOWER(COALESCE(skill_categorization, '')) = ANY(${normalized})`
+          sql`LOWER(btrim(COALESCE(skill_categorization, ''))) = ANY(${normalized})`
         );
         break;
       case "primary_skills":
         fragments.push(
-          sql`LOWER(COALESCE(primary_skills, '')) = ANY(${normalized})`
+          sql`LOWER(btrim(COALESCE(primary_skills, ''))) = ANY(${normalized})`
         );
         break;
       case "job_management_level":

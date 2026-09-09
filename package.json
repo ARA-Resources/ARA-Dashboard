@@ -31,7 +31,8 @@
     "worker:build": "tsc --noEmit -p worker/tsconfig.json",
     "worker:start": "tsx --tsconfig worker/tsconfig.json worker/src/index.ts",
     "test:rbac": "tsx scripts/verify-rbac.ts",
-    "test:job-description-docx": "tsx scripts/verify-job-description-docx.ts"
+    "test:job-description-docx": "tsx scripts/verify-job-description-docx.ts",
+    "test:clickable-primary-skill": "tsx scripts/verify-clickable-primary-skill.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
