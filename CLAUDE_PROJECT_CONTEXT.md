@@ -160,7 +160,7 @@ Admin · Settings · Logout**. "Demands" was formerly "Company"; "Candidates" wa
 
 Companies (`src/constants/companies.ts`): **Accenture** (enabled — Dashboard,
 Lateral [Master Sheet + Allocations], Executive [Master Sheet], Consulting) and
-**Infosys** (enabled, no modules yet).
+**Mphasis** (enabled, no modules yet).
 
 Maturity: **Lateral** = production-complete. **Executive** = partial
 (ingestion services exist, dashboard still Drive/XLSM). **Consulting** = stub.

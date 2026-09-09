@@ -136,7 +136,7 @@ export const HOME_WIDGETS_MOCK: HomeDashboardWidgetsData = {
     {
       id: "hc-2",
       rank: 2,
-      name: "Infosys",
+      name: "Mphasis",
       openings: 0,
       businessUnits: [],
     },

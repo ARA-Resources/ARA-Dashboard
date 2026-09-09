@@ -41,7 +41,7 @@ export const COMPANIES: CompanyConfig[] = [
     slug: "accenture",
     enabled: true,
     modules: [
-      { id: "dashboard", label: "Dashboard", slug: "dashboard" },
+      { id: "dashboard", label: "Accenture Dashboard", slug: "dashboard" },
       {
         id: "lateral",
         label: "Lateral",
@@ -85,9 +85,9 @@ export const COMPANIES: CompanyConfig[] = [
     ],
   },
   {
-    id: "infosys",
-    name: "Infosys",
-    slug: "infosys",
+    id: "mphasis",
+    name: "Mphasis",
+    slug: "mphasis",
     enabled: true,
     modules: [
       // Modules will be added later

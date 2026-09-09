@@ -245,7 +245,7 @@ export function AccentureDashboard() {
 
   return (
     <PageTransition>
-      <PageHeader title="Dashboard" description={description} />
+      <PageHeader title="Accenture Dashboard" description={description} />
 
       <FadeIn>
         <Card className="mb-4 rounded-2xl shadow-sm">

@@ -26,7 +26,7 @@ export async function generateMetadata({
   const moduleConfig = getCompanyModule(companySlug, moduleSlug);
 
   if (companySlug === "accenture" && moduleSlug === "dashboard") {
-    return { title: "Dashboard · Accenture" };
+    return { title: "Accenture Dashboard" };
   }
 
   return {
