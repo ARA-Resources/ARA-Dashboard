@@ -762,21 +762,24 @@ export async function getLateralMasterByJobRequisitionId(
 export function toExcelStyleMasterRow(
   row: LateralMasterRow
 ): Record<string, string | number | null> {
+  // Keys must match LATERAL_MASTER_EXCEL_HEADERS exactly — the table and the
+  // .xlsx export look up each cell by header name (row[header]). A key that
+  // drifts from the header renders "—" for every row.
   return {
     Date: row.date,
     "Job Requisition ID": row.job_requisition_id || null,
+    "Primary Skills": row.primary_skills,
     Priority: row.priority,
     // Intentionally no trim — JD popup parse/copy/download needs full text.
     "Job Description": row.job_description,
     "Skill Categorization": row.skill_categorization,
-    "Primary Skills": row.primary_skills,
     "Job Management Level": row.job_management_level,
-    "Primary Location/Office lOcate": row.primary_location,
+    "Primary Location": row.primary_location,
     "Market Map": row.market_map,
     POC: row.poc,
     "Job Status": row.job_status,
-    "Opened on Oorwin": row.opened_on_oorwin,
     Posted: row.posted,
+    "Opened on Oorwin": row.opened_on_oorwin,
   };
 }
 

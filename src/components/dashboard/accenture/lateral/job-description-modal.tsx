@@ -37,6 +37,12 @@ export interface JobDescriptionModalProps {
    */
   selectionKey: string;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Which file "Download Job Description" produces.
+   * Lateral Master Sheet → "docx" (editable Word). Executive Master Sheet →
+   * "pdf" (unchanged jsPDF output). Defaults to "pdf".
+   */
+  downloadFormat?: "pdf" | "docx";
 }
 
 type ActionToast = {
@@ -291,13 +297,17 @@ function CopyActionButton({
 
 function DownloadActionButton({
   generating,
+  format,
   disabled,
   onClick,
 }: {
   generating: boolean;
+  format: "pdf" | "docx";
   disabled?: boolean;
   onClick: () => void;
 }) {
+  const generatingLabel =
+    format === "docx" ? "Generating..." : "Generating PDF...";
   return (
     <Button
       type="button"
@@ -313,7 +323,7 @@ function DownloadActionButton({
       ) : (
         <Download className="size-3.5" />
       )}
-      {generating ? "Generating PDF..." : "Download Job Description"}
+      {generating ? generatingLabel : "Download Job Description"}
     </Button>
   );
 }
@@ -381,9 +391,10 @@ export function JobDescriptionModal({
   meta,
   selectionKey,
   onOpenChange,
+  downloadFormat = "pdf",
 }: JobDescriptionModalProps) {
   const [originalOpen, setOriginalOpen] = React.useState(false);
-  const [pdfGenerating, setPdfGenerating] = React.useState(false);
+  const [generating, setGenerating] = React.useState(false);
   const { copiedKey, copy, actionToast, showToast } = useCopyFeedback();
 
   // Exact Master Sheet cell — never parse/normalize for original accordion
@@ -414,11 +425,11 @@ export function JobDescriptionModal({
   React.useEffect(() => {
     // Reset accordion / avoid carrying UI state across row selections
     setOriginalOpen(false);
-    setPdfGenerating(false);
+    setGenerating(false);
   }, [open, selectionKey]);
 
   const downloadCurrentSelection = React.useCallback(async () => {
-    if (pdfGenerating) return;
+    if (generating) return;
 
     const current = structuredRef.current;
     // Guard: only download when this modal selection is active
@@ -426,8 +437,9 @@ export function JobDescriptionModal({
       return;
     }
 
-    setPdfGenerating(true);
-    // Yield so the button can paint "Generating PDF..." before sync PDF work
+    setGenerating(true);
+    // Yield so the button can paint its "Generating…" label before the
+    // (synchronous, for PDF) document build blocks the main thread.
     await new Promise<void>((resolve) => {
       window.requestAnimationFrame(() => resolve());
     });
@@ -438,20 +450,29 @@ export function JobDescriptionModal({
       if (!latest.selectionKey || latest.selectionKey !== selectionKey) {
         return;
       }
-      downloadStructuredJobDescriptionPdf(
-        structuredJobDescriptionToPdfInput(latest)
-      );
+      const payload = structuredJobDescriptionToPdfInput(latest);
+      if (downloadFormat === "docx") {
+        // Lazy-load so `docx` stays out of the main bundle.
+        const { downloadStructuredJobDescriptionDocx } = await import(
+          "@/utils/download-job-description-docx"
+        );
+        await downloadStructuredJobDescriptionDocx(payload);
+      } else {
+        downloadStructuredJobDescriptionPdf(payload);
+      }
       showToast("Job description downloaded successfully.", "success");
     } catch (error) {
-      console.error("[JobDescriptionModal] PDF generation failed", error);
+      console.error("[JobDescriptionModal] document generation failed", error);
       showToast(
-        "Unable to generate the job description PDF. Please try again.",
+        downloadFormat === "docx"
+          ? "Unable to generate the job description document. Please try again."
+          : "Unable to generate the job description PDF. Please try again.",
         "error"
       );
     } finally {
-      setPdfGenerating(false);
+      setGenerating(false);
     }
-  }, [pdfGenerating, selectionKey, showToast]);
+  }, [generating, downloadFormat, selectionKey, showToast]);
 
   return (
     <DialogPrimitive.Root
@@ -538,9 +559,10 @@ export function JobDescriptionModal({
                     />
                   ) : null}
                   <DownloadActionButton
-                    generating={pdfGenerating}
+                    generating={generating}
+                    format={downloadFormat}
                     disabled={
-                      pdfGenerating ||
+                      generating ||
                       (!structuredJobDescription.sections.length &&
                         !structuredJobDescription.meta.length)
                     }

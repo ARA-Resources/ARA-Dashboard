@@ -1,46 +1,50 @@
 /**
  * Excel Master Sheet header ↔ PostgreSQL `lateral_master` column mapping.
  *
- * Header names/order match the local source workbook
- * `data/excel/ATCI Lateral Master Data Updated.xlsx` (Master Sheet).
- * Dashboard API/UI contract uses Excel header keys on every row.
+ * `LATERAL_MASTER_EXCEL_HEADERS` is the dashboard display/API contract: it
+ * decides the on-screen column order AND the Download (.xlsx) column order —
+ * the frontend maps over it and looks up each cell by header name, so order
+ * here is purely presentational and safe to change. It does NOT reflect the
+ * source workbook's physical column order or the `lateral_master` schema; the
+ * import/sync pipeline matches the real workbook headers via `importAliases`.
+ * Dashboard API/UI contract uses these Excel header keys on every row.
  */
 
-/** Exact Excel headers in sheet column order (source of truth for Master Sheet UI). */
+/** Excel header keys in dashboard display order (drives the table + export). */
 export const LATERAL_MASTER_EXCEL_HEADERS = [
   "Date",
   "Job Requisition ID",
+  "Primary Skills",
   "Priority",
   "Job Description",
   "Skill Categorization",
-  "Primary Skills",
   "Job Management Level",
-  "Primary Location/Office lOcate",
+  "Primary Location",
   "Market Map",
   "POC",
   "Job Status",
-  "Opened on Oorwin",
   "Posted",
+  "Opened on Oorwin",
 ] as const;
 
 export type LateralMasterExcelHeader =
   (typeof LATERAL_MASTER_EXCEL_HEADERS)[number];
 
-/** Business columns stored for Master Sheet (excludes operational timestamps). */
+/** Business columns stored for Master Sheet, parallel to the headers above. */
 export const LATERAL_MASTER_SHEET_DB_COLUMNS = [
   "date",
   "job_requisition_id",
+  "primary_skills",
   "priority",
   "job_description",
   "skill_categorization",
-  "primary_skills",
   "job_management_level",
   "primary_location",
   "market_map",
   "poc",
   "job_status",
-  "opened_on_oorwin",
   "posted",
+  "opened_on_oorwin",
 ] as const;
 
 export type LateralMasterSheetDbColumn =
@@ -68,6 +72,11 @@ export const LATERAL_MASTER_COLUMN_MAP: readonly LateralMasterColumnMapping[] = 
     importAliases: ["Job Requisition ID"],
   },
   {
+    excelHeader: "Primary Skills",
+    dbColumn: "primary_skills",
+    importAliases: ["Primary Skills"],
+  },
+  {
     excelHeader: "Priority",
     dbColumn: "priority",
     importAliases: ["Priority"],
@@ -83,17 +92,15 @@ export const LATERAL_MASTER_COLUMN_MAP: readonly LateralMasterColumnMapping[] = 
     importAliases: ["Skill Categorization"],
   },
   {
-    excelHeader: "Primary Skills",
-    dbColumn: "primary_skills",
-    importAliases: ["Primary Skills"],
-  },
-  {
     excelHeader: "Job Management Level",
     dbColumn: "job_management_level",
     importAliases: ["Job Management Level"],
   },
   {
-    excelHeader: "Primary Location/Office lOcate",
+    // Display label shortened from the raw workbook header. Import/sync still
+    // recognises the original spellings via importAliases (workbook spelling
+    // stays first so header matching prefers it).
+    excelHeader: "Primary Location",
     dbColumn: "primary_location",
     importAliases: [
       "Primary Location/Office lOcate",
@@ -118,14 +125,14 @@ export const LATERAL_MASTER_COLUMN_MAP: readonly LateralMasterColumnMapping[] = 
     importAliases: ["Job Status"],
   },
   {
-    excelHeader: "Opened on Oorwin",
-    dbColumn: "opened_on_oorwin",
-    importAliases: ["Opened on Oorwin"],
-  },
-  {
     excelHeader: "Posted",
     dbColumn: "posted",
     importAliases: ["Posted"],
+  },
+  {
+    excelHeader: "Opened on Oorwin",
+    dbColumn: "opened_on_oorwin",
+    importAliases: ["Opened on Oorwin"],
   },
 ];
 

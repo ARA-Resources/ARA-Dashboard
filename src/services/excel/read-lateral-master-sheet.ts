@@ -140,7 +140,7 @@ const MASTER_SHEET_DISTINCT_FILTERS: ReadonlyArray<{
     control: "multi-select",
   },
   {
-    excelHeader: "Primary Location/Office lOcate",
+    excelHeader: "Primary Location",
     pg: "primary_location",
     control: "searchable-multi-select",
   },
@@ -185,6 +185,7 @@ export function mapMasterSheetQueryToPgFilters(
   filters.skillCategorization = take("Skill Categorization");
   filters.jobManagementLevel = take("Job Management Level");
   filters.primaryLocation =
+    take("Primary Location") ??
     take("Primary Location/Office lOcate") ??
     take("Primary Location/Office Locate");
   filters.marketMap = take("Market Map");

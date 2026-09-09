@@ -235,6 +235,7 @@ export function ExecutiveMasterSheetTable({
         meta={jobDescriptionPayload?.meta ?? []}
         selectionKey={jobDescriptionPayload?.selectionKey ?? ""}
         onOpenChange={handleModalOpenChange(setJobDescriptionOpen)}
+        downloadFormat="pdf"
       />
 
       <ExecutiveMasterContentModal

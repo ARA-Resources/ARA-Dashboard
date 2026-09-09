@@ -68,6 +68,22 @@ interface LateralMasterSheetTableProps {
   onDateChange?: (column: string, range: LateralMasterDateFilter) => void;
 }
 
+/**
+ * Per-column layout overrides, keyed by Excel header. Columns not listed keep
+ * the default sizing (auto width, capped at max-w-[280px]). `table-layout` is
+ * `auto`, so narrowing one column just frees space for the others.
+ */
+const COLUMN_LAYOUT: Partial<
+  Record<string, { head: string; cell: string; span: string }>
+> = {
+  // POC holds short person names (~25 distinct); keep it tight.
+  POC: {
+    head: "max-w-[7rem]",
+    cell: "max-w-[7rem]",
+    span: "whitespace-normal",
+  },
+};
+
 function formatCellValue(
   header: string,
   value: string | number | null | undefined
@@ -218,6 +234,7 @@ export function LateralMasterSheetTable({
         meta={jobDescriptionPayload?.meta ?? []}
         selectionKey={jobDescriptionPayload?.selectionKey ?? ""}
         onOpenChange={handleJobDescriptionOpenChange}
+        downloadFormat="docx"
       />
 
       {isLoading ? (
@@ -247,7 +264,10 @@ export function LateralMasterSheetTable({
                     return (
                       <TableHead
                         key={header}
-                        className="h-11 whitespace-nowrap px-3 text-xs font-semibold tracking-wide text-primary uppercase"
+                        className={cn(
+                          "h-11 whitespace-nowrap px-3 text-xs font-semibold tracking-wide text-primary uppercase",
+                          COLUMN_LAYOUT[header]?.head
+                        )}
                       >
                         <span className="inline-flex items-center gap-1">
                           {header}
@@ -303,7 +323,10 @@ export function LateralMasterSheetTable({
                         return (
                           <TableCell
                             key={`${row.id}-${header}`}
-                            className="max-w-[280px] px-3 py-3"
+                            className={cn(
+                              "px-3 py-3",
+                              COLUMN_LAYOUT[header]?.cell ?? "max-w-[280px]"
+                            )}
                           >
                             {isJobDesc ? (
                               <JobDescriptionCell
@@ -316,7 +339,8 @@ export function LateralMasterSheetTable({
                                   "line-clamp-3 break-words",
                                   isNumeric &&
                                     "font-semibold tabular-nums text-primary",
-                                  isDateCol && "tabular-nums"
+                                  isDateCol && "tabular-nums",
+                                  COLUMN_LAYOUT[header]?.span
                                 )}
                                 title={display}
                               >

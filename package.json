@@ -30,7 +30,8 @@
     "worker:dev": "tsx --tsconfig worker/tsconfig.json worker/src/index.ts",
     "worker:build": "tsc --noEmit -p worker/tsconfig.json",
     "worker:start": "tsx --tsconfig worker/tsconfig.json worker/src/index.ts",
-    "test:rbac": "tsx scripts/verify-rbac.ts"
+    "test:rbac": "tsx scripts/verify-rbac.ts",
+    "test:job-description-docx": "tsx scripts/verify-job-description-docx.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -38,6 +39,7 @@
     "@tanstack/react-table": "^9.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "docx": "^9.7.1",
     "exceljs": "^4.4.0",
     "framer-motion": "^13.0.0",
     "googleapis": "^174.0.1",
