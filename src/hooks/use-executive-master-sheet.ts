@@ -3,10 +3,12 @@
 import { useQuery } from "@tanstack/react-query";
 import type {
   ExecutiveMasterDateFilter,
-  ExecutiveMasterFilterSchema,
   ExecutiveMasterPageSize,
-  ExecutiveMasterSheetPageResult,
 } from "@/services/excel/executive-master-sheet";
+import type {
+  ExecutiveMasterSheetSchema,
+  ExecutiveMasterSheetPageResult,
+} from "@/services/persistence/executive-master-sheet-postgres";
 
 export interface ExecutiveMasterSheetClientQuery {
   page: number;
@@ -46,7 +48,7 @@ function buildParams(
 
 export async function fetchExecutiveMasterFilterSchema(options?: {
   refresh?: boolean;
-}): Promise<ExecutiveMasterFilterSchema> {
+}): Promise<ExecutiveMasterSheetSchema> {
   const params = buildParams(
     {
       page: 1,
@@ -64,7 +66,7 @@ export async function fetchExecutiveMasterFilterSchema(options?: {
   const payload = (await res.json().catch(() => null)) as {
     ok?: boolean;
     error?: string;
-    schema?: ExecutiveMasterFilterSchema;
+    schema?: ExecutiveMasterSheetSchema;
   } | null;
   if (!res.ok || !payload?.schema) {
     throw new Error(

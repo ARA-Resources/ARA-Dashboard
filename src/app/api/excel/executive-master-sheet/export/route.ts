@@ -1,26 +1,29 @@
 import { NextResponse } from "next/server";
-import { exportExecutiveMasterSheetXlsx } from "@/services/excel/read-executive-master-sheet";
+import { buildMasterSheetXlsxBuffer } from "@/services/excel/build-master-sheet-xlsx";
+import { exportExecutiveMasterSheetRows } from "@/services/persistence/executive-master-sheet-postgres";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const refresh = searchParams.get("refresh") === "1";
-
+export async function GET() {
   try {
-    const exported = await exportExecutiveMasterSheetXlsx({
-      bypassCache: refresh,
+    const exported = await exportExecutiveMasterSheetRows();
+    const buffer = await buildMasterSheetXlsxBuffer({
+      sheetName: exported.sheetName,
+      headers: exported.headers,
+      rows: exported.rows,
     });
 
-    return new NextResponse(new Uint8Array(exported.buffer), {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const fileName = `Executive-Master-Sheet-${stamp}.xlsx`;
+
+    return new NextResponse(new Uint8Array(buffer), {
       status: 200,
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="${exported.fileName}"`,
+        "Content-Disposition": `attachment; filename="${fileName}"`,
         "Cache-Control": "no-store",
-        "X-Export-Row-Count": String(exported.rowCount),
+        "X-Export-Row-Count": String(exported.rows.length),
       },
     });
   } catch (error) {

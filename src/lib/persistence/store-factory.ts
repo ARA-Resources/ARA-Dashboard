@@ -19,6 +19,7 @@ import {
   FileEncryptedConfigStore,
   FileSchedulerStateStore,
   FileLateralSyncHistoryStore,
+  FileExecutiveSyncHistoryStore,
   FileSyncWatermarkStore,
   FileLateralSourceDriveStateStore,
   FileHomeMetricsStore,
@@ -31,6 +32,7 @@ import {
   PostgresEncryptedConfigStore,
   PostgresSchedulerStateStore,
   PostgresLateralSyncHistoryStore,
+  PostgresExecutiveSyncHistoryStore,
   PostgresSyncWatermarkStore,
   PostgresLateralSourceDriveStateStore,
   PostgresHomeMetricsStore,
@@ -43,6 +45,7 @@ import type {
   EncryptedConfigStore,
   SchedulerStateStore,
   LateralSyncHistoryStoreInterface,
+  ExecutiveSyncHistoryStoreInterface,
   SyncWatermarkStoreInterface,
   LateralSourceDriveStateStoreInterface,
   HomeMetricsStoreInterface,
@@ -55,6 +58,7 @@ let _gmailCheckpoint: GmailCheckpointStore | null = null;
 let _encryptedConfig: EncryptedConfigStore | null = null;
 let _schedulerState: SchedulerStateStore | null = null;
 let _lateralSyncHistory: LateralSyncHistoryStoreInterface | null = null;
+let _executiveSyncHistory: ExecutiveSyncHistoryStoreInterface | null = null;
 let _syncWatermark: SyncWatermarkStoreInterface | null = null;
 let _lateralSourceDriveState: LateralSourceDriveStateStoreInterface | null = null;
 let _homeMetrics: HomeMetricsStoreInterface | null = null;
@@ -95,6 +99,15 @@ export function getLateralSyncHistoryStore(): LateralSyncHistoryStoreInterface {
       : new FileLateralSyncHistoryStore();
   }
   return _lateralSyncHistory;
+}
+
+export function getExecutiveSyncHistoryStore(): ExecutiveSyncHistoryStoreInterface {
+  if (!_executiveSyncHistory) {
+    _executiveSyncHistory = isPostgresMode()
+      ? new PostgresExecutiveSyncHistoryStore()
+      : new FileExecutiveSyncHistoryStore();
+  }
+  return _executiveSyncHistory;
 }
 
 export function getSyncWatermarkStore(): SyncWatermarkStoreInterface {

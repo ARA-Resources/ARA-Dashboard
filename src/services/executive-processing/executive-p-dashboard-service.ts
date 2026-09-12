@@ -1,6 +1,6 @@
 import "server-only";
 
-import { readExecutiveMasterSheet } from "@/services/excel/read-executive-master-sheet";
+import { listExecutiveMasterForPDashboard } from "@/services/persistence/read-executive-master";
 import type {
   DynamicFilterField,
   DynamicFilterSchema,
@@ -39,7 +39,7 @@ export interface ExecutivePDashboardResult {
   sheetName: string;
   sourceFile: string;
   sourceLabel: string;
-  sourceKind: "drive" | "local" | "bundled";
+  sourceKind: "postgres";
   headers: string[];
   rows: ExcelOpeningsResult["rows"];
   groups: ExecutivePDashboardGroupRow[];
@@ -64,25 +64,30 @@ function asText(value: unknown): string {
     .trim();
 }
 
+const EXECUTIVE_PG_SOURCE_FILE = "executive_master";
+const EXECUTIVE_PG_SOURCE_LABEL =
+  "PostgreSQL executive_master → P - Dashboard";
+
 export async function buildExecutivePDashboard(
   columnFilters?: Record<string, string[]>,
   options?: ExcelReaderOptions
 ): Promise<ExecutivePDashboardResult> {
+  void options;
   assertExecutivePDashboardContract();
-  const sheet = await readExecutiveMasterSheet(options);
+  const rows = await listExecutiveMasterForPDashboard();
   const appliedFilters = extractExecutivePDashboardFilters(columnFilters);
-  const filterOptions = collectExecutivePDashboardFilterOptions(sheet.rows);
+  const filterOptions = collectExecutivePDashboardFilterOptions(rows);
   const { groups, totals } = buildExecutivePDashboardFromRows(
-    sheet.rows,
+    rows,
     appliedFilters
   );
   const table = groupsToExecutivePDashboardTableRows(groups, totals);
 
   return {
     sheetName: EXECUTIVE_P_DASHBOARD_SHEET_NAME,
-    sourceFile: sheet.sourceFile,
-    sourceLabel: `${sheet.sourceLabel} · Master Sheet → P - Dashboard`,
-    sourceKind: sheet.sourceKind,
+    sourceFile: EXECUTIVE_PG_SOURCE_FILE,
+    sourceLabel: EXECUTIVE_PG_SOURCE_LABEL,
+    sourceKind: "postgres",
     headers: table.headers,
     rows: table.rows,
     groups,
@@ -92,7 +97,7 @@ export async function buildExecutivePDashboard(
     meta: {
       filteredDetailCount: totals.filteredDetailCount,
       groupCount: groups.length,
-      totalRows: sheet.rows.length,
+      totalRows: rows.length,
     },
   };
 }
@@ -100,8 +105,9 @@ export async function buildExecutivePDashboard(
 export async function getExecutivePDashboardFilterSchema(
   options?: ExcelReaderOptions
 ): Promise<DynamicFilterSchema> {
-  const sheet = await readExecutiveMasterSheet(options);
-  const optionsByColumn = collectExecutivePDashboardFilterOptions(sheet.rows);
+  void options;
+  const rows = await listExecutiveMasterForPDashboard();
+  const optionsByColumn = collectExecutivePDashboardFilterOptions(rows);
   const fields: DynamicFilterField[] = EXECUTIVE_P_DASHBOARD_FILTER_COLUMNS.map(
     (column) => ({
       column,
@@ -113,8 +119,8 @@ export async function getExecutivePDashboardFilterSchema(
 
   return {
     businessUnitId: "executive",
-    sheetName: sheet.sheetName,
-    sourceFile: sheet.sourceFile,
+    sheetName: EXECUTIVE_P_DASHBOARD_SHEET_NAME,
+    sourceFile: EXECUTIVE_PG_SOURCE_FILE,
     fields,
   };
 }

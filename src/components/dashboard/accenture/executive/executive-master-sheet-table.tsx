@@ -24,9 +24,12 @@ import {
   EXECUTIVE_MASTER_PAGE_SIZE_OPTIONS,
   isExecutiveJobDescriptionColumn,
   isExecutiveMustHaveSkillsColumn,
+  type ExecutiveMasterDateFilter,
+  type ExecutiveMasterFilterField,
   type ExecutiveMasterPageSize,
-  type ExecutiveMasterSheetRow,
 } from "@/services/excel/executive-master-sheet";
+import type { ExecutiveMasterSheetPgRow } from "@/services/persistence/executive-master-sheet-postgres";
+import { LateralMasterColumnFilter } from "@/components/dashboard/accenture/lateral/lateral-master-column-filter";
 import {
   polishExcelDisplayValue,
   formatExcelDateDdMmYyyy,
@@ -42,6 +45,8 @@ import {
 import { buildJobDescriptionSelectionKey } from "@/utils/structured-job-description-view";
 import { cn } from "@/lib/utils";
 
+type ExecutiveMasterSheetRow = ExecutiveMasterSheetPgRow;
+
 interface ExecutiveMasterSheetTableProps {
   headers: string[];
   rows: ExecutiveMasterSheetRow[];
@@ -50,9 +55,19 @@ interface ExecutiveMasterSheetTableProps {
   pageSize: ExecutiveMasterPageSize;
   pageCount: number;
   isLoading?: boolean;
+  isFetching?: boolean;
   errorMessage?: string | null;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: ExecutiveMasterPageSize) => void;
+  /** Per-column header filters (Excel-style, reused from Lateral's Master Sheet). */
+  filterFields?: ExecutiveMasterFilterField[];
+  columnFilters?: Record<string, string[]>;
+  textFilters?: Record<string, string>;
+  dateFilters?: Record<string, ExecutiveMasterDateFilter>;
+  onToggleColumnValue?: (column: string, value: string) => void;
+  onClearColumn?: (column: string) => void;
+  onTextChange?: (column: string, value: string) => void;
+  onDateChange?: (column: string, range: ExecutiveMasterDateFilter) => void;
 }
 
 function formatCellValue(
@@ -147,12 +162,35 @@ export function ExecutiveMasterSheetTable({
   pageSize,
   pageCount,
   isLoading = false,
+  isFetching = false,
   errorMessage = null,
   onPageChange,
   onPageSizeChange,
+  filterFields,
+  columnFilters,
+  textFilters,
+  dateFilters,
+  onToggleColumnValue,
+  onClearColumn,
+  onTextChange,
+  onDateChange,
 }: ExecutiveMasterSheetTableProps) {
   const tableScrollRef = React.useRef<HTMLDivElement>(null);
   const savedTableScrollRef = React.useRef({ left: 0, top: 0 });
+
+  const filterFieldByHeader = React.useMemo(() => {
+    const map = new Map<string, ExecutiveMasterFilterField>();
+    for (const field of filterFields ?? []) {
+      map.set(field.column.trim(), field);
+    }
+    return map;
+  }, [filterFields]);
+
+  const filtersEnabled =
+    Boolean(filterFields) &&
+    Boolean(
+      onToggleColumnValue && onClearColumn && onTextChange && onDateChange
+    );
 
   const [jobDescriptionOpen, setJobDescriptionOpen] = React.useState(false);
   const [jobDescriptionPayload, setJobDescriptionPayload] =
@@ -266,17 +304,47 @@ export function ExecutiveMasterSheetTable({
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/40 hover:bg-muted/40">
-                  {headers.map((header) => (
-                    <TableHead
-                      key={header}
-                      className="h-11 whitespace-nowrap px-3 text-xs font-semibold tracking-wide text-primary uppercase"
-                    >
-                      {header}
-                    </TableHead>
-                  ))}
+                  {headers.map((header) => {
+                    const field = filtersEnabled
+                      ? filterFieldByHeader.get(header.trim())
+                      : undefined;
+                    return (
+                      <TableHead
+                        key={header}
+                        className="h-11 whitespace-nowrap px-3 text-xs font-semibold tracking-wide text-primary uppercase"
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          {header}
+                          {field ? (
+                            <LateralMasterColumnFilter
+                              field={field}
+                              selectedValues={columnFilters?.[header] ?? []}
+                              textValue={textFilters?.[header] ?? ""}
+                              dateValue={dateFilters?.[header] ?? {}}
+                              onToggleValue={(value) =>
+                                onToggleColumnValue?.(header, value)
+                              }
+                              onClearColumn={() => onClearColumn?.(header)}
+                              onTextChange={(value) =>
+                                onTextChange?.(header, value)
+                              }
+                              onDateChange={(range) =>
+                                onDateChange?.(header, range)
+                              }
+                            />
+                          ) : null}
+                        </span>
+                      </TableHead>
+                    );
+                  })}
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody
+                className={cn(
+                  "transition-opacity",
+                  isFetching && !isLoading && "pointer-events-none opacity-50"
+                )}
+              >
                 {rows.length > 0 ? (
                   rows.map((row) => (
                     <TableRow

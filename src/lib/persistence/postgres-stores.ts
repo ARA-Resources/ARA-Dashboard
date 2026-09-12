@@ -22,6 +22,7 @@ import type {
   EncryptedConfigStore,
   SchedulerStateStore,
   LateralSyncHistoryStoreInterface,
+  ExecutiveSyncHistoryStoreInterface,
   SyncWatermarkStoreInterface,
   LateralSourceDriveStateStoreInterface,
   HomeMetricsStoreInterface,
@@ -33,6 +34,13 @@ import type {
 import type { LateralGmailCheckpoint } from "@/types/lateral-gmail-checkpoint";
 import type { LateralSchedulerConfig, LateralJobStatus, LateralJobTrigger } from "@/types/lateral-scheduler";
 import type { LateralSyncHistoryEntry } from "@/types/lateral-sync-history";
+import type { ExecutiveSyncHistoryEntry } from "@/types/executive-sync-history";
+import {
+  DEFAULT_EXECUTIVE_TIMEZONE,
+  type ExecutiveJobStatus,
+  type ExecutiveJobTrigger,
+  type ExecutiveSchedulerConfig,
+} from "@/types/executive-scheduler";
 import type { DatasetSyncWatermark } from "@/services/dataset/sync-watermark-store";
 import type { AppNotification, AppNotificationKind } from "@/types/notifications";
 import type {
@@ -215,6 +223,67 @@ function normalizeJobTrigger(v: unknown): LateralJobTrigger | null {
   return null;
 }
 
+function normalizeExecutiveJobStatus(v: unknown): ExecutiveJobStatus | null {
+  if (v === "success" || v === "partial" || v === "failed") return v;
+  return null;
+}
+
+function normalizeExecutiveJobTrigger(v: unknown): ExecutiveJobTrigger | null {
+  if (v === "scheduler" || v === "manual") return v;
+  return null;
+}
+
+function rowToExecutiveSchedulerConfig(
+  row: Record<string, unknown>
+): ExecutiveSchedulerConfig {
+  return {
+    version: 1,
+    frequency: normalizeFrequency(row.frequency),
+    syncTime: typeof row.sync_time === "string" ? row.sync_time : "07:00",
+    dayOfWeek: typeof row.day_of_week === "number" ? row.day_of_week : 1,
+    customDays: Array.isArray(row.custom_days)
+      ? (row.custom_days as number[])
+      : [1, 2, 3, 4, 5],
+    customTimes: Array.isArray(row.custom_times)
+      ? (row.custom_times as string[])
+      : ["09:00"],
+    timezone:
+      typeof row.timezone === "string" ? row.timezone : DEFAULT_EXECUTIVE_TIMEZONE,
+    enabled: row.enabled === true,
+    paused: row.paused === true,
+    updatedAt:
+      row.updated_at instanceof Date
+        ? row.updated_at.toISOString()
+        : typeof row.updated_at === "string"
+          ? row.updated_at
+          : new Date().toISOString(),
+    lastRunAt:
+      row.last_run_at instanceof Date
+        ? row.last_run_at.toISOString()
+        : typeof row.last_run_at === "string"
+          ? row.last_run_at
+          : null,
+    lastRunStatus: normalizeExecutiveJobStatus(row.last_run_status),
+    lastRunMessage:
+      typeof row.last_run_message === "string" ? row.last_run_message : null,
+    lastDurationMs:
+      typeof row.last_duration_ms === "number" ? row.last_duration_ms : null,
+    lastTrigger: normalizeExecutiveJobTrigger(row.last_trigger),
+    lastRunSummary: (() => {
+      const raw = row.last_run_summary;
+      if (!raw) return null;
+      if (typeof raw === "string") {
+        try {
+          return JSON.parse(raw) as ExecutiveSchedulerConfig["lastRunSummary"];
+        } catch {
+          return null;
+        }
+      }
+      return raw as ExecutiveSchedulerConfig["lastRunSummary"];
+    })(),
+  };
+}
+
 function rowToLateralSchedulerConfig(row: Record<string, unknown>): LateralSchedulerConfig {
   return {
     version: 1,
@@ -310,6 +379,69 @@ export class PostgresSchedulerStateStore implements SchedulerStateStore {
     `;
     return config;
   }
+
+  // ─── Executive (Phase E1) ───────────────────────────────────────────────
+  // Own table (executive_scheduler_state), own row. Never reads/writes
+  // lateral_scheduler_state. No cron reads this yet (Phase E5 wires that up).
+
+  async readExecutive(): Promise<ExecutiveSchedulerConfig> {
+    const sql = getDbClient();
+    // id is fixed to 1 (see migration 010) — a real UNIQUE target, so this
+    // is genuinely idempotent (never inserts a second row on repeat calls).
+    await sql`INSERT INTO executive_scheduler_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING`;
+    const rows = await sql<Record<string, unknown>[]>`
+      SELECT * FROM executive_scheduler_state WHERE id = 1
+    `;
+    if (!rows[0]) {
+      return {
+        version: 1,
+        frequency: "daily",
+        syncTime: "07:00",
+        dayOfWeek: 1,
+        customDays: [1, 2, 3, 4, 5],
+        customTimes: ["09:00"],
+        timezone: DEFAULT_EXECUTIVE_TIMEZONE,
+        enabled: true,
+        paused: false,
+        updatedAt: new Date().toISOString(),
+        lastRunAt: null,
+        lastRunStatus: null,
+        lastRunMessage: null,
+        lastDurationMs: null,
+        lastTrigger: null,
+        lastRunSummary: null,
+      };
+    }
+    return rowToExecutiveSchedulerConfig(rows[0]);
+  }
+
+  async writeExecutive(
+    partial: Partial<ExecutiveSchedulerConfig>
+  ): Promise<ExecutiveSchedulerConfig> {
+    const prior = await this.readExecutive();
+    const config: ExecutiveSchedulerConfig = { ...prior, ...partial };
+    const sql = getDbClient();
+    await sql`
+      UPDATE executive_scheduler_state SET
+        frequency        = ${config.frequency},
+        sync_time        = ${config.syncTime},
+        day_of_week      = ${config.dayOfWeek},
+        custom_days      = ${sql.json(config.customDays as never)},
+        custom_times     = ${sql.json(config.customTimes as never)},
+        timezone         = ${config.timezone},
+        enabled          = ${config.enabled},
+        paused           = ${config.paused},
+        last_run_at      = ${config.lastRunAt ? new Date(config.lastRunAt) : null},
+        last_run_status  = ${config.lastRunStatus},
+        last_run_message = ${config.lastRunMessage},
+        last_duration_ms = ${config.lastDurationMs},
+        last_trigger     = ${config.lastTrigger},
+        last_run_summary = ${config.lastRunSummary ? sql.json(config.lastRunSummary as never) : null},
+        updated_at       = NOW()
+      WHERE id = 1
+    `;
+    return config;
+  }
 }
 
 // ─── Lateral Sync History ────────────────────────────────────────────────────
@@ -350,6 +482,65 @@ export class PostgresLateralSyncHistoryStore implements LateralSyncHistoryStoreI
     const id = randomUUID();
     await sql`
       INSERT INTO lateral_sync_history
+        (id, sync_time, source_email, original_filename, drive_file_id,
+         rows_imported, new_count, active_count, reopen_count, closed_count,
+         result, error, trigger, duration_ms)
+      VALUES
+        (${id}, ${new Date(input.syncTime)}, ${input.sourceEmail || "—"},
+         ${input.originalFilename || "—"}, ${input.googleDriveFileId || "—"},
+         ${input.rowsImported}, ${input.newCount}, ${input.activeCount},
+         ${input.reopenCount}, ${input.closedCount},
+         ${input.result}, ${input.error ?? null}, ${input.trigger},
+         ${input.durationMs})
+    `;
+    return { id, ...input };
+  }
+}
+
+// ─── Executive Sync History ──────────────────────────────────────────────────
+
+function rowToExecutiveSyncEntry(
+  row: Record<string, unknown>
+): ExecutiveSyncHistoryEntry {
+  return {
+    id: typeof row.id === "string" ? row.id : randomUUID(),
+    syncTime: row.sync_time instanceof Date
+      ? row.sync_time.toISOString()
+      : typeof row.sync_time === "string" ? row.sync_time : new Date().toISOString(),
+    sourceEmail: typeof row.source_email === "string" ? row.source_email : "—",
+    originalFilename: typeof row.original_filename === "string" ? row.original_filename : "—",
+    googleDriveFileId: typeof row.drive_file_id === "string" ? row.drive_file_id : "—",
+    rowsImported: typeof row.rows_imported === "number" ? row.rows_imported : 0,
+    newCount: typeof row.new_count === "number" ? row.new_count : 0,
+    activeCount: typeof row.active_count === "number" ? row.active_count : 0,
+    reopenCount: typeof row.reopen_count === "number" ? row.reopen_count : 0,
+    closedCount: typeof row.closed_count === "number" ? row.closed_count : 0,
+    result: row.result === "Success" ? "Success" : "Failed",
+    error: typeof row.error === "string" ? row.error : null,
+    trigger: (row.trigger === "scheduler" || row.trigger === "manual") ? row.trigger : "manual",
+    durationMs: typeof row.duration_ms === "number" ? row.duration_ms : 0,
+  };
+}
+
+export class PostgresExecutiveSyncHistoryStore
+  implements ExecutiveSyncHistoryStoreInterface
+{
+  async list(limit = 100): Promise<ExecutiveSyncHistoryEntry[]> {
+    const sql = getDbClient();
+    const cap = Math.max(1, Math.min(500, limit));
+    const rows = await sql<Record<string, unknown>[]>`
+      SELECT * FROM executive_sync_history ORDER BY sync_time DESC LIMIT ${cap}
+    `;
+    return rows.map(rowToExecutiveSyncEntry);
+  }
+
+  async append(
+    input: Omit<ExecutiveSyncHistoryEntry, "id">
+  ): Promise<ExecutiveSyncHistoryEntry> {
+    const sql = getDbClient();
+    const id = randomUUID();
+    await sql`
+      INSERT INTO executive_sync_history
         (id, sync_time, source_email, original_filename, drive_file_id,
          rows_imported, new_count, active_count, reopen_count, closed_count,
          result, error, trigger, duration_ms)

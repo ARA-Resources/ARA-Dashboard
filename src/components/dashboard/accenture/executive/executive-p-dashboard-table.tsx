@@ -90,7 +90,7 @@ export function ExecutivePDashboardTable({
           No Executive roles match the selected filters.
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Adjust Team Member 1, Priority, Job Status, or Posted and try again.
+          Adjust Priority, Job Status, or Posted and try again.
         </p>
         {totalRow ? (
           <p className="mt-4 text-xs tabular-nums text-muted-foreground">

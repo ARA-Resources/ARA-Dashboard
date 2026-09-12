@@ -23,6 +23,10 @@ import {
   appendLateralSyncHistory,
 } from "@/services/lateral-processing/lateral-sync-history-store";
 import {
+  listExecutiveSyncHistory,
+  appendExecutiveSyncHistory,
+} from "@/services/executive-processing/executive-sync-history-store";
+import {
   readSyncWatermark,
   writeSyncWatermark,
 } from "@/services/dataset/sync-watermark-store";
@@ -46,12 +50,17 @@ import {
   readLateralSchedulerConfig,
   writeLateralSchedulerConfig,
 } from "@/services/lateral-processing/lateral-scheduler";
+import {
+  readExecutiveSchedulerConfig,
+  writeExecutiveSchedulerConfig,
+} from "@/services/executive-processing/executive-scheduler-state";
 
 import type {
   GmailCheckpointStore,
   EncryptedConfigStore,
   SchedulerStateStore,
   LateralSyncHistoryStoreInterface,
+  ExecutiveSyncHistoryStoreInterface,
   SyncWatermarkStoreInterface,
   LateralSourceDriveStateStoreInterface,
   HomeMetricsStoreInterface,
@@ -132,6 +141,17 @@ export class FileSchedulerStateStore implements SchedulerStateStore {
   async writeLateral(config: Partial<import("@/types/lateral-scheduler").LateralSchedulerConfig>) {
     return writeLateralSchedulerConfig(config);
   }
+
+  // Own file (.data/executive-scheduler.json) — never touches Lateral's.
+  async readExecutive() {
+    return readExecutiveSchedulerConfig();
+  }
+
+  async writeExecutive(
+    config: Partial<import("@/types/executive-scheduler").ExecutiveSchedulerConfig>
+  ) {
+    return writeExecutiveSchedulerConfig(config);
+  }
 }
 
 // ─── Lateral Sync History ────────────────────────────────────────────────────
@@ -143,6 +163,22 @@ export class FileLateralSyncHistoryStore implements LateralSyncHistoryStoreInter
 
   async append(entry: Parameters<LateralSyncHistoryStoreInterface["append"]>[0]) {
     return appendLateralSyncHistory(entry);
+  }
+}
+
+// ─── Executive Sync History ──────────────────────────────────────────────────
+
+export class FileExecutiveSyncHistoryStore
+  implements ExecutiveSyncHistoryStoreInterface
+{
+  async list(limit?: number) {
+    return listExecutiveSyncHistory(limit);
+  }
+
+  async append(
+    entry: Parameters<ExecutiveSyncHistoryStoreInterface["append"]>[0]
+  ) {
+    return appendExecutiveSyncHistory(entry);
   }
 }
 

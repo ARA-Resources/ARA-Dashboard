@@ -108,49 +108,6 @@ export function getBundledExecutiveExcelPath(): string {
   return path.join(process.cwd(), "data", "excel", "executive-mastersheet.xlsm");
 }
 
-/** Optional Executive Gmail sender filter (`from:`). Empty = not configured. */
-export function peekExecutiveGmailFrom(): string {
-  return trimEnv("ARA_EXECUTIVE_GMAIL_FROM");
-}
-
-/** Optional Executive Gmail subject filter (`subject:`). Empty = not configured. */
-export function peekExecutiveGmailSubject(): string {
-  return trimEnv("ARA_EXECUTIVE_GMAIL_SUBJECT");
-}
-
-/**
- * Optional comma-separated Gmail keyword terms for Executive discovery.
- * Empty = not configured. Do not invent defaults in code.
- */
-export function peekExecutiveGmailKeywords(): string[] {
-  const raw = trimEnv("ARA_EXECUTIVE_GMAIL_KEYWORDS");
-  if (!raw) return [];
-  return raw
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-/**
- * Optional attachment filename pattern (substring or /regex/).
- * Empty = any .xlsm matching other search criteria.
- */
-export function peekExecutiveAttachmentPattern(): string {
-  return trimEnv("ARA_EXECUTIVE_ATTACHMENT_PATTERN");
-}
-
-/** Optional Google Drive folder for Executive source workbook uploads. */
-export function peekExecutiveDriveFolderId(): string {
-  return trimEnv("ARA_EXECUTIVE_DRIVE_FOLDER_ID");
-}
-
-/**
- * Destination Google Spreadsheet for Executive New Sheet import (Phase 4B).
- * Empty → use the confirmed default ID in executive-dataset-mapping.
- */
-export function peekExecutiveNewSheetSpreadsheetId(): string {
-  return trimEnv("ARA_EXECUTIVE_NEW_SHEET_SPREADSHEET_ID");
-}
 
 export function getOAuthRedirectUri(): string {
   return (

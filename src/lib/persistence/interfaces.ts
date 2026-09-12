@@ -10,9 +10,11 @@
 
 import type { LateralGmailCheckpoint } from "@/types/lateral-gmail-checkpoint";
 import type { LateralSchedulerConfig } from "@/types/lateral-scheduler";
+import type { ExecutiveSchedulerConfig } from "@/types/executive-scheduler";
 import type {
   LateralSyncHistoryEntry,
 } from "@/types/lateral-sync-history";
+import type { ExecutiveSyncHistoryEntry } from "@/types/executive-sync-history";
 import type { DatasetSyncWatermark } from "@/services/dataset/sync-watermark-store";
 import type { AppNotification, AppNotificationKind } from "@/types/notifications";
 import type {
@@ -81,6 +83,11 @@ export interface EncryptedConfigStore {
 export interface SchedulerStateStore {
   readLateral(): Promise<LateralSchedulerConfig>;
   writeLateral(config: Partial<LateralSchedulerConfig>): Promise<LateralSchedulerConfig>;
+  /** Fully independent of readLateral/writeLateral — own table, own row. */
+  readExecutive(): Promise<ExecutiveSchedulerConfig>;
+  writeExecutive(
+    config: Partial<ExecutiveSchedulerConfig>
+  ): Promise<ExecutiveSchedulerConfig>;
 }
 
 // ─── Lateral Sync History ────────────────────────────────────────────────────
@@ -88,6 +95,16 @@ export interface SchedulerStateStore {
 export interface LateralSyncHistoryStoreInterface {
   list(limit?: number): Promise<LateralSyncHistoryEntry[]>;
   append(entry: Omit<LateralSyncHistoryEntry, "id">): Promise<LateralSyncHistoryEntry>;
+}
+
+// ─── Executive Sync History ──────────────────────────────────────────────────
+// Fully independent of Lateral's — own table (executive_sync_history), own file.
+
+export interface ExecutiveSyncHistoryStoreInterface {
+  list(limit?: number): Promise<ExecutiveSyncHistoryEntry[]>;
+  append(
+    entry: Omit<ExecutiveSyncHistoryEntry, "id">
+  ): Promise<ExecutiveSyncHistoryEntry>;
 }
 
 // ─── Sync Watermark ──────────────────────────────────────────────────────────

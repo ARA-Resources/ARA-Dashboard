@@ -6,12 +6,11 @@ import {
   type ExecutiveMasterPageSize,
 } from "@/services/excel/executive-master-sheet";
 import {
-  getExecutiveMasterFilterSchema,
-  queryExecutiveMasterSheet,
-} from "@/services/excel/read-executive-master-sheet";
+  getExecutiveMasterSheetSchema,
+  queryExecutiveMasterSheetPage,
+} from "@/services/persistence/executive-master-sheet-postgres";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
 
 function parsePageSize(raw: string | null): ExecutiveMasterPageSize {
   const n = Number(raw);
@@ -34,14 +33,11 @@ function parseJsonRecord<T>(raw: string | null, fallback: T): T {
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const refresh = searchParams.get("refresh") === "1";
   const schemaOnly = searchParams.get("schema") === "1";
 
   try {
     if (schemaOnly) {
-      const schema = await getExecutiveMasterFilterSchema({
-        bypassCache: refresh,
-      });
+      const schema = await getExecutiveMasterSheetSchema();
       return NextResponse.json({ ok: true, schema });
     }
 
@@ -59,16 +55,13 @@ export async function GET(request: Request) {
       Record<string, ExecutiveMasterDateFilter>
     >(searchParams.get("dateFilters"), {});
 
-    const result = await queryExecutiveMasterSheet(
-      {
-        page,
-        pageSize,
-        columnFilters,
-        textFilters,
-        dateFilters,
-      },
-      { bypassCache: refresh }
-    );
+    const result = await queryExecutiveMasterSheetPage({
+      page,
+      pageSize,
+      columnFilters,
+      textFilters,
+      dateFilters,
+    });
 
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
@@ -77,11 +70,6 @@ export async function GET(request: Request) {
         ? error.message
         : "Executive Master Sheet could not be loaded.";
     console.error("[api/excel/executive-master-sheet]", message);
-    const status = /not found|could not be loaded|Missing|missing/i.test(
-      message
-    )
-      ? 404
-      : 500;
-    return NextResponse.json({ ok: false, error: message }, { status });
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

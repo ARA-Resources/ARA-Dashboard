@@ -1,8 +1,26 @@
-import {
-  EXECUTIVE_MASTER_LIVE_COLUMNS,
-  type ExecutiveMasterSheetRow,
-} from "@/services/excel/executive-master-sheet";
-import type { ExcelDataRow } from "@/types/excel";
+import { EXECUTIVE_MASTER_LIVE_COLUMNS } from "@/services/excel/executive-master-sheet";
+import type { ExcelCellValue, ExcelDataRow } from "@/types/excel";
+
+/**
+ * Minimal row shape the P - Dashboard engine reads. Keyed by the ENGINE's
+ * source-header names (the same names an XLSM Master Sheet row uses), not the
+ * renamed `executive_master` display headers.
+ *
+ * Both `ExecutiveMasterSheetRow` (XLSM path) and the PostgreSQL read layer's
+ * `toExecutivePDashboardInputRow()` output satisfy this structurally.
+ */
+export interface ExecutivePDashboardInputRow {
+  id?: string;
+  "Primary skills"?: ExcelCellValue;
+  Market?: ExcelCellValue;
+  "Primary Location"?: ExcelCellValue;
+  Level?: ExcelCellValue;
+  "Location Flex"?: ExcelCellValue;
+  "Skill category"?: ExcelCellValue;
+  "Job Status"?: ExcelCellValue;
+  Posted?: ExcelCellValue;
+  Priority?: ExcelCellValue;
+}
 
 /**
  * Executive P - Dashboard contract (Excel PivotTable1) — pure engine.
@@ -23,8 +41,10 @@ import type { ExcelDataRow } from "@/types/excel";
 
 export const EXECUTIVE_P_DASHBOARD_SHEET_NAME = "P - Dashboard";
 
+// "Team Member 1" was an XLSM-only page filter. The PostgreSQL-backed Executive
+// dataset has no Team columns, so the dashboard exposes Priority / Job Status /
+// Posted only.
 export const EXECUTIVE_P_DASHBOARD_FILTER_COLUMNS = [
-  "Team Member 1",
   "Priority",
   "Job Status",
   "Posted",
@@ -50,7 +70,6 @@ export type ExecutivePDashboardLevelColumn =
 export const EXECUTIVE_P_DASHBOARD_BLANK_LABEL = "(blank)";
 
 export interface ExecutivePDashboardFilterSelection {
-  teamMember1: string[];
   priority: string[];
   jobStatus: string[];
   posted: string[];
@@ -112,21 +131,16 @@ export function extractExecutivePDashboardFilters(
     (filters[column] ?? []).map((value) => String(value)).filter(Boolean);
 
   return {
-    teamMember1: pick("Team Member 1"),
     priority: pick("Priority"),
     jobStatus: pick("Job Status"),
     posted: pick("Posted"),
   };
 }
 
-export function applyExecutivePDashboardFilters(
-  rows: ExecutiveMasterSheetRow[],
-  filters: ExecutivePDashboardFilterSelection
-): ExecutiveMasterSheetRow[] {
+export function applyExecutivePDashboardFilters<
+  T extends ExecutivePDashboardInputRow,
+>(rows: T[], filters: ExecutivePDashboardFilterSelection): T[] {
   return rows.filter((row) => {
-    if (!matchesMultiSelect(row["Team Member 1"], filters.teamMember1)) {
-      return false;
-    }
     if (!matchesMultiSelect(row.Priority, filters.priority)) return false;
     if (!matchesMultiSelect(row["Job Status"], filters.jobStatus)) return false;
     if (!matchesMultiSelect(row.Posted, filters.posted)) return false;
@@ -158,7 +172,7 @@ function compareHierarchy(
 }
 
 export function collectExecutivePDashboardFilterOptions(
-  rows: ExecutiveMasterSheetRow[]
+  rows: ExecutivePDashboardInputRow[]
 ): Record<(typeof EXECUTIVE_P_DASHBOARD_FILTER_COLUMNS)[number], string[]> {
   const buckets: Record<string, Map<string, string>> = {};
   for (const column of EXECUTIVE_P_DASHBOARD_FILTER_COLUMNS) {
@@ -167,7 +181,7 @@ export function collectExecutivePDashboardFilterOptions(
 
   for (const row of rows) {
     for (const column of EXECUTIVE_P_DASHBOARD_FILTER_COLUMNS) {
-      const text = asText(row[column]);
+      const text = asText((row as Record<string, unknown>)[column]);
       if (!text) continue;
       const key = text.toLowerCase();
       if (!buckets[column].has(key)) buckets[column].set(key, text);
@@ -206,10 +220,6 @@ export function collectExecutivePDashboardFilterOptions(
   }
 
   return {
-    "Team Member 1": ordered(
-      "Team Member 1",
-      [...buckets["Team Member 1"].values()]
-    ),
     Priority: ordered("Priority", [...buckets.Priority.values()]),
     "Job Status": ordered("Job Status", [...buckets["Job Status"].values()]),
     Posted: ordered("Posted", [...buckets.Posted.values()]),
@@ -221,7 +231,7 @@ export function collectExecutivePDashboardFilterOptions(
  * Level counts use exact string match only — no dirty Level normalization.
  */
 export function buildExecutivePDashboardFromRows(
-  rows: ExecutiveMasterSheetRow[],
+  rows: ExecutivePDashboardInputRow[],
   filters: ExecutivePDashboardFilterSelection
 ): {
   groups: ExecutivePDashboardGroupRow[];

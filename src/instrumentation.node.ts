@@ -1,10 +1,17 @@
 /**
  * Node.js-only instrumentation. Must never be imported from Edge/middleware.
- * Starts Dataset + Lateral schedulers when the Node.js runtime boots
- * (dev + production). Windows-only Run All remains in its existing modules.
+ * Starts Dataset + Lateral + Executive schedulers when the Node.js runtime
+ * boots (dev + production). Windows-only Run All remains in its existing
+ * modules.
  *
- * SCOPE: Only Lateral executes jobs currently (dedicated Lateral scheduler).
- * The legacy multi-dataset scheduler boots but does not arm Exec/Consulting crons.
+ * SCOPE: Lateral and Executive each have their own dedicated scheduler
+ * (`lateral-scheduler.ts` / `executive-scheduler.ts`), fully independent of
+ * each other (separate advisory locks, config tables, and env-var gates —
+ * see `executive-scheduler.ts`'s module doc). The legacy multi-dataset
+ * scheduler still boots but does not arm Consulting cron (not built yet).
+ * Executive's cron only actually arms when BOTH `ARA_EXECUTIVE_SCHEDULER=1`
+ * AND `executive_scheduler_state.enabled=true` are explicitly set — both
+ * default off, so bootstrapping this function is safe on a fresh deploy.
  */
 export async function registerNodeInstrumentation() {
   if (process.env.NEXT_PHASE === "phase-production-build") return;
@@ -54,6 +61,23 @@ export async function registerNodeInstrumentation() {
   } catch (error) {
     console.error("[instrumentation] Lateral scheduler failed to start", error);
   }
+
+  try {
+    const { getSchedulerOwner } = await import("@/lib/config/scheduler-owner");
+    if (getSchedulerOwner() === "worker") {
+      console.info(
+        "[instrumentation] Executive scheduler not started (ARA_SCHEDULER_OWNER=worker; Worker process owns cron)."
+      );
+    } else {
+      const { startExecutiveScheduler } = await import(
+        "@/services/executive-processing/executive-scheduler"
+      );
+      await startExecutiveScheduler();
+      console.info("[instrumentation] Executive scheduler bootstrap complete.");
+    }
+  } catch (error) {
+    console.error("[instrumentation] Executive scheduler failed to start", error);
+  }
 }
 
 function installShutdownHandlers() {
@@ -66,6 +90,12 @@ function installShutdownHandlers() {
       (mod) => {
         mod.stopLateralScheduler();
         console.info("[instrumentation] Lateral scheduler stopped.");
+      }
+    );
+    void import("@/services/executive-processing/executive-scheduler").then(
+      (mod) => {
+        mod.stopExecutiveScheduler();
+        console.info("[instrumentation] Executive scheduler stopped.");
       }
     );
   };

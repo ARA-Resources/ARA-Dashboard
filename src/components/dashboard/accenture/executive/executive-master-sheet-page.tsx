@@ -2,14 +2,13 @@
 
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Download, Filter, Loader2, RefreshCw, X } from "lucide-react";
+import { Download, Loader2, RefreshCw, X } from "lucide-react";
 import { PageHeader } from "@/components/layouts/page-header";
 import { PageTransition } from "@/animations/page-transition";
 import { FadeIn } from "@/animations/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { ExecutiveMasterFiltersPanel } from "@/components/dashboard/accenture/executive/executive-master-filters-panel";
 import { ExecutiveMasterSheetTable } from "@/components/dashboard/accenture/executive/executive-master-sheet-table";
 import {
   DEFAULT_EXECUTIVE_MASTER_PAGE_SIZE,
@@ -26,7 +25,6 @@ import {
   useExecutiveMasterSheet,
   type ExecutiveMasterSheetClientQuery,
 } from "@/hooks/use-executive-master-sheet";
-import { cn } from "@/lib/utils";
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = React.useState(value);
@@ -35,14 +33,6 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
     return () => window.clearTimeout(id);
   }, [value, delayMs]);
   return debounced;
-}
-
-function formatSourceKind(kind: string | undefined): string | null {
-  if (!kind) return null;
-  if (kind === "drive") return "Google Drive";
-  if (kind === "local") return "Local Excel";
-  if (kind === "bundled") return "Bundled Excel";
-  return kind;
 }
 
 export function ExecutiveMasterSheetPage() {
@@ -63,9 +53,9 @@ export function ExecutiveMasterSheetPage() {
   const [refreshing, setRefreshing] = React.useState(false);
   const [downloading, setDownloading] = React.useState(false);
   const [downloadError, setDownloadError] = React.useState<string | null>(null);
-  const [filtersOpen, setFiltersOpen] = React.useState(false);
 
   const debouncedTextFilters = useDebouncedValue(textFilters, 450);
+  const debouncedDateFilters = useDebouncedValue(dateFilters, 450);
 
   const query: ExecutiveMasterSheetClientQuery = React.useMemo(
     () => ({
@@ -73,9 +63,9 @@ export function ExecutiveMasterSheetPage() {
       pageSize,
       columnFilters,
       textFilters: debouncedTextFilters,
-      dateFilters,
+      dateFilters: debouncedDateFilters,
     }),
-    [page, pageSize, columnFilters, debouncedTextFilters, dateFilters]
+    [page, pageSize, columnFilters, debouncedTextFilters, debouncedDateFilters]
   );
 
   const {
@@ -88,12 +78,44 @@ export function ExecutiveMasterSheetPage() {
 
   React.useEffect(() => {
     setPage(1);
-  }, [columnFilters, debouncedTextFilters, dateFilters, pageSize]);
+  }, [columnFilters, debouncedTextFilters, debouncedDateFilters, pageSize]);
 
   const activeFilterCount =
     Object.values(columnFilters).filter((v) => v.length > 0).length +
     Object.values(textFilters).filter((v) => v.trim()).length +
     Object.values(dateFilters).filter((v) => v.from || v.to).length;
+
+  // Each active filter as a removable chip, mirroring the Lateral Master Sheet.
+  const activeFilterChips: Array<{
+    key: string;
+    label: string;
+    remove: () => void;
+  }> = [];
+  for (const [col, values] of Object.entries(columnFilters)) {
+    if (values.length === 0) continue;
+    const more = values.length > 2 ? ` +${values.length - 2}` : "";
+    activeFilterChips.push({
+      key: `col:${col}`,
+      label: `${col}: ${values.slice(0, 2).join(", ")}${more}`,
+      remove: () => clearColumn(col),
+    });
+  }
+  for (const [col, value] of Object.entries(textFilters)) {
+    if (!value.trim()) continue;
+    activeFilterChips.push({
+      key: `text:${col}`,
+      label: `${col}: "${value.trim()}"`,
+      remove: () => onTextChange(col, ""),
+    });
+  }
+  for (const [col, range] of Object.entries(dateFilters)) {
+    if (!range.from && !range.to) continue;
+    activeFilterChips.push({
+      key: `date:${col}`,
+      label: `${col}: ${range.from ?? "…"} → ${range.to ?? "…"}`,
+      remove: () => onDateChange(col, {}),
+    });
+  }
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -180,42 +202,13 @@ export function ExecutiveMasterSheetPage() {
         ? schemaError.message
         : null);
 
-  const sourceKindLabel = formatSourceKind(
-    data?.sourceKind ?? schema?.sourceKind
-  );
-
   return (
     <PageTransition>
       <PageHeader
         title="Executive"
-        description="Executive Master Sheet from the configured Excel workbook (A–W live columns)."
+        description="Executive Master Sheet from PostgreSQL (executive_master)."
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant={filtersOpen ? "default" : "outline"}
-              className={cn(
-                "rounded-xl gap-2",
-                filtersOpen && "bg-primary text-primary-foreground"
-              )}
-              onClick={() => setFiltersOpen((open) => !open)}
-              aria-expanded={filtersOpen}
-              aria-controls="executive-master-filters-popup"
-            >
-              <Filter className="size-4" />
-              Filters
-              {activeFilterCount > 0 ? (
-                <Badge
-                  variant="secondary"
-                  className={cn(
-                    "rounded-md px-1.5",
-                    filtersOpen && "bg-background/20 text-primary-foreground"
-                  )}
-                >
-                  {activeFilterCount}
-                </Badge>
-              ) : null}
-            </Button>
             <Button
               type="button"
               variant="outline"
@@ -253,34 +246,10 @@ export function ExecutiveMasterSheetPage() {
               Sheet: {data.sheetName}
             </Badge>
           ) : null}
-          {sourceKindLabel ? (
-            <Badge variant="secondary" className="rounded-md">
-              Source: {sourceKindLabel}
-            </Badge>
-          ) : null}
           {data?.sourceFile || schema?.sourceFile ? (
-            data?.sourceUrl || schema?.sourceUrl ? (
-              <a
-                href={data?.sourceUrl || schema?.sourceUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="max-w-full"
-              >
-                <Badge
-                  variant="outline"
-                  className="max-w-full truncate rounded-md hover:bg-muted"
-                >
-                  File: {data?.sourceFile || schema?.sourceFile}
-                </Badge>
-              </a>
-            ) : (
-              <Badge
-                variant="outline"
-                className="max-w-full truncate rounded-md"
-              >
-                File: {data?.sourceFile || schema?.sourceFile}
-              </Badge>
-            )
+            <Badge variant="outline" className="max-w-full truncate rounded-md">
+              Source: {data?.sourceFile || schema?.sourceFile}
+            </Badge>
           ) : null}
           {typeof data?.total === "number" ? (
             <Badge variant="secondary" className="rounded-md">
@@ -290,41 +259,39 @@ export function ExecutiveMasterSheetPage() {
         </div>
       </FadeIn>
 
-      {filtersOpen ? (
+      {activeFilterCount > 0 ? (
         <FadeIn>
-          <div
-            id="executive-master-filters-popup"
-            className="mb-4 rounded-2xl border border-border/70 bg-card px-4 py-3 shadow-sm"
-            role="dialog"
-            aria-label="Executive Master Sheet filters"
-          >
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-foreground">
-                Master Sheet filters
-              </p>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8 rounded-lg"
-                onClick={() => setFiltersOpen(false)}
-                aria-label="Close filters"
+          <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs">
+            <span className="font-medium text-primary">
+              {activeFilterCount} column{activeFilterCount === 1 ? "" : "s"}{" "}
+              filtered
+            </span>
+            {activeFilterChips.map((chip) => (
+              <span
+                key={chip.key}
+                className="inline-flex items-center gap-1 rounded-md border border-primary/15 bg-background/60 px-1.5 py-0.5 text-muted-foreground"
               >
-                <X className="size-4" />
-              </Button>
-            </div>
-            <ExecutiveMasterFiltersPanel
-              schema={schema}
-              isLoading={schemaLoading}
-              columnFilters={columnFilters}
-              textFilters={textFilters}
-              dateFilters={dateFilters}
-              onToggleColumnValue={toggleColumnValue}
-              onClearColumn={clearColumn}
-              onTextChange={onTextChange}
-              onDateChange={onDateChange}
-              onClearAll={clearAllFilters}
-            />
+                {chip.label}
+                <button
+                  type="button"
+                  onClick={chip.remove}
+                  aria-label={`Remove ${chip.label} filter`}
+                  className="-mr-0.5 rounded-sm p-0.5 hover:bg-primary/10 hover:text-primary"
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="ml-auto h-6 gap-1 rounded-md px-2 text-xs"
+              onClick={clearAllFilters}
+            >
+              <X className="size-3.5" />
+              Clear all
+            </Button>
           </div>
         </FadeIn>
       ) : null}
@@ -334,8 +301,8 @@ export function ExecutiveMasterSheetPage() {
           <CardHeader className="pb-2">
             <p className="text-sm font-semibold text-foreground">Master Sheet</p>
             <p className="text-xs text-muted-foreground">
-              Columns preserve exact Executive Master Sheet names and order
-              (A–W).
+              13 columns stored in executive_master. Click the filter icon in a
+              column header to filter.
             </p>
           </CardHeader>
           <CardContent>
@@ -347,9 +314,18 @@ export function ExecutiveMasterSheetPage() {
               pageSize={pageSize}
               pageCount={data?.pageCount ?? 0}
               isLoading={isLoading && !data}
+              isFetching={isFetching}
               errorMessage={errorMessage}
               onPageChange={setPage}
               onPageSizeChange={setPageSize}
+              filterFields={schema?.fields}
+              columnFilters={columnFilters}
+              textFilters={textFilters}
+              dateFilters={dateFilters}
+              onToggleColumnValue={toggleColumnValue}
+              onClearColumn={clearColumn}
+              onTextChange={onTextChange}
+              onDateChange={onDateChange}
             />
           </CardContent>
         </Card>

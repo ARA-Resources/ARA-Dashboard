@@ -85,3 +85,55 @@ export function logDatasetSchedulerPolicy(): void {
     `[config] Automatic Lateral scheduler is not armed (${datasetSchedulerPolicyReason()}). Manual operator Run All is unchanged.`
   );
 }
+
+/**
+ * Automatic Executive scheduler policy (Phase E5).
+ *
+ * Deliberately a SEPARATE env var from ARA_DATASET_SCHEDULER — Lateral's
+ * flag is already set to enable Lateral's cron in production, and reusing
+ * it here would auto-arm Executive's cron the moment this code deploys.
+ * The user explicitly required an independent, conscious enable step.
+ *
+ * Also deliberately stricter than Lateral's own default: Lateral treats an
+ * absent env var as "enabled" in development for local convenience. Executive
+ * defaults to OFF unconditionally (dev AND production) when unset — this is
+ * a brand-new, unproven-in-production pipeline, not an established one.
+ *
+ * - ARA_EXECUTIVE_SCHEDULER=0/false/off → disabled
+ * - ARA_EXECUTIVE_SCHEDULER=1/true/on → enabled
+ * - absent (dev or production) → disabled
+ *
+ * Even when this returns true, cron still only arms when
+ * `executive_scheduler_state.enabled` is also true (defaults to FALSE —
+ * see migration 010) and not paused. Both gates must be explicitly opened.
+ */
+export function isExecutiveDatasetSchedulerAutoEnabled(): boolean {
+  const raw = trimEnv("ARA_EXECUTIVE_SCHEDULER").toLowerCase();
+  if (raw === "1" || raw === "true" || raw === "on" || raw === "yes") {
+    return true;
+  }
+  return false;
+}
+
+export function executiveDatasetSchedulerPolicyReason(): string {
+  const raw = trimEnv("ARA_EXECUTIVE_SCHEDULER");
+  if (raw === "0" || raw.toLowerCase() === "false" || raw.toLowerCase() === "off") {
+    return "ARA_EXECUTIVE_SCHEDULER=0";
+  }
+  if (raw === "1" || raw.toLowerCase() === "true" || raw.toLowerCase() === "on") {
+    return "ARA_EXECUTIVE_SCHEDULER=1";
+  }
+  return "default (ARA_EXECUTIVE_SCHEDULER unset — Executive cron does not auto-arm until explicitly enabled)";
+}
+
+export function logExecutiveSchedulerPolicy(): void {
+  if (isExecutiveDatasetSchedulerAutoEnabled()) {
+    console.info(
+      `[config] Automatic Executive scheduler allowed (${executiveDatasetSchedulerPolicyReason()}). Manual Run All is independent.`
+    );
+    return;
+  }
+  console.info(
+    `[config] Automatic Executive scheduler is not armed (${executiveDatasetSchedulerPolicyReason()}). Manual operator Run All is unchanged.`
+  );
+}
