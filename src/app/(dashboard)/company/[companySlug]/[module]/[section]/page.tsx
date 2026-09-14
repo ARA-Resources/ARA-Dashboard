@@ -89,7 +89,13 @@ export default async function CompanyModuleSectionPage({
     moduleConfig.slug === "executive" &&
     section.slug === "master-sheet"
   ) {
-    return <ExecutiveMasterSheetPage />;
+    // Suspense boundary: ExecutiveMasterSheetPage reads navigation params
+    // (useSearchParams) to seed its filters when opened from the dashboard pivot.
+    return (
+      <Suspense fallback={null}>
+        <ExecutiveMasterSheetPage />
+      </Suspense>
+    );
   }
 
   return (

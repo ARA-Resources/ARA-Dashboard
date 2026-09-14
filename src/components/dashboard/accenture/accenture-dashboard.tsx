@@ -14,7 +14,6 @@ import { Badge } from "@/components/ui/badge";
 import { BusinessUnitSelect } from "@/components/dashboard/accenture/business-unit-select";
 import { OpeningsTableToolbar } from "@/components/dashboard/accenture/openings-table-toolbar";
 import { OpeningsDataTable } from "@/components/dashboard/accenture/openings-data-table";
-import { ExecutivePDashboardTable } from "@/components/dashboard/accenture/executive";
 import { DEFAULT_DASHBOARD_BUSINESS_UNIT } from "@/constants/accenture-dashboard";
 import { getBusinessUnitById } from "@/constants/business-units";
 import {
@@ -211,19 +210,51 @@ export function AccentureDashboard() {
     [router]
   );
 
+  /**
+   * Executive P-Dashboard pivot: same pattern as Lateral's handler above —
+   * clicking a Primary Skill opens the Executive Master Sheet filtered to
+   * that skill + Skill Categorization, plus the dashboard's live Job
+   * Status / Posted / Priority. Deliberately does not carry Market Map
+   * through, matching Lateral's own handler scope exactly (it doesn't
+   * carry Market Map either, even though both pivots now filter by it).
+   */
+  const handleExecutivePrimarySkillNavigate = React.useCallback(
+    (row: ExcelDataRow) => {
+      const skill = String(row["Primary Skills"] ?? "").trim();
+      if (!skill || skill === "—") return;
+
+      const live = useDashboardFilterStore
+        .getState()
+        .getUserFilters("executive").columnFilters;
+
+      const params = new URLSearchParams();
+      params.set("skill", skill);
+
+      const skillCat = String(row["Skill Categorization"] ?? "").trim();
+      if (skillCat && skillCat !== "—") params.set("skillCat", skillCat);
+
+      for (const value of live["Job Status"] ?? []) {
+        params.append("jobStatus", value);
+      }
+      for (const value of live["Posted"] ?? []) {
+        params.append("posted", value);
+      }
+      for (const value of live["Priority"] ?? []) {
+        params.append("priority", value);
+      }
+
+      router.push(`${ROUTES.executiveMasterSheet}?${params.toString()}`);
+    },
+    [router]
+  );
+
   const title =
-    businessUnit === "executive"
-      ? "P - Dashboard"
-      : filters.topN === null
-        ? "Openings"
-        : `Top ${filters.topN} Openings`;
+    filters.topN === null ? "Openings" : `Top ${filters.topN} Openings`;
 
   const description = unit
-    ? businessUnit === "executive"
-      ? `${unit.name} · Master Sheet → P - Dashboard (Count of Level)`
-      : `${unit.name} · Dataset Manager · Filters from: ${
-          unit.excel.detailSheet ?? unit.excel.primarySheet
-        }`
+    ? `${unit.name} · Dataset Manager · Filters from: ${
+        unit.excel.detailSheet ?? unit.excel.primarySheet
+      }`
     : "Select a business unit to load Excel openings.";
 
   const activeFilterChips = Object.entries(filters.columnFilters).flatMap(
@@ -382,31 +413,24 @@ export function AccentureDashboard() {
             />
           </CardHeader>
           <CardContent className="pt-4">
-            {businessUnit === "executive" ? (
-              <ExecutivePDashboardTable
-                key={`${businessUnit}-${JSON.stringify(filters)}`}
-                headers={data?.headers ?? []}
-                data={data?.rows ?? []}
-                globalFilter={search}
-                isLoading={isLoading}
-                errorMessage={error instanceof Error ? error.message : null}
-              />
-            ) : (
-              <OpeningsDataTable
-                key={`${businessUnit}-${JSON.stringify(filters)}`}
-                headers={data?.headers ?? []}
-                data={data?.rows ?? []}
-                globalFilter={search}
-                isLoading={isLoading}
-                errorMessage={error instanceof Error ? error.message : null}
-                showGrandTotalRow={businessUnit === "lateral"}
-                onPrimarySkillClick={
-                  businessUnit === "lateral"
-                    ? handlePrimarySkillNavigate
+            <OpeningsDataTable
+              key={`${businessUnit}-${JSON.stringify(filters)}`}
+              headers={data?.headers ?? []}
+              data={data?.rows ?? []}
+              globalFilter={search}
+              isLoading={isLoading}
+              errorMessage={error instanceof Error ? error.message : null}
+              showGrandTotalRow={
+                businessUnit === "lateral" || businessUnit === "executive"
+              }
+              onPrimarySkillClick={
+                businessUnit === "lateral"
+                  ? handlePrimarySkillNavigate
+                  : businessUnit === "executive"
+                    ? handleExecutivePrimarySkillNavigate
                     : undefined
-                }
-              />
-            )}
+              }
+            />
           </CardContent>
         </Card>
       </FadeIn>

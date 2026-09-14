@@ -140,21 +140,22 @@ export async function listExecutiveMasterRows(
 /**
  * Map a PG Master row to the P - Dashboard engine input shape.
  *
- * Keys use the ENGINE's expected source-header names ("Primary skills",
- * "Market", "Level", "Skill category", ...) — the same names the engine reads
- * off an XLSM row — NOT the renamed `executive_master` display headers.
+ * Keys match the `executive_master` display headers directly (same spelling
+ * as `EXECUTIVE_MASTER_EXCEL_HEADERS`) — the engine no longer speaks the
+ * legacy XLSM source-header dialect ("Primary skills", "Market", "Level",
+ * "Skill category"). Primary Location / Location Flex are intentionally not
+ * mapped here — the P - Dashboard engine no longer groups or filters by
+ * them (still visible/filterable on the Master Sheet page itself).
  */
 export function toExecutivePDashboardInputRow(
   row: ExecutiveMasterRow
 ): ExecutivePDashboardInputRow {
   return {
     id: row.job_requisition_id,
-    "Primary skills": row.primary_skills,
-    Market: row.market_map,
-    "Primary Location": row.primary_location,
-    Level: row.job_management_level,
-    "Location Flex": row.location_flex,
-    "Skill category": row.skill_categorization,
+    "Primary Skills": row.primary_skills,
+    "Market Map": row.market_map,
+    "Job Management Level": row.job_management_level,
+    "Skill Categorization": row.skill_categorization,
     "Job Status": row.job_status,
     Posted: row.posted,
     Priority: row.priority,

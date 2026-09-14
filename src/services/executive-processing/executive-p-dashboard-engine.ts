@@ -1,49 +1,51 @@
-import { EXECUTIVE_MASTER_LIVE_COLUMNS } from "@/services/excel/executive-master-sheet";
+import { EXECUTIVE_MASTER_EXCEL_HEADERS } from "@/services/persistence/executive-master-sheet-columns";
 import type { ExcelCellValue, ExcelDataRow } from "@/types/excel";
 
 /**
- * Minimal row shape the P - Dashboard engine reads. Keyed by the ENGINE's
- * source-header names (the same names an XLSM Master Sheet row uses), not the
- * renamed `executive_master` display headers.
- *
- * Both `ExecutiveMasterSheetRow` (XLSM path) and the PostgreSQL read layer's
- * `toExecutivePDashboardInputRow()` output satisfy this structurally.
+ * Minimal row shape the P - Dashboard engine reads, keyed by the Master
+ * Sheet's own display header names (the same names
+ * `executive-master-sheet-columns.ts` / `EXECUTIVE_MASTER_EXCEL_HEADERS`
+ * use) — not the legacy XLSM source-header spelling this engine used before
+ * the Lateral-pattern rebuild ("Primary skills", "Market", "Level", "Skill
+ * category"). The one live producer is `toExecutivePDashboardInputRow()` in
+ * `read-executive-master.ts`, which maps `executive_master` rows directly to
+ * this shape — there is no XLSM caller left (confirmed before this rebuild).
  */
 export interface ExecutivePDashboardInputRow {
   id?: string;
-  "Primary skills"?: ExcelCellValue;
-  Market?: ExcelCellValue;
-  "Primary Location"?: ExcelCellValue;
-  Level?: ExcelCellValue;
-  "Location Flex"?: ExcelCellValue;
-  "Skill category"?: ExcelCellValue;
+  "Primary Skills"?: ExcelCellValue;
+  "Market Map"?: ExcelCellValue;
+  "Job Management Level"?: ExcelCellValue;
+  "Skill Categorization"?: ExcelCellValue;
   "Job Status"?: ExcelCellValue;
   Posted?: ExcelCellValue;
   Priority?: ExcelCellValue;
 }
 
 /**
- * Executive P - Dashboard contract (Excel PivotTable1) — pure engine.
+ * Executive P - Dashboard — rebuilt to match Lateral's P-Roles pivot pattern.
  *
- * Evidence from workbook PivotTable1:
- * - Page filters: Team Member 1, Priority, Job Status, Posted
- * - Rows: Primary skills → Market → Primary Location → Location Flex → Skill category
- * - Columns: Level (exact values; dirty 5/6/7/L-5/… appear as separate columns in Excel)
- * - Values: Count of Level
- * - rowGrandTotals=false, colGrandTotals=false, defaultSubtotal=false
- * - Blanks shown as "(blank)"
- * - sortType=manual on fields (app uses stable A–Z; counts validated separately)
- *
- * App UI shows the three canonical Level columns only (exact string match).
- * Dirty Level values are NOT normalized into those columns (Excel-accurate).
- * Grand Total row is added for the website (Excel has Grand Totals off).
+ * Row grouping: Primary Skills + Skill Categorization (2 dimensions, was 5 —
+ * Market Map / Primary Location / Location Flex dropped from grouping; that
+ * data stays visible/filterable on the Master Sheet page). Market Map stays
+ * a *filter* dimension even though it's no longer a *grouping* dimension —
+ * same relationship Lateral's own pivot has with Market Map.
+ * Columns: Job Management Level, restricted to Executive's own 3 tiers
+ * (5-Associate Director / 6-Senior Manager / 7-Manager) — never was
+ * Lateral's 5-tier scale.
+ * Values: Count of Job Requisition ID per Primary Skills × Skill
+ * Categorization × Level combination, after filters (Job Status, Posted,
+ * Market Map, Priority, Skill Categorization — the same 5 real filter
+ * dimensions Lateral's own pivot respects) are applied.
+ * Grand Total row/column: computed by the shared `OpeningsDataTable`
+ * component from the plain group rows this module returns — no synthetic
+ * "Grand Total" row is emitted here, mirroring
+ * `lateral-p-roles-engine.ts`'s `pRolesResultToRows` exactly.
  */
 
 export const EXECUTIVE_P_DASHBOARD_SHEET_NAME = "P - Dashboard";
 
-// "Team Member 1" was an XLSM-only page filter. The PostgreSQL-backed Executive
-// dataset has no Team columns, so the dashboard exposes Priority / Job Status /
-// Posted only.
+/** Columns exposed on the old (pre-rebuild) 3-field toolbar schema — kept only for that legacy function until Stage 5 cleanup. */
 export const EXECUTIVE_P_DASHBOARD_FILTER_COLUMNS = [
   "Priority",
   "Job Status",
@@ -51,11 +53,8 @@ export const EXECUTIVE_P_DASHBOARD_FILTER_COLUMNS = [
 ] as const;
 
 export const EXECUTIVE_P_DASHBOARD_ROW_COLUMNS = [
-  "Primary skills",
-  "Market",
-  "Primary Location",
-  "Location Flex",
-  "Skill category",
+  "Primary Skills",
+  "Skill Categorization",
 ] as const;
 
 export const EXECUTIVE_P_DASHBOARD_LEVEL_COLUMNS = [
@@ -73,14 +72,13 @@ export interface ExecutivePDashboardFilterSelection {
   priority: string[];
   jobStatus: string[];
   posted: string[];
+  marketMap: string[];
+  skillCategorization: string[];
 }
 
 export interface ExecutivePDashboardGroupRow {
-  "Primary skills": string;
-  Market: string;
-  "Primary Location": string;
-  "Location Flex": string;
-  "Skill category": string;
+  "Primary Skills": string;
+  "Skill Categorization": string;
   "5-Associate Director": number;
   "6-Senior Manager": number;
   "7-Manager": number;
@@ -98,7 +96,7 @@ export interface ExecutivePDashboardTotals {
 function asText(value: unknown): string {
   if (value === null || value === undefined) return "";
   return String(value)
-    .replace(/\u00a0/g, " ")
+    .replace(/ /g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -134,6 +132,8 @@ export function extractExecutivePDashboardFilters(
     priority: pick("Priority"),
     jobStatus: pick("Job Status"),
     posted: pick("Posted"),
+    marketMap: pick("Market Map"),
+    skillCategorization: pick("Skill Categorization"),
   };
 }
 
@@ -144,6 +144,14 @@ export function applyExecutivePDashboardFilters<
     if (!matchesMultiSelect(row.Priority, filters.priority)) return false;
     if (!matchesMultiSelect(row["Job Status"], filters.jobStatus)) return false;
     if (!matchesMultiSelect(row.Posted, filters.posted)) return false;
+    if (!matchesMultiSelect(row["Market Map"], filters.marketMap)) return false;
+    if (
+      !matchesMultiSelect(
+        row["Skill Categorization"],
+        filters.skillCategorization
+      )
+    )
+      return false;
     return true;
   });
 }
@@ -171,6 +179,12 @@ function compareHierarchy(
   return 0;
 }
 
+/**
+ * Legacy (pre-rebuild) 3-column option collector — still backs
+ * `getExecutivePDashboardFilterSchema()` in the service until that function
+ * is retired in Stage 5. The live "All Filters" panel uses
+ * `executive-dashboard-filter-schema.ts` instead (Stage 3).
+ */
 export function collectExecutivePDashboardFilterOptions(
   rows: ExecutivePDashboardInputRow[]
 ): Record<(typeof EXECUTIVE_P_DASHBOARD_FILTER_COLUMNS)[number], string[]> {
@@ -241,11 +255,8 @@ export function buildExecutivePDashboardFromRows(
 
   type Acc = {
     display: {
-      "Primary skills": string;
-      Market: string;
-      "Primary Location": string;
-      "Location Flex": string;
-      "Skill category": string;
+      "Primary Skills": string;
+      "Skill Categorization": string;
     };
     "5-Associate Director": number;
     "6-Senior Manager": number;
@@ -257,15 +268,12 @@ export function buildExecutivePDashboardFromRows(
 
   for (const row of filtered) {
     const display = {
-      "Primary skills": displayGroupToken(row["Primary skills"]),
-      Market: displayGroupToken(row.Market),
-      "Primary Location": displayGroupToken(row["Primary Location"]),
-      "Location Flex": displayGroupToken(row["Location Flex"]),
-      "Skill category": displayGroupToken(row["Skill category"]),
+      "Primary Skills": displayGroupToken(row["Primary Skills"]),
+      "Skill Categorization": displayGroupToken(row["Skill Categorization"]),
     };
     const key = EXECUTIVE_P_DASHBOARD_ROW_COLUMNS.map((column) =>
       normalizeGroupToken(row[column])
-    ).join("\u0000");
+    ).join(" ");
 
     let acc = groups.get(key);
     if (!acc) {
@@ -280,7 +288,7 @@ export function buildExecutivePDashboardFromRows(
     }
 
     acc.detailCount += 1;
-    const level = asText(row.Level);
+    const level = asText(row["Job Management Level"]);
     if (level === "5-Associate Director") acc["5-Associate Director"] += 1;
     else if (level === "6-Senior Manager") acc["6-Senior Manager"] += 1;
     else if (level === "7-Manager") acc["7-Manager"] += 1;
@@ -312,9 +320,13 @@ export function buildExecutivePDashboardFromRows(
   return { groups: groupRows, totals };
 }
 
+/**
+ * Convert aggregated groups to the openings-table shape. No synthetic Grand
+ * Total row — `OpeningsDataTable` computes and renders that itself, the same
+ * way it does for Lateral's P-Roles pivot.
+ */
 export function groupsToExecutivePDashboardTableRows(
-  groups: ExecutivePDashboardGroupRow[],
-  totals: ExecutivePDashboardTotals
+  groups: ExecutivePDashboardGroupRow[]
 ): { headers: string[]; rows: ExcelDataRow[] } {
   const headers = [
     ...EXECUTIVE_P_DASHBOARD_ROW_COLUMNS,
@@ -323,41 +335,38 @@ export function groupsToExecutivePDashboardTableRows(
 
   const rows: ExcelDataRow[] = groups.map((group, index) => ({
     id: `executive-p-dashboard-${index + 1}`,
-    "Primary skills": group["Primary skills"],
-    Market: group.Market,
-    "Primary Location": group["Primary Location"],
-    "Location Flex": group["Location Flex"],
-    "Skill category": group["Skill category"],
+    "Primary Skills": group["Primary Skills"],
+    "Skill Categorization": group["Skill Categorization"],
     "5-Associate Director": group["5-Associate Director"] || null,
     "6-Senior Manager": group["6-Senior Manager"] || null,
     "7-Manager": group["7-Manager"] || null,
   }));
 
-  rows.push({
-    id: "executive-p-dashboard-grand-total",
-    "Primary skills": "Grand Total",
-    Market: null,
-    "Primary Location": null,
-    "Location Flex": null,
-    "Skill category": null,
-    "5-Associate Director": totals["5-Associate Director"],
-    "6-Senior Manager": totals["6-Senior Manager"],
-    "7-Manager": totals["7-Manager"],
-  });
-
   return { headers: [...headers], rows };
 }
 
+/**
+ * Validates against `EXECUTIVE_MASTER_EXCEL_HEADERS` (the live Postgres
+ * `executive_master` display-header contract) — NOT
+ * `EXECUTIVE_MASTER_LIVE_COLUMNS` (the old XLSM contract this engine used
+ * before the Lateral-pattern rebuild, still spelled "Market" / "Primary
+ * skills" / "Level" / "Skill category"). Checking against the old constant
+ * here would always throw now that this engine's row shape uses the
+ * Postgres display spelling instead.
+ */
 export function assertExecutivePDashboardContract(): void {
   const required = [
-    ...EXECUTIVE_P_DASHBOARD_FILTER_COLUMNS,
+    "Priority",
+    "Job Status",
+    "Posted",
+    "Market Map",
     ...EXECUTIVE_P_DASHBOARD_ROW_COLUMNS,
-    "Level",
+    "Job Management Level",
   ];
   for (const column of required) {
     if (
-      !EXECUTIVE_MASTER_LIVE_COLUMNS.includes(
-        column as (typeof EXECUTIVE_MASTER_LIVE_COLUMNS)[number]
+      !EXECUTIVE_MASTER_EXCEL_HEADERS.includes(
+        column as (typeof EXECUTIVE_MASTER_EXCEL_HEADERS)[number]
       )
     ) {
       throw new Error(

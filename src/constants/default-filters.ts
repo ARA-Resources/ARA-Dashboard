@@ -31,8 +31,8 @@ export const DEFAULT_FILTER_CONFIG: Record<BusinessUnitId, OpeningsFilterDefault
       sortByPatterns: [],
       sortDirection: "asc",
       topN: null,
-      preferredStatusValues: ["Active"],
-      preferredPostedValues: [],
+      preferredStatusValues: ["Active", "Reopen", "New"],
+      preferredPostedValues: ["Yes"],
     },
     consulting: {
       sortByPatterns: [],

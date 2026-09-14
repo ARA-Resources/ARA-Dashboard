@@ -67,13 +67,17 @@ export async function GET(request: Request) {
       bypassCache: refresh,
     });
 
-    return NextResponse.json({ ok: true, ...result });
+    // Plain ExcelOpeningsResult body — matches Lateral's
+    // /api/dataset/lateral/p-roles route shape (no { ok, ... } wrapper).
+    return NextResponse.json(result, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     const message =
       error instanceof Error
         ? error.message
         : "Failed to build Executive P-Dashboard.";
     console.error("[api/excel/executive-p-dashboard]", message);
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

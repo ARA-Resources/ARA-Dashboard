@@ -1,6 +1,7 @@
 import "server-only";
 
 import { listExecutiveMasterForPDashboard } from "@/services/persistence/read-executive-master";
+import { applySortAndTopN } from "@/services/excel/apply-filters";
 import type {
   DynamicFilterField,
   DynamicFilterSchema,
@@ -56,14 +57,6 @@ export interface ExecutivePDashboardResult {
   };
 }
 
-function asText(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  return String(value)
-    .replace(/\u00a0/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 const EXECUTIVE_PG_SOURCE_FILE = "executive_master";
 const EXECUTIVE_PG_SOURCE_LABEL =
   "PostgreSQL executive_master → P - Dashboard";
@@ -81,7 +74,7 @@ export async function buildExecutivePDashboard(
     rows,
     appliedFilters
   );
-  const table = groupsToExecutivePDashboardTableRows(groups, totals);
+  const table = groupsToExecutivePDashboardTableRows(groups);
 
   return {
     sheetName: EXECUTIVE_P_DASHBOARD_SHEET_NAME,
@@ -132,42 +125,14 @@ export async function buildExecutivePDashboardOpenings(
   const columnFilters = filters?.columnFilters ?? {};
   const result = await buildExecutivePDashboard(columnFilters, options);
 
-  let rows = result.rows;
-  const topN = filters?.topN;
-  if (typeof topN === "number" && topN > 0) {
-    const body = rows.filter(
-      (row) => !/^grand\s*total$/i.test(asText(row["Primary skills"]))
-    );
-    const totalRow = rows.find((row) =>
-      /^grand\s*total$/i.test(asText(row["Primary skills"]))
-    );
-    const sliced = body.slice(0, topN);
-    rows = totalRow ? [...sliced, totalRow] : sliced;
-  }
-
-  const sortBy = filters?.sortBy;
-  const sortDir = filters?.sortDirection ?? "desc";
-  if (sortBy && result.headers.includes(sortBy)) {
-    const body = rows.filter(
-      (row) => !/^grand\s*total$/i.test(asText(row["Primary skills"]))
-    );
-    const totalRow = rows.find((row) =>
-      /^grand\s*total$/i.test(asText(row["Primary skills"]))
-    );
-    body.sort((a, b) => {
-      const av = a[sortBy];
-      const bv = b[sortBy];
-      const an = typeof av === "number" ? av : Number(asText(av)) || 0;
-      const bn = typeof bv === "number" ? bv : Number(asText(bv)) || 0;
-      if (an !== bn) return sortDir === "asc" ? an - bn : bn - an;
-      return asText(a["Primary skills"]).localeCompare(
-        asText(b["Primary skills"]),
-        undefined,
-        { sensitivity: "base" }
-      );
-    });
-    rows = totalRow ? [...body, totalRow] : body;
-  }
+  // No sentinel Grand Total row to protect from sort/slice anymore — a
+  // straight call, exactly mirroring lateral-p-roles-service.ts's
+  // buildOpeningsResult.
+  const rows = applySortAndTopN(result.headers, result.rows, {
+    sortBy: filters?.sortBy ?? null,
+    sortDirection: filters?.sortDirection ?? "desc",
+    topN: filters?.topN ?? null,
+  });
 
   return {
     businessUnitId: "executive",

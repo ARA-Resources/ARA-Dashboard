@@ -89,28 +89,10 @@ export async function fetchFilterSchema(
   if (options?.refresh) params.set("refresh", "1");
   const suffix = params.toString() ? `?${params.toString()}` : "";
 
-  if (businessUnitId === "executive") {
-    const schemaParams = new URLSearchParams(params);
-    schemaParams.set("schema", "1");
-    const response = await fetch(
-      `/api/excel/executive-p-dashboard?${schemaParams.toString()}`,
-      { method: "GET", cache: "no-store" }
-    );
-    const payload = (await response.json().catch(() => null)) as {
-      ok?: boolean;
-      error?: string;
-      schema?: DynamicFilterSchema;
-    } | null;
-    if (!response.ok || !payload?.schema) {
-      throw new Error(
-        payload?.error ?? "Failed to load filters for executive"
-      );
-    }
-    return payload.schema;
-  }
-
   // Lateral filters: Stage 6 Node endpoint when API base URL is configured.
-  // Executive/consulting remain on Next.js until migrated.
+  // Executive now comes from the same generic Postgres-backed route as
+  // every other business unit (see filter-schema.ts's `executive` branch).
+  // Consulting remains on Next.js until migrated.
   const response =
     businessUnitId === "lateral"
       ? await apiFetch(`/api/excel/lateral/filters${suffix}`, {

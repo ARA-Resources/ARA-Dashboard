@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Download, Loader2, RefreshCw, X } from "lucide-react";
 import { PageHeader } from "@/components/layouts/page-header";
@@ -38,17 +39,63 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
+/**
+ * Filter params the page accepts on navigation (e.g. from the dashboard pivot's
+ * clickable Primary Skill). `skill` / `skillCat` are exact single values; the
+ * rest are repeatable. They seed `columnFilters` once, then get stripped from
+ * the URL so a later refresh / edit behaves like a normal visit.
+ */
+const INCOMING_FILTER_PARAM_KEYS = [
+  "skill",
+  "skillCat",
+  "jobStatus",
+  "posted",
+  "priority",
+] as const;
+
+function readIncomingColumnFilters(
+  params: URLSearchParams
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  const one = (key: string) => params.get(key)?.trim() ?? "";
+  const many = (key: string) =>
+    params
+      .getAll(key)
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+  const skill = one("skill");
+  if (skill) out["Primary Skills"] = [skill];
+  const skillCat = one("skillCat");
+  if (skillCat) out["Skill Categorization"] = [skillCat];
+  const jobStatus = many("jobStatus");
+  if (jobStatus.length > 0) out["Job Status"] = jobStatus;
+  const posted = many("posted");
+  if (posted.length > 0) out["Posted"] = posted;
+  const priority = many("priority");
+  if (priority.length > 0) out["Priority"] = priority;
+  return out;
+}
+
 export function ExecutiveMasterSheetPage() {
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState<ExecutiveMasterPageSize>(
     DEFAULT_EXECUTIVE_MASTER_PAGE_SIZE
   );
   // Job Status / Posted default to the same preselection as the Dashboard
-  // pivot on every load — never persisted, always resets on refresh/revisit.
+  // pivot on every load (never persisted). A pivot-click navigation ("show
+  // this skill") seeds specific columns via URL params — those are spread on
+  // top so an incoming click always overrides the generic default.
   const [columnFilters, setColumnFilters] = React.useState<
     Record<string, string[]>
-  >(() => ({ ...MASTER_SHEET_DEFAULT_COLUMN_FILTERS }));
+  >(() => ({
+    ...MASTER_SHEET_DEFAULT_COLUMN_FILTERS,
+    ...readIncomingColumnFilters(new URLSearchParams(searchParams.toString())),
+  }));
   const [textFilters, setTextFilters] = React.useState<Record<string, string>>(
     {}
   );
@@ -84,6 +131,14 @@ export function ExecutiveMasterSheetPage() {
   React.useEffect(() => {
     setPage(1);
   }, [columnFilters, debouncedTextFilters, debouncedDateFilters, pageSize]);
+
+  // Drop the navigation params after they've seeded the filter state, so a
+  // refresh or a subsequent filter edit isn't overridden by stale URL values.
+  React.useEffect(() => {
+    if (INCOMING_FILTER_PARAM_KEYS.some((key) => searchParams.has(key))) {
+      router.replace(pathname, { scroll: false });
+    }
+  }, [searchParams, router, pathname]);
 
   const activeFilterCount =
     Object.values(columnFilters).filter((v) => v.length > 0).length +
