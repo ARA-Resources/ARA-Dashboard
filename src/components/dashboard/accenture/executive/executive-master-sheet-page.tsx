@@ -10,8 +10,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ExecutiveMasterSheetTable } from "@/components/dashboard/accenture/executive/executive-master-sheet-table";
+import { MasterSheetPaginationBar } from "@/components/dashboard/accenture/master-sheet-pagination-bar";
+import { MASTER_SHEET_DEFAULT_COLUMN_FILTERS } from "@/constants/default-filters";
 import {
   DEFAULT_EXECUTIVE_MASTER_PAGE_SIZE,
+  EXECUTIVE_MASTER_PAGE_SIZE_OPTIONS,
   type ExecutiveMasterDateFilter,
   type ExecutiveMasterPageSize,
 } from "@/services/excel/executive-master-sheet";
@@ -41,9 +44,11 @@ export function ExecutiveMasterSheetPage() {
   const [pageSize, setPageSize] = React.useState<ExecutiveMasterPageSize>(
     DEFAULT_EXECUTIVE_MASTER_PAGE_SIZE
   );
+  // Job Status / Posted default to the same preselection as the Dashboard
+  // pivot on every load — never persisted, always resets on refresh/revisit.
   const [columnFilters, setColumnFilters] = React.useState<
     Record<string, string[]>
-  >({});
+  >(() => ({ ...MASTER_SHEET_DEFAULT_COLUMN_FILTERS }));
   const [textFilters, setTextFilters] = React.useState<Record<string, string>>(
     {}
   );
@@ -298,12 +303,31 @@ export function ExecutiveMasterSheetPage() {
 
       <FadeIn>
         <Card className="rounded-2xl border-border/70">
-          <CardHeader className="pb-2">
-            <p className="text-sm font-semibold text-foreground">Master Sheet</p>
-            <p className="text-xs text-muted-foreground">
-              13 columns stored in executive_master. Click the filter icon in a
-              column header to filter.
-            </p>
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 pb-2">
+            <div>
+              <p className="text-sm font-semibold text-foreground">
+                Master Sheet
+              </p>
+              <p className="text-xs text-muted-foreground">
+                13 columns stored in executive_master. Click the filter icon
+                in a column header to filter.
+              </p>
+            </div>
+            {data && data.total > 0 ? (
+              <MasterSheetPaginationBar
+                variant="compact"
+                total={data.total}
+                page={data.page ?? page}
+                pageSize={pageSize}
+                pageCount={data.pageCount ?? 0}
+                pageSizeOptions={EXECUTIVE_MASTER_PAGE_SIZE_OPTIONS}
+                defaultPageSize={DEFAULT_EXECUTIVE_MASTER_PAGE_SIZE}
+                onPageChange={setPage}
+                onPageSizeChange={(size) =>
+                  setPageSize(size as ExecutiveMasterPageSize)
+                }
+              />
+            ) : null}
           </CardHeader>
           <CardContent>
             <ExecutiveMasterSheetTable

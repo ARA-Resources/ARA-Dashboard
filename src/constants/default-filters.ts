@@ -205,3 +205,25 @@ export function getDefaultOpeningsFilters(
 ): OpeningsFilters {
   return createBaseOpeningsFilters(businessUnitId);
 }
+
+/**
+ * Master Sheet (Lateral + Executive) default column filters on page load.
+ *
+ * Deliberately identical for both business units — unlike DEFAULT_FILTER_CONFIG
+ * above, which varies per unit for the Dashboard pivot, confirmed decision: apply
+ * the same Job Status / Posted defaults to both Master Sheet pages rather than
+ * mirroring each unit's own dashboard default. Executive currently has zero
+ * New/Reopen rows, so those two selections are harmless no-ops there today;
+ * expected to become meaningful once the Executive pipeline has run long enough
+ * to produce those transitions.
+ *
+ * Values are reused from DEFAULT_FILTER_CONFIG.lateral (single source of truth)
+ * rather than resolved against a live schema like the Dashboard pivot does —
+ * Master Sheet's column names and values are fixed, DB-constrained vocabulary
+ * (not user-uploaded Excel), so there's nothing to resolve at runtime and no
+ * async flash-of-unfiltered-content gap.
+ */
+export const MASTER_SHEET_DEFAULT_COLUMN_FILTERS: Record<string, string[]> = {
+  "Job Status": [...DEFAULT_FILTER_CONFIG.lateral.preferredStatusValues],
+  Posted: [...DEFAULT_FILTER_CONFIG.lateral.preferredPostedValues],
+};

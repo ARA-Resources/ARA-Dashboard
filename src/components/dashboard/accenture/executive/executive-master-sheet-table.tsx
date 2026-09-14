@@ -2,22 +2,13 @@
 
 import * as React from "react";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import type { ExcelDataRow } from "@/types/excel";
 import {
   DEFAULT_EXECUTIVE_MASTER_PAGE_SIZE,
@@ -30,6 +21,11 @@ import {
 } from "@/services/excel/executive-master-sheet";
 import type { ExecutiveMasterSheetPgRow } from "@/services/persistence/executive-master-sheet-postgres";
 import { LateralMasterColumnFilter } from "@/components/dashboard/accenture/lateral/lateral-master-column-filter";
+import {
+  useMasterSheetScrollShell,
+  MasterSheetTopScrollbar,
+} from "@/components/dashboard/accenture/master-sheet-scroll-shell";
+import { MasterSheetPaginationBar } from "@/components/dashboard/accenture/master-sheet-pagination-bar";
 import {
   polishExcelDisplayValue,
   formatExcelDateDdMmYyyy,
@@ -175,7 +171,14 @@ export function ExecutiveMasterSheetTable({
   onTextChange,
   onDateChange,
 }: ExecutiveMasterSheetTableProps) {
-  const tableScrollRef = React.useRef<HTMLDivElement>(null);
+  const {
+    bodyScrollRef,
+    tableRef,
+    topScrollRef,
+    mirrorWidth,
+    onBodyScroll,
+    onTopScroll,
+  } = useMasterSheetScrollShell();
   const savedTableScrollRef = React.useRef({ left: 0, top: 0 });
 
   const filterFieldByHeader = React.useMemo(() => {
@@ -209,20 +212,20 @@ export function ExecutiveMasterSheetTable({
   );
 
   const restoreTableScroll = React.useCallback(() => {
-    const node = tableScrollRef.current;
+    const node = bodyScrollRef.current;
     if (!node) return;
     node.scrollLeft = savedTableScrollRef.current.left;
     node.scrollTop = savedTableScrollRef.current.top;
-  }, []);
+  }, [bodyScrollRef]);
 
   const captureScroll = React.useCallback(() => {
-    const scrollNode = tableScrollRef.current;
+    const scrollNode = bodyScrollRef.current;
     if (!scrollNode) return;
     savedTableScrollRef.current = {
       left: scrollNode.scrollLeft,
       top: scrollNode.scrollTop,
     };
-  }, []);
+  }, [bodyScrollRef]);
 
   const openJobDescriptionForRow = React.useCallback(
     (row: ExecutiveMasterSheetRow) => {
@@ -262,9 +265,6 @@ export function ExecutiveMasterSheetTable({
     [restoreTableScroll]
   );
 
-  const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const end = Math.min(page * pageSize, total);
-
   return (
     <div className="space-y-4">
       <JobDescriptionModal
@@ -297,189 +297,151 @@ export function ExecutiveMasterSheetTable({
         </div>
       ) : (
         <>
-          <div
-            ref={tableScrollRef}
-            className="overflow-auto rounded-xl border border-border"
-          >
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/40 hover:bg-muted/40">
-                  {headers.map((header) => {
-                    const field = filtersEnabled
-                      ? filterFieldByHeader.get(header.trim())
-                      : undefined;
-                    return (
-                      <TableHead
-                        key={header}
-                        className="h-11 whitespace-nowrap px-3 text-xs font-semibold tracking-wide text-primary uppercase"
-                      >
-                        <span className="inline-flex items-center gap-1">
-                          {header}
-                          {field ? (
-                            <LateralMasterColumnFilter
-                              field={field}
-                              selectedValues={columnFilters?.[header] ?? []}
-                              textValue={textFilters?.[header] ?? ""}
-                              dateValue={dateFilters?.[header] ?? {}}
-                              onToggleValue={(value) =>
-                                onToggleColumnValue?.(header, value)
-                              }
-                              onClearColumn={() => onClearColumn?.(header)}
-                              onTextChange={(value) =>
-                                onTextChange?.(header, value)
-                              }
-                              onDateChange={(range) =>
-                                onDateChange?.(header, range)
-                              }
-                            />
-                          ) : null}
-                        </span>
-                      </TableHead>
-                    );
-                  })}
-                </TableRow>
-              </TableHeader>
-              <TableBody
-                className={cn(
-                  "transition-opacity",
-                  isFetching && !isLoading && "pointer-events-none opacity-50"
-                )}
-              >
-                {rows.length > 0 ? (
-                  rows.map((row) => (
-                    <TableRow
-                      key={String(row.id)}
-                      className="hover:bg-accent/40"
-                    >
-                      {headers.map((header) => {
-                        const value =
-                          row[header as keyof ExecutiveMasterSheetRow];
-                        const display = formatCellValue(
-                          header,
-                          value as string | number | null | undefined
-                        );
-                        const isDateCol = isExcelDateColumnHeader(header);
-                        const isJobDesc =
-                          isExecutiveJobDescriptionColumn(header);
-                        const isMustHave =
-                          isExecutiveMustHaveSkillsColumn(header);
-                        const isNumeric =
-                          typeof value === "number" &&
-                          !isDateCol &&
-                          !isJobDesc &&
-                          !isMustHave &&
-                          !formatExcelDateDdMmYyyy(value);
-                        return (
-                          <TableCell
-                            key={`${row.id}-${header}`}
-                            className="max-w-[280px] px-3 py-3"
-                          >
-                            {isJobDesc ? (
-                              <JobDescriptionCell
-                                preview={display}
-                                onOpen={() => openJobDescriptionForRow(row)}
+          <div className="overflow-hidden rounded-xl border border-border">
+            <MasterSheetTopScrollbar
+              scrollRef={topScrollRef}
+              onScroll={onTopScroll}
+              width={mirrorWidth}
+            />
+            <div
+              ref={bodyScrollRef}
+              onScroll={onBodyScroll}
+              data-slot="table-container"
+              className="max-h-[70vh] overflow-auto"
+            >
+              <table ref={tableRef} className="w-full caption-bottom text-sm">
+                <TableHeader className="sticky top-0 z-10">
+                  <TableRow className="bg-muted hover:bg-muted">
+                    {headers.map((header) => {
+                      const field = filtersEnabled
+                        ? filterFieldByHeader.get(header.trim())
+                        : undefined;
+                      return (
+                        <TableHead
+                          key={header}
+                          className="h-11 whitespace-nowrap px-3 text-xs font-semibold tracking-wide text-primary uppercase"
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            {header}
+                            {field ? (
+                              <LateralMasterColumnFilter
+                                field={field}
+                                selectedValues={columnFilters?.[header] ?? []}
+                                textValue={textFilters?.[header] ?? ""}
+                                dateValue={dateFilters?.[header] ?? {}}
+                                onToggleValue={(value) =>
+                                  onToggleColumnValue?.(header, value)
+                                }
+                                onClearColumn={() => onClearColumn?.(header)}
+                                onTextChange={(value) =>
+                                  onTextChange?.(header, value)
+                                }
+                                onDateChange={(range) =>
+                                  onDateChange?.(header, range)
+                                }
                               />
-                            ) : isMustHave ? (
-                              <TruncatedActionCell
-                                preview={display}
-                                title="Click to view full Must Have skills"
-                                ariaLabel="View full Must Have skills"
-                                onOpen={() => openMustHaveForRow(row)}
-                              />
-                            ) : (
-                              <span
-                                className={cn(
-                                  "line-clamp-3 break-words",
-                                  isNumeric &&
-                                    "font-semibold tabular-nums text-primary",
-                                  isDateCol && "tabular-nums"
-                                )}
-                                title={display}
-                              >
-                                {display}
-                              </span>
-                            )}
-                          </TableCell>
-                        );
-                      })}
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell
-                      colSpan={Math.max(headers.length, 1)}
-                      className="h-28 text-center text-muted-foreground"
-                    >
-                      No Master Sheet rows match the current filters.
-                    </TableCell>
+                            ) : null}
+                          </span>
+                        </TableHead>
+                      );
+                    })}
                   </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <p className="text-sm text-muted-foreground">
-              Showing{" "}
-              <span className="font-medium text-foreground">{start}</span>–
-              <span className="font-medium text-foreground">{end}</span> of{" "}
-              <span className="font-medium text-foreground">{total}</span>
-            </p>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">
-                  Rows per page
-                </span>
-                <Select
-                  value={String(pageSize)}
-                  onValueChange={(value) => {
-                    const next = Number(value) as ExecutiveMasterPageSize;
-                    onPageSizeChange(
-                      EXECUTIVE_MASTER_PAGE_SIZE_OPTIONS.includes(next)
-                        ? next
-                        : DEFAULT_EXECUTIVE_MASTER_PAGE_SIZE
-                    );
-                  }}
+                </TableHeader>
+                <TableBody
+                  className={cn(
+                    "transition-opacity",
+                    isFetching &&
+                      !isLoading &&
+                      "pointer-events-none opacity-50"
+                  )}
                 >
-                  <SelectTrigger className="h-9 w-[100px] rounded-lg">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {EXECUTIVE_MASTER_PAGE_SIZE_OPTIONS.map((size) => (
-                      <SelectItem key={size} value={String(size)}>
-                        {size}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-lg"
-                  onClick={() => onPageChange(Math.max(1, page - 1))}
-                  disabled={page <= 1 || total === 0}
-                >
-                  Previous
-                </Button>
-                <span className="min-w-16 text-center text-sm text-muted-foreground">
-                  {total === 0 ? 0 : page} / {Math.max(pageCount, 1)}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-lg"
-                  onClick={() => onPageChange(page + 1)}
-                  disabled={page >= pageCount || total === 0}
-                >
-                  Next
-                </Button>
-              </div>
+                  {rows.length > 0 ? (
+                    rows.map((row) => (
+                      <TableRow
+                        key={String(row.id)}
+                        className="hover:bg-accent/40"
+                      >
+                        {headers.map((header) => {
+                          const value =
+                            row[header as keyof ExecutiveMasterSheetRow];
+                          const display = formatCellValue(
+                            header,
+                            value as string | number | null | undefined
+                          );
+                          const isDateCol = isExcelDateColumnHeader(header);
+                          const isJobDesc =
+                            isExecutiveJobDescriptionColumn(header);
+                          const isMustHave =
+                            isExecutiveMustHaveSkillsColumn(header);
+                          const isNumeric =
+                            typeof value === "number" &&
+                            !isDateCol &&
+                            !isJobDesc &&
+                            !isMustHave &&
+                            !formatExcelDateDdMmYyyy(value);
+                          return (
+                            <TableCell
+                              key={`${row.id}-${header}`}
+                              className="max-w-[280px] px-3 py-3"
+                            >
+                              {isJobDesc ? (
+                                <JobDescriptionCell
+                                  preview={display}
+                                  onOpen={() => openJobDescriptionForRow(row)}
+                                />
+                              ) : isMustHave ? (
+                                <TruncatedActionCell
+                                  preview={display}
+                                  title="Click to view full Must Have skills"
+                                  ariaLabel="View full Must Have skills"
+                                  onOpen={() => openMustHaveForRow(row)}
+                                />
+                              ) : (
+                                <span
+                                  className={cn(
+                                    "line-clamp-3 break-words",
+                                    isNumeric &&
+                                      "font-semibold tabular-nums text-primary",
+                                    isDateCol && "tabular-nums"
+                                  )}
+                                  title={display}
+                                >
+                                  {display}
+                                </span>
+                              )}
+                            </TableCell>
+                          );
+                        })}
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell
+                        colSpan={Math.max(headers.length, 1)}
+                        className="h-28 text-center text-muted-foreground"
+                      >
+                        No Master Sheet rows match the current filters.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </table>
             </div>
           </div>
+
+          <MasterSheetPaginationBar
+            variant="full"
+            total={total}
+            page={page}
+            pageSize={pageSize}
+            pageCount={pageCount}
+            pageSizeOptions={EXECUTIVE_MASTER_PAGE_SIZE_OPTIONS}
+            defaultPageSize={DEFAULT_EXECUTIVE_MASTER_PAGE_SIZE}
+            onPageChange={onPageChange}
+            onPageSizeChange={(size) =>
+              onPageSizeChange(size as ExecutiveMasterPageSize)
+            }
+          />
         </>
       )}
     </div>

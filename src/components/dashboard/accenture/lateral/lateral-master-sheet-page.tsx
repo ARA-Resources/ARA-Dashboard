@@ -12,8 +12,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { LateralMasterSheetTable } from "@/components/dashboard/accenture/lateral/lateral-master-sheet-table";
+import { MasterSheetPaginationBar } from "@/components/dashboard/accenture/master-sheet-pagination-bar";
+import { MASTER_SHEET_DEFAULT_COLUMN_FILTERS } from "@/constants/default-filters";
 import {
   DEFAULT_LATERAL_MASTER_PAGE_SIZE,
+  LATERAL_MASTER_PAGE_SIZE_OPTIONS,
   type LateralMasterDateFilter,
   type LateralMasterPageSize,
 } from "@/services/excel/lateral-master-sheet";
@@ -107,10 +110,16 @@ export function LateralMasterSheetPage() {
   const [pageSize, setPageSize] = React.useState<LateralMasterPageSize>(
     DEFAULT_LATERAL_MASTER_PAGE_SIZE
   );
-  // Seed once from navigation params (dashboard pivot → "show this skill").
+  // Job Status / Posted default to the same preselection as the Dashboard
+  // pivot on every load (never persisted). A pivot-click navigation ("show
+  // this skill") seeds specific columns via URL params — those are spread on
+  // top so an incoming click always overrides the generic default.
   const [columnFilters, setColumnFilters] = React.useState<
     Record<string, string[]>
-  >(() => readIncomingColumnFilters(new URLSearchParams(searchParams.toString())));
+  >(() => ({
+    ...MASTER_SHEET_DEFAULT_COLUMN_FILTERS,
+    ...readIncomingColumnFilters(new URLSearchParams(searchParams.toString())),
+  }));
   const [textFilters, setTextFilters] = React.useState<Record<string, string>>(
     {}
   );
@@ -546,7 +555,26 @@ export function LateralMasterSheetPage() {
 
       <FadeIn>
         <Card className="overflow-hidden border-border/70 shadow-sm">
-          <CardHeader className="sr-only">Master Sheet table</CardHeader>
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 py-3">
+            <p className="text-sm font-semibold text-foreground">
+              Master Sheet
+            </p>
+            {data && data.total > 0 ? (
+              <MasterSheetPaginationBar
+                variant="compact"
+                total={data.total}
+                page={page}
+                pageSize={pageSize}
+                pageCount={data.pageCount ?? 1}
+                pageSizeOptions={LATERAL_MASTER_PAGE_SIZE_OPTIONS}
+                defaultPageSize={DEFAULT_LATERAL_MASTER_PAGE_SIZE}
+                onPageChange={setPage}
+                onPageSizeChange={(size) =>
+                  setPageSize(size as LateralMasterPageSize)
+                }
+              />
+            ) : null}
+          </CardHeader>
           <CardContent className="p-0">
             <LateralMasterSheetTable
               headers={data?.headers ?? []}
