@@ -11,6 +11,7 @@ import {
   Mail,
   Settings,
   Shield,
+  Table2,
   UserRound,
   Users,
   UserCog,
@@ -134,6 +135,12 @@ export const CANDIDATE_MODULES: NavLeaf[] = [
     label: "Dashboard",
     href: "/candidate/dashboard",
     icon: LayoutDashboard,
+  },
+  {
+    id: "candidate:master-sheet",
+    label: "Master Sheet",
+    href: "/candidate/master-sheet",
+    icon: Table2,
   },
 ];
 
