@@ -1,15 +1,14 @@
 /**
- * Roles a super_admin may invite or assign to another user.
- *
- * `viewer` is deliberately excluded — viewer accounts are created ONLY through
- * public signup (see /api/auth/signup + the invite rule). Same list drives the
- * invite role picker and the change-role dropdown.
+ * Roles a super_admin may invite or assign to another user — all four roles,
+ * including `viewer`. Drives both the invite role picker and the change-role
+ * dropdown for existing users.
  *
  * Pure / isomorphic — safe to import from client components.
  */
 import type { Role } from "@/lib/auth/roles";
 
 export const ASSIGNABLE_ROLES = [
+  "viewer",
   "editor",
   "admin",
   "super_admin",

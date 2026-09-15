@@ -1,9 +1,9 @@
 /**
  * PostgreSQL-backed invite store (Phase 3).
  *
- * Two deliberately isolated doors into the system:
- *   - public signup → ALWAYS role 'viewer'                (src/lib/auth/users-db.ts)
- *   - invite        → 'editor' | 'admin' | 'super_admin', issued by a super_admin
+ * Invites may grant any of the four roles (including 'viewer'), issued by a
+ * super_admin. This is the only way any account is created — public signup
+ * (formerly POST /api/auth/signup) has been removed.
  *
  * The `invites` table (migration 006) columns used here:
  *   email, role, token (UNIQUE), expires_at, used_at, created_by.
@@ -15,8 +15,8 @@ import { getDbClient } from "@/lib/persistence/db-client";
 import { hashPassword } from "@/lib/auth/passwords";
 import { isRole, type Role } from "@/lib/auth/roles";
 
-/** Roles that may be granted via an invite. 'viewer' is public signup's job. */
-export const INVITABLE_ROLES = ["editor", "admin", "super_admin"] as const;
+/** Roles that may be granted via an invite — all four roles. */
+export const INVITABLE_ROLES = ["viewer", "editor", "admin", "super_admin"] as const;
 export type InvitableRole = (typeof INVITABLE_ROLES)[number];
 
 export function isInvitableRole(value: unknown): value is InvitableRole {
@@ -109,8 +109,7 @@ export async function createInvite(input: {
     throw inviteError(
       "ROLE_INVALID",
       400,
-      "Invite role must be one of: editor, admin, super_admin. " +
-        "viewer accounts are created through public signup, not invites."
+      "Invite role must be one of: viewer, editor, admin, super_admin."
     );
   }
 
@@ -207,7 +206,7 @@ export async function findPendingInvite(
     };
   }
   const role = isRole(row.role) ? row.role : null;
-  if (!role || role === "viewer") {
+  if (!role) {
     return {
       ok: false,
       code: "INVITE_INVALID",
@@ -269,7 +268,7 @@ export async function acceptInvite(input: {
       );
     }
     const role = isRole(invite.role) ? (invite.role as Role) : null;
-    if (!role || role === "viewer") {
+    if (!role) {
       throw inviteError(
         "INVITE_INVALID",
         400,

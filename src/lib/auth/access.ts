@@ -44,7 +44,6 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
   if (path === "/login" || path === "/logout") return "public";
   if (path === "/api/health" && isRead) return "public";
   if (path === "/api/auth/login" && (isRead || verb === "POST")) return "public";
-  if (path === "/api/auth/signup" && verb === "POST") return "public";
   // Phase 3 — invite acceptance. The invited person has no session yet; the
   // token in the URL/body is the credential. The handler validates it.
   if (path === "/accept-invite") return "public";

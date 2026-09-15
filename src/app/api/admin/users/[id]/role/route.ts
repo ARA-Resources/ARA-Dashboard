@@ -2,9 +2,8 @@
  * PATCH /api/admin/users/:id/role — change a user's role (super_admin only)
  *
  * Phase 4. Same gate as every /api/admin/* route (authorizeRequest → super_admin).
- * Body: { "role": "editor" | "admin" | "super_admin" }  — "viewer" is rejected
- * (signup-only, matches the invite rule). A super_admin cannot change their own
- * role (guard in updateUserRole).
+ * Body: { "role": "viewer" | "editor" | "admin" | "super_admin" }. A super_admin
+ * cannot change their own role (guard in updateUserRole).
  */
 import { NextResponse } from "next/server";
 import { authorizeRequest } from "@/lib/auth/dal";

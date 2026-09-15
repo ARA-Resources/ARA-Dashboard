@@ -9,7 +9,7 @@
 | Method + path | Min role | Body | Response |
 |---|---|---|---|
 | `GET /api/admin/users` | **super_admin** | — | `{ ok, users: [{ id, email, role, active, displayName, avatarColor, lastLoginAt, createdAt, isSelf }] }` |
-| `PATCH /api/admin/users/:id/role` | **super_admin** | `{ role: "editor"｜"admin"｜"super_admin" }` | `{ ok, user }` · 400 `ROLE_INVALID` (incl. `viewer`) / `SELF_ROLE_CHANGE` · 404 `USER_NOT_FOUND` |
+| `PATCH /api/admin/users/:id/role` | **super_admin** | `{ role: "viewer"｜"editor"｜"admin"｜"super_admin" }` | `{ ok, user }` · 400 `ROLE_INVALID` / `SELF_ROLE_CHANGE` · 404 `USER_NOT_FOUND` |
 | `PATCH /api/admin/users/:id/active` | **super_admin** | `{ active: boolean }` | `{ ok, user }` · 400 `SELF_DEACTIVATE` / `BAD_REQUEST` · 404 `USER_NOT_FOUND` |
 | `POST /api/auth/change-password` | **viewer** (own account) | `{ currentPassword, newPassword, confirmPassword? }` | `{ ok, message }` + fresh `Set-Cookie` · 400 `CURRENT_PASSWORD_WRONG` / `SAME_PASSWORD` / `VALIDATION` |
 | `POST /api/auth/profile` | **viewer** (own account) | `{ displayName?: string｜null, avatarColor?: string｜null }` | `{ ok, profile: { displayName, avatarColor } }` · 400 `AVATAR_COLOR_INVALID` / `DISPLAY_NAME_TOO_LONG` |
@@ -49,9 +49,15 @@ URL still 307s a viewer to `/home`; every `/api/admin/*` call still 403s.
 `/admin` renders `<ManageUsers />` **only for super_admin** (an admin sees a
 generic card). It wraps the existing endpoints: users table (role `Select` +
 Deactivate/Reactivate button, self-row locked), create-invite form (role picker
-`editor｜admin｜super_admin`, shows the `acceptUrl` with a Copy button), and the
-invites list (`GET /api/admin/invites`). No new "backend logic" — it calls
-Phase 3/4 endpoints.
+`viewer｜editor｜admin｜super_admin`, shows the `acceptUrl` with a Copy button),
+and the invites list (`GET /api/admin/invites`). No new "backend logic" — it
+calls Phase 3/4 endpoints.
+
+> **Update (auth account-creation change)**: `viewer` is no longer a special
+> case — it's assignable via both the create-invite role picker and the
+> change-role `Select` for existing users, same as every other role. Public
+> signup (`POST /api/auth/signup`) has been removed entirely; invite is now
+> the only way any account, including `viewer`, is created.
 
 ## Settings UI
 

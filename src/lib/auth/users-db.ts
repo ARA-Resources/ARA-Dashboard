@@ -7,7 +7,7 @@
  * in Next.js 16).
  */
 import { getDbClient } from "@/lib/persistence/db-client";
-import { hashPassword, verifyPasswordHash } from "@/lib/auth/passwords";
+import { verifyPasswordHash } from "@/lib/auth/passwords";
 import { isRole, LEAST_PRIVILEGED_ROLE, type Role } from "@/lib/auth/roles";
 
 export type AuthUser = {
@@ -111,32 +111,6 @@ export async function verifyLoginCredentials(
 export async function recordLogin(userId: string): Promise<void> {
   const sql = getDbClient();
   await sql`UPDATE users SET last_login_at = NOW() WHERE id = ${userId}`;
-}
-
-/**
- * Create a self-service (public signup) account. Always role 'viewer'.
- * Phase 3 will add invite-gating / hardening — this is just the transitional
- * PG write so signup keeps working now that login is PG-only.
- */
-export async function createSignupUser(input: {
-  email: string;
-  password: string;
-}): Promise<AuthUser> {
-  const email = normalizeEmail(input.email);
-  const passwordHash = await hashPassword(input.password);
-  const sql = getDbClient();
-  const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO users (email, password_hash, role, active)
-    VALUES (${email}, ${passwordHash}, 'viewer', TRUE)
-    ON CONFLICT (email) DO NOTHING
-    RETURNING id, email, role, active, password_hash, display_name, avatar_url
-  `;
-  if (rows.length === 0) {
-    const error = new Error("An account with this email already exists.");
-    (error as Error & { code?: string }).code = "USER_EXISTS";
-    throw error;
-  }
-  return rowToAuthUser(rows[0]!);
 }
 
 /* ------------------------------------------------------------------ *

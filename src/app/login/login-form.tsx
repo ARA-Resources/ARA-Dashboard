@@ -13,16 +13,12 @@ import {
 } from "@/components/ui/card";
 import { apiFetch } from "@/lib/api/client";
 
-type AuthMode = "signin" | "signup";
-
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = searchParams.get("next") || "/home";
-  const [mode, setMode] = useState<AuthMode>("signin");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [pending, setPending] = useState(false);
@@ -37,38 +33,20 @@ export function LoginForm() {
       .catch(() => setConfigured(false));
   }, []);
 
-  function switchMode(next: AuthMode) {
-    setMode(next);
-    setError(null);
-    setPassword("");
-    setConfirmPassword("");
-  }
-
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
 
-    if (mode === "signup" && password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
-
     setPending(true);
     try {
-      const res = await apiFetch(
-        mode === "signup" ? "/api/auth/signup" : "/api/auth/login",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, password }),
-        }
-      );
+      const res = await apiFetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) {
-        setError(
-          data.error ||
-            (mode === "signup" ? "Sign-up failed." : "Sign-in failed.")
-        );
+        setError(data.error || "Sign-in failed.");
         return;
       }
       const safeNext =
@@ -78,22 +56,18 @@ export function LoginForm() {
       router.replace(safeNext);
       router.refresh();
     } catch {
-      setError(mode === "signup" ? "Sign-up failed." : "Sign-in failed.");
+      setError("Sign-in failed.");
     } finally {
       setPending(false);
     }
   }
 
-  const isSignup = mode === "signup";
-
   return (
     <Card className="w-full max-w-md shadow-sm">
       <CardHeader>
-        <CardTitle>{isSignup ? "Create account" : "Sign in"}</CardTitle>
+        <CardTitle>Sign in</CardTitle>
         <CardDescription>
-          {isSignup
-            ? "Create an account with your @araresources.com email to continue."
-            : "Sign in with your ARA Resources account to continue."}
+          Sign in with your ARA Resources account to continue.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -120,47 +94,18 @@ export function LoginForm() {
               <Input
                 name="password"
                 type="password"
-                autoComplete={isSignup ? "new-password" : "current-password"}
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
             </label>
-            {isSignup ? (
-              <label className="flex flex-col gap-1 text-sm">
-                Confirm password
-                <Input
-                  name="confirmPassword"
-                  type="password"
-                  autoComplete="new-password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                />
-              </label>
-            ) : null}
             {error ? (
               <p className="text-sm text-destructive">{error}</p>
             ) : null}
             <Button type="submit" disabled={pending || configured === null}>
-              {pending
-                ? isSignup
-                  ? "Creating account…"
-                  : "Signing in…"
-                : isSignup
-                  ? "Sign up"
-                  : "Sign in"}
+              {pending ? "Signing in…" : "Sign in"}
             </Button>
-            <p className="text-center text-sm text-muted-foreground">
-              {isSignup ? "Already have an account?" : "Need an account?"}{" "}
-              <button
-                type="button"
-                className="text-foreground underline-offset-4 hover:underline"
-                onClick={() => switchMode(isSignup ? "signin" : "signup")}
-              >
-                {isSignup ? "Sign in" : "Sign up"}
-              </button>
-            </p>
           </form>
         )}
       </CardContent>

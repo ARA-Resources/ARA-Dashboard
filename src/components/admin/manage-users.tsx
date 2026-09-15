@@ -190,7 +190,7 @@ function UsersTable() {
                   </div>
                 </TableCell>
                 <TableCell>
-                  {u.role === "viewer" || u.isSelf ? (
+                  {u.isSelf ? (
                     <Badge variant="secondary">{u.role}</Badge>
                   ) : (
                     <Select
@@ -244,7 +244,6 @@ function UsersTable() {
       </Table>
       <p className="mt-3 text-xs text-muted-foreground">
         Role changes and deactivation take effect within ~10s (no logout needed).
-        <code className="ml-1">viewer</code> is assigned only by public signup.
       </p>
     </div>
   );
@@ -452,8 +451,8 @@ export function ManageUsers() {
         <CardHeader>
           <CardTitle>Invite a teammate</CardTitle>
           <CardDescription>
-            Creates a single-use link (7-day expiry). viewer accounts come from
-            public signup, so only editor / admin / super_admin can be invited.
+            Creates a single-use link (7-day expiry). Any role, including
+            viewer, can be invited.
           </CardDescription>
         </CardHeader>
         <CardContent>

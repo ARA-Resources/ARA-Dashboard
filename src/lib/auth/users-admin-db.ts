@@ -92,7 +92,7 @@ async function fetchSummary(userId: string): Promise<UserSummary | null> {
 
 /**
  * Change another user's role. super_admin only.
- *  - 'viewer' cannot be assigned here (signup-only, matches the invite rule).
+ *  - any of the four roles (including 'viewer') may be assigned.
  *  - a super_admin cannot change their OWN role (avoids self-lockout from
  *    user management).
  */
@@ -105,8 +105,7 @@ export async function updateUserRole(input: {
     throw adminError(
       "ROLE_INVALID",
       400,
-      "Role must be one of: editor, admin, super_admin. " +
-        "viewer accounts are created through public signup, not assigned here."
+      "Role must be one of: viewer, editor, admin, super_admin."
     );
   }
   if (input.targetUserId === input.actingUserId) {

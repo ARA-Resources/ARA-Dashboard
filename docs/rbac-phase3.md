@@ -1,5 +1,13 @@
 # RBAC — Phase 3 (Signup lock, invites, bootstrap)
 
+> **Superseded**: public self-signup (`POST /api/auth/signup`, the "two doors"
+> model below) was removed. Invite (`POST /api/admin/invites`) is now the only
+> way any account — including `viewer` — is created. This doc is kept as a
+> historical record of the invite system's original design; the invite
+> endpoints/token/expiry mechanics described below are still accurate, the
+> "Two isolated doors" framing and the `viewer`-is-never-invitable rule are not.
+> See `docs/rbac-phase4.md` for the current `PATCH .../role` contract.
+>
 > Phase 1 = data layer. Phase 2 = login + access checks on Postgres, 4 roles.
 > Phase 3 (this doc) = the two ways an account comes into existence.
 > Phase 4 (NOT in this phase) = the "Manage Users" UI for issuing invites.
@@ -52,9 +60,9 @@ Request body:
 }
 ```
 
-Failure codes: `EMAIL_INVALID` (400), `ROLE_INVALID` (400 — includes trying to
-invite a `viewer`), `USER_EXISTS` (409), `INSUFFICIENT_ROLE` (403),
-`UNAUTHENTICATED` (401).
+Failure codes: `EMAIL_INVALID` (400), `ROLE_INVALID` (400 — role must be one of
+`viewer`/`editor`/`admin`/`super_admin`), `USER_EXISTS` (409),
+`INSUFFICIENT_ROLE` (403), `UNAUTHENTICATED` (401).
 
 Creating an invite for an email that already has a live unused invite
 **supersedes** it (the old token stops working).
