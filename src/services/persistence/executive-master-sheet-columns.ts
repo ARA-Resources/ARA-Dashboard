@@ -21,17 +21,17 @@
 export const EXECUTIVE_MASTER_EXCEL_HEADERS = [
   "Date",
   "Job Requisition ID",
-  "Market Map",
   "Primary Skills",
-  "Primary Location",
   "Job Management Level",
-  "Must Have Skills",
-  "Location Flex",
   "Skill Categorization",
   "Job Description",
+  "Primary Location",
+  "Market Map",
+  "Priority",
+  "Location Flex",
+  "Must Have Skills",
   "Job Status",
   "Posted",
-  "Priority",
 ] as const;
 
 export type ExecutiveMasterExcelHeader =
