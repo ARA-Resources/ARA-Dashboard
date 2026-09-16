@@ -4,15 +4,14 @@ import {
   ensureLateralSchedulerStarted,
   getLateralProcessingStatusView,
   getLateralSchedulerStatus,
-  invokeLateralJob,
   pauseLateralScheduler,
   reloadLateralScheduler,
   resumeLateralScheduler,
+  startLateralJobAsync,
   updateLateralScheduler,
 } from "@/services/lateral-processing/lateral-scheduler";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
 
 export async function GET(request: Request) {
   const gate = await authorizeRequest(request);
@@ -32,7 +31,15 @@ export async function GET(request: Request) {
 
 /**
  * POST actions: reload | pause | resume | run_now | update
- * Run Now and the daily cron both call invokeLateralJob → executeLateralDatasetJob.
+ * The daily cron calls invokeLateralJob → executeLateralDatasetJob and awaits
+ * it fully (in-process node-cron callback, no HTTP round-trip to time out).
+ * Run Now instead calls startLateralJobAsync, which starts the same job and
+ * returns immediately — the job's progress and eventual outcome are read
+ * back via GET polling (the same live status this route's GET returns),
+ * not via this POST's response. This avoids the reverse proxy's
+ * proxy_read_timeout killing the connection long before the ~5-6 minute job
+ * finishes, which previously caused the UI to report failure on a run that
+ * was actually still succeeding in the background.
  */
 export async function POST(request: Request) {
   const gate = await authorizeRequest(request);
@@ -50,12 +57,11 @@ export async function POST(request: Request) {
 
   try {
     if (action === "run_now") {
-      const result = await invokeLateralJob("manual");
-      const processing = await getLateralProcessingStatusView();
-      return NextResponse.json({
-        status: { ...result.status, processing },
-        outcome: result.outcome,
-      });
+      const result = await startLateralJobAsync("manual");
+      if (!result.ok) {
+        return NextResponse.json({ error: result.message }, { status: 400 });
+      }
+      return NextResponse.json({ ok: true, started: true, startedAt: new Date().toISOString() });
     }
 
     if (action === "pause") {

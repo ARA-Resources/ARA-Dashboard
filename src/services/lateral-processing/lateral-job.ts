@@ -28,7 +28,7 @@ import type {
 
 async function logJobFailure(failure: LateralStageFailure): Promise<void> {
   const entry = formatLateralFailureForLog(failure);
-  // Always emit to stdout — Vercel captures this in log drain.
+  // Always emit to stdout — captured by the container's log driver.
   console.error("[lateral-job] failure", JSON.stringify(entry));
   // In file mode also write to disk for local audit trail.
   try {

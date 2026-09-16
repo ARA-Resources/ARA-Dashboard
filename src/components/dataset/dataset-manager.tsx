@@ -331,26 +331,86 @@ export function DatasetManager() {
     message: string;
   } | null>(null);
   const [schedulerRefreshKey, setSchedulerRefreshKey] = React.useState(0);
+  // Sentinel (not a real timestamp) so the very first poll's lastRunAt is
+  // always treated as "new" — a run that finished before this page loaded
+  // still surfaces its outcome as soon as we learn about it.
+  const lastSeenLateralRunAtRef = React.useRef<string | null>("__init__");
+
+  const refreshCurrentDatasetsAndFolderStats = React.useCallback(async () => {
+    const currentRes = await apiFetch("/api/dataset/current");
+    const currentPayload = (await currentRes.json().catch(() => null)) as {
+      datasets?: Array<{
+        datasetName: string;
+        businessUnitId: string;
+        fileName: string;
+        filePath: string;
+        updatedAt: string;
+        size: number;
+      }>;
+    } | null;
+    const nextCurrent: typeof currentByDataset = {};
+    for (const item of currentPayload?.datasets ?? []) {
+      nextCurrent[item.datasetName] = {
+        fileName: item.fileName,
+        filePath: item.filePath,
+        updatedAt: item.updatedAt,
+        size: item.size,
+        businessUnitId: item.businessUnitId,
+      };
+    }
+    setCurrentByDataset(nextCurrent);
+    await refreshFolderStats();
+  }, []);
 
   const refreshLateralJobStatus = React.useCallback(async () => {
     const response = await fetch("/api/dataset/lateral/scheduler");
     const payload = (await response.json().catch(() => null)) as {
       running?: boolean;
       error?: string;
+      lastRunAt?: string | null;
+      lastRunStatus?: "success" | "partial" | "failed" | null;
+      lastRunMessage?: string | null;
+      lastRunSummary?: {
+        failureReason?: string | null;
+        noNewSource?: boolean;
+      } | null;
       processing?: { runProgress?: LateralRunProgressSnapshot | null };
     } | null;
-    if (response.ok) {
-      setLateralJobRunning(Boolean(payload?.running));
-      setLateralRunProgress(payload?.processing?.runProgress ?? null);
+    if (!response.ok) return payload;
+
+    setLateralJobRunning(Boolean(payload?.running));
+    setLateralRunProgress(payload?.processing?.runProgress ?? null);
+
+    // Single reconciliation point for the outcome banner: both it and the
+    // live progress panel are now derived from this one poll response, so
+    // they cannot disagree with each other the way the old one-shot fetch
+    // vs. live-polling split could.
+    const freshLastRunAt = payload?.lastRunAt ?? null;
+    if (freshLastRunAt && freshLastRunAt !== lastSeenLateralRunAtRef.current) {
+      lastSeenLateralRunAtRef.current = freshLastRunAt;
+      const failed = payload?.lastRunStatus === "failed";
+      const noNewSource = payload?.lastRunSummary?.noNewSource === true;
+      setRunAllFeedback({
+        kind: failed ? "error" : "success",
+        message: failed
+          ? payload?.lastRunSummary?.failureReason ||
+            payload?.lastRunMessage ||
+            "Lateral Run All failed."
+          : noNewSource
+            ? payload?.lastRunMessage || "Lateral processing finished."
+            : "Run completed successfully.",
+      });
+      setSchedulerRefreshKey((key) => key + 1);
+      if (!failed) {
+        void refreshCurrentDatasetsAndFolderStats();
+      }
     }
     return payload;
-  }, []);
+  }, [refreshCurrentDatasetsAndFolderStats]);
 
   async function runAllLateralProcessing() {
     setRunAllBusy(true);
     setRunAllFeedback(null);
-    setLateralJobRunning(true);
-    void refreshLateralJobStatus().catch(() => undefined);
     try {
       const response = await fetch("/api/dataset/lateral/scheduler", {
         method: "POST",
@@ -359,52 +419,34 @@ export function DatasetManager() {
       });
       const payload = (await response.json().catch(() => null)) as {
         error?: string;
-        outcome?: { message?: string; status?: string };
       } | null;
       if (!response.ok) {
-        throw new Error(payload?.error ?? "Run All failed.");
+        // A real, immediate rejection (already running, lock unavailable,
+        // setup missing) — legitimate to show right away. This is not the
+        // pipeline's outcome; the pipeline hasn't started.
+        setRunAllFeedback({
+          kind: "error",
+          message: payload?.error ?? "Could not start Run All.",
+        });
+        return;
       }
-      const outcomeStatus = payload?.outcome?.status;
-      const message =
-        payload?.outcome?.message ?? "Lateral processing finished.";
-      setRunAllFeedback({
-        kind: outcomeStatus === "failed" ? "error" : "success",
-        message,
-      });
-      setSchedulerRefreshKey((key) => key + 1);
-      const currentRes = await apiFetch("/api/dataset/current");
-      const currentPayload = (await currentRes.json().catch(() => null)) as {
-        datasets?: Array<{
-          datasetName: string;
-          businessUnitId: string;
-          fileName: string;
-          filePath: string;
-          updatedAt: string;
-          size: number;
-        }>;
-      } | null;
-      const nextCurrent: typeof currentByDataset = {};
-      for (const item of currentPayload?.datasets ?? []) {
-        nextCurrent[item.datasetName] = {
-          fileName: item.fileName,
-          filePath: item.filePath,
-          updatedAt: item.updatedAt,
-          size: item.size,
-          businessUnitId: item.businessUnitId,
-        };
-      }
-      setCurrentByDataset(nextCurrent);
-      await refreshFolderStats();
+      // Started. The eventual success/failure banner comes from
+      // refreshLateralJobStatus's polling loop below — not from this
+      // response — so it's always driven by the same live state as the
+      // progress panel.
+      setLateralJobRunning(true);
+      void refreshLateralJobStatus().catch(() => undefined);
     } catch (error) {
       setRunAllFeedback({
         kind: "error",
         message:
-          error instanceof Error ? error.message : "Run All failed unexpectedly.",
+          error instanceof Error
+            ? error.message
+            : "Could not start Run All.",
       });
     } finally {
       setRunAllBusy(false);
       setRunAllConfirm(false);
-      await refreshLateralJobStatus().catch(() => undefined);
     }
   }
 

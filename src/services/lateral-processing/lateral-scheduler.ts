@@ -406,29 +406,17 @@ async function runLateralScheduledTick(timezone: string) {
 }
 
 /**
- * Shared entry for cron + Run Now.
- *
- * For postgres mode: acquires a PostgreSQL pg_advisory_lock before
- * starting the job. If another worker already holds the lock, throws
- * with a "already running" message — identical to the in-memory `running`
- * guard used in file mode.
+ * Runs the Lateral job body and persists its outcome (scheduler state +
+ * sync history). Assumes the caller already holds the `running` guard and
+ * the advisory lock — this function's only job is to run, persist, and
+ * release. Shared by both the awaited (`invokeLateralJob`) and detached
+ * (`startLateralJobAsync`) entry points so there is exactly one
+ * implementation of "run + persist + release".
  */
-export async function invokeLateralJob(
-  trigger: "scheduler" | "manual"
-): Promise<{
-  status: LateralSchedulerStatus;
-  outcome: Awaited<ReturnType<typeof executeLateralDatasetJob>>;
-}> {
-  if (running) {
-    throw new Error("Lateral Dataset Sync is already running.");
-  }
-
-  const lock = await acquireLateralJobLock();
-  if (!lock.acquired) {
-    throw new Error(lock.message);
-  }
-
-  running = true;
+async function runAndPersistLateralJob(
+  trigger: "scheduler" | "manual",
+  lock: { release: () => Promise<void> }
+): Promise<Awaited<ReturnType<typeof executeLateralDatasetJob>>> {
   try {
     console.info(`[lateral-scheduler] Starting Lateral job (${trigger})`);
     const outcome = await executeLateralDatasetJob(trigger);
@@ -519,14 +507,135 @@ export async function invokeLateralJob(
     });
 
     console.info(`[lateral-scheduler] ${outcome.message}`);
-    return {
-      status: await getLateralSchedulerStatus(),
-      outcome,
-    };
+    return outcome;
   } finally {
     running = false;
     await lock.release();
   }
+}
+
+/**
+ * Persists a synthetic failure record for an unexpected throw out of
+ * `executeLateralDatasetJob` itself (a real bug, not a normal classified
+ * pipeline failure). Only reachable from the detached path — the awaited
+ * path (`invokeLateralJob`) instead lets such a throw propagate to its
+ * caller, which is how it's always behaved.
+ */
+async function persistUnexpectedLateralJobCrash(
+  trigger: "scheduler" | "manual",
+  error: unknown
+): Promise<void> {
+  const message =
+    error instanceof Error ? error.message : "Lateral Dataset Sync crashed unexpectedly.";
+  const ranAt = new Date().toISOString();
+  console.error("[lateral-scheduler] Unhandled error in detached run", error);
+  try {
+    await writeLateralSchedulerConfig({
+      lastRunAt: ranAt,
+      lastRunStatus: "failed",
+      lastRunMessage: message,
+      lastDurationMs: 0,
+      lastTrigger: trigger,
+      lastRunSummary: {
+        result: "failed",
+        ranAt,
+        trigger,
+        sourceFilename: null,
+        adhocDsDate: null,
+        adhocDsDateLabel: "No new Adhoc DS on last run",
+        failureReason: message,
+        noNewSource: false,
+        counts: null,
+      },
+    });
+    await appendLateralSyncHistory({
+      syncTime: ranAt,
+      sourceEmail: "—",
+      originalFilename: "—",
+      googleDriveFileId: "—",
+      rowsImported: 0,
+      newCount: 0,
+      activeCount: 0,
+      reopenCount: 0,
+      closedCount: 0,
+      result: "Failed",
+      error: message,
+      trigger,
+      durationMs: 0,
+    });
+  } catch (persistErr) {
+    console.error(
+      "[lateral-scheduler] Failed to persist unexpected-crash record",
+      persistErr
+    );
+  }
+}
+
+/**
+ * Shared entry for cron + Run Now.
+ *
+ * For postgres mode: acquires a PostgreSQL pg_advisory_lock before
+ * starting the job. If another worker already holds the lock, throws
+ * with a "already running" message — identical to the in-memory `running`
+ * guard used in file mode.
+ *
+ * Awaits the full job. Used by the daily cron tick, which is an in-process
+ * callback with no HTTP round-trip and no timeout concerns. Manual "Run
+ * All" instead uses `startLateralJobAsync` below, which returns as soon as
+ * the job has started rather than waiting for it to finish.
+ */
+export async function invokeLateralJob(
+  trigger: "scheduler" | "manual"
+): Promise<{
+  status: LateralSchedulerStatus;
+  outcome: Awaited<ReturnType<typeof executeLateralDatasetJob>>;
+}> {
+  if (running) {
+    throw new Error("Lateral Dataset Sync is already running.");
+  }
+
+  const lock = await acquireLateralJobLock();
+  if (!lock.acquired) {
+    throw new Error(lock.message);
+  }
+
+  running = true;
+  const outcome = await runAndPersistLateralJob(trigger, lock);
+  return {
+    status: await getLateralSchedulerStatus(),
+    outcome,
+  };
+}
+
+/**
+ * Non-blocking entry for manual "Run All": acquires the same guard + lock
+ * as `invokeLateralJob`, then fires the job body without awaiting it, so
+ * the caller (the API route) can respond immediately instead of holding
+ * the HTTP connection open for the job's full 5+ minute duration. Progress
+ * and final outcome are read back separately via `getLateralSchedulerStatus`
+ * / `getLateralProcessingStatusView` polling — the same mechanism already
+ * used to drive the live progress panel.
+ */
+export async function startLateralJobAsync(
+  trigger: "scheduler" | "manual"
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (running) {
+    return { ok: false, message: "Lateral Dataset Sync is already running." };
+  }
+
+  const lock = await acquireLateralJobLock();
+  if (!lock.acquired) {
+    return { ok: false, message: lock.message };
+  }
+
+  running = true;
+  void runAndPersistLateralJob(trigger, lock).catch((error) => {
+    // runAndPersistLateralJob's own finally already reset `running` and
+    // released the lock even on this path — only the outcome persistence
+    // (which happens *inside* the try, before the throw) was skipped.
+    void persistUnexpectedLateralJobCrash(trigger, error);
+  });
+  return { ok: true };
 }
 
 export async function reloadLateralScheduler(): Promise<LateralSchedulerStatus> {
