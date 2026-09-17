@@ -50,6 +50,21 @@ export interface ExecutiveRunLastSummary {
     postedYes: number | null;
     postedDash: number | null;
   } | null;
+  /**
+   * New — mirrors current executive_master state into the real Master
+   * Workbook on Drive (New Sheet clear+repopulate, Master Sheet Job
+   * Status/Posted write-back). Best-effort, same invariant as
+   * `postedRefresh`: a failure here never fails the overall job or blocks
+   * the checkpoint advance — executive_master is already the source of
+   * truth by the time this runs (see module doc in `executive-job.ts`).
+   * `null` when no reconcile ran this call.
+   */
+  excelMirror: {
+    ok: boolean;
+    message: string;
+    newSheetRowsWritten: number | null;
+    masterRowsUpdated: number | null;
+  } | null;
 }
 
 /**
@@ -74,6 +89,11 @@ export interface ExecutiveJobOutcome {
    * sync-stage failure) so Posted refresh was never attempted.
    */
   postedRefreshOk: boolean | null;
+  /**
+   * New. Best-effort — see `excelMirror` in `ExecutiveRunLastSummary`.
+   * `null` when no reconcile ran this call so the mirror was never attempted.
+   */
+  excelMirrorOk: boolean | null;
   /** null only when status === "busy" (nothing ran). */
   summary: ExecutiveRunLastSummary | null;
 }

@@ -2,17 +2,18 @@
  * Executive demand-sheet Gmail discovery (Phase E2).
  *
  * Mirrors `lateral-excel-discovery.ts` structurally (same query-building /
- * selection-among-candidates pattern), with two deliberate differences:
+ * selection-among-candidates pattern), with one deliberate difference:
  *
- * 1. Extension is fixed to .xlsx only — the confirmed Executive demand sheet
- *    is always `ATCI Exec DS_<date>.xlsx`, never .xlsm/.xls (Lateral has no
- *    fixed filename and must support all three).
- * 2. After the normal keyword-gated match (same `extractExcelAttachmentsFromMessage`
+ * 1. After the normal keyword-gated match (same `extractExcelAttachmentsFromMessage`
  *    / `setup.datasets.Executive.keywords` gate every other dataset uses), an
  *    additional AND-filter requires the attachment name to match the confirmed
- *    "ATCI Exec DS_*.xlsx" pattern (`isExecutiveDsAttachmentName`). This is the
- *    "ATCI Exec DS_*.xlsx filter" from the approved spec — a hard narrowing on
- *    top of the standard keyword gate, not a replacement for it.
+ *    "ATCI Exec DS_*" naming prefix (`isExecutiveDsAttachmentName`) — a hard
+ *    narrowing on top of the standard keyword gate, not a replacement for it.
+ *
+ * BROADENED 2026-09-17: extension support used to be fixed to `.xlsx` only.
+ * Now accepts `.xlsx`/`.xlsm`/`.xls`, the same flexibility Lateral already
+ * has (Lateral has no fixed filename and must support all three; Executive's
+ * naming prefix is still fixed, only the extension restriction was lifted).
  */
 import type { gmail_v1 } from "googleapis";
 import {
@@ -39,8 +40,8 @@ function enabledExecutiveKeywords(
     );
 }
 
-/** Executive demand sheet is confirmed .xlsx only. */
-export const EXECUTIVE_EXCEL_EXTENSIONS = ["xlsx"] as const;
+/** Executive demand sheet: .xlsx, .xlsm, or .xls (broadened 2026-09-17). */
+export const EXECUTIVE_EXCEL_EXTENSIONS = ["xlsx", "xlsm", "xls"] as const;
 
 export interface ExecutiveAttachmentSelection {
   selected: RawGmailAttachment;
@@ -65,7 +66,7 @@ export interface ExecutiveDiscoveredEmail {
 /**
  * Exact ORIGINAL Excel basename for Google Drive (visible name).
  * No timestamps, UUIDs, random suffixes, "processed", or "copy" added.
- * Also enforces the confirmed "ATCI Exec DS_*.xlsx" naming pattern.
+ * Also enforces the confirmed "ATCI Exec DS_*.(xlsx|xlsm|xls)" naming pattern.
  */
 export function originalExecutiveDsFilenameForDrive(
   originalFilename: string
@@ -76,7 +77,7 @@ export function originalExecutiveDsFilenameForDrive(
   }
   if (!isExecutiveDsAttachmentName(base)) {
     throw new Error(
-      `Attachment does not match the Executive demand-sheet naming pattern ("ATCI Exec DS_*.xlsx"): ${base}`
+      `Attachment does not match the Executive demand-sheet naming pattern ("ATCI Exec DS_*.xlsx/.xlsm/.xls"): ${base}`
     );
   }
   return base;
@@ -124,7 +125,7 @@ export function buildExecutiveKeywordSearchClause(
 /**
  * Executive Gmail discovery query:
  * - after checkpoint timestamp
- * - .xlsx only
+ * - .xlsx / .xlsm / .xls (broadened 2026-09-17; was .xlsx only)
  * - server-side filename hint on the confirmed "ATCI Exec DS_" prefix
  *   (a stable, confirmed constant — unlike Lateral, which has no fixed name)
  * - configured Executive keywords (content / subject / filename)
@@ -202,7 +203,7 @@ export function selectExecutiveExcelAttachment(
 
   if (dsOnly.length === 0) {
     throw new Error(
-      'No attachments matched the Executive demand-sheet pattern ("ATCI Exec DS_*.xlsx").'
+      'No attachments matched the Executive demand-sheet pattern ("ATCI Exec DS_*.xlsx/.xlsm/.xls").'
     );
   }
 

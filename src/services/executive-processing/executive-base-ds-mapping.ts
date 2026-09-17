@@ -78,20 +78,30 @@ export function findExecutiveHeaderIndex(
 }
 
 export interface ExecutiveMarketMapResolution {
-  /** Column index to read Market Map from, or -1 if neither form is present. */
+  /** Column index to read Market Map from, or -1 if none is present. */
   index: number;
-  /** Which form was used. "none" when neither is present. */
-  source: "new" | "plain" | "none";
-  /** True when the file also has a "(Old)" column — confirmed to be ignored. */
+  /** Which form was used. "none" only when no Market Map column exists at all. */
+  source: "new" | "plain" | "old" | "none";
+  /** True when the file also has a "(Old)" column (informational only). */
   oldColumnPresent: boolean;
 }
 
 /**
- * Market Map resolution rule (confirmed):
+ * Market Map resolution rule (confirmed, corrected 2026-09-17):
  * - When both "Final Market Map (Old)" and "(New)" columns exist, use ONLY (New).
- * - When only the single "Final Market Map" column exists (older file format,
- *   e.g. the 7th Sept file), use that.
- * - NEVER use "(Old)".
+ * - When only a single Market-Map-type column exists — whichever one it is
+ *   that day ("Final Market Map (Old)" alone, "Final Market Map" alone, or a
+ *   bare "Market Map" alone) — use that one column. There is always exactly
+ *   one Market Map value to read per file; "none" only applies when literally
+ *   no Market-Map-shaped column exists at all.
+ * - General rule: a column whose name contains "Final Market Map" AND "New"
+ *   always wins over any other Market Map variant present in the same file.
+ *
+ * Previous bug (fixed here): when only "(Old)" was present (no "(New)", no
+ * plain "Final Market Map"), this used to fall through both checks and
+ * return `{ index: -1, source: "none" }`, silently dropping Market Map
+ * entirely for that row — even though the rule above says a lone "(Old)"
+ * column should still be used.
  */
 export function resolveExecutiveMarketMapColumn(
   headers: string[]
@@ -112,6 +122,12 @@ export function resolveExecutiveMarketMapColumn(
   const plainIdx = findExecutiveHeaderIndex(headers, "Final Market Map");
   if (plainIdx >= 0 && plainIdx !== oldIdx && plainIdx !== newIdx) {
     return { index: plainIdx, source: "plain", oldColumnPresent };
+  }
+
+  // Fallback (fixed): only "(Old)" is present — no "(New)", no plain column.
+  // Use it rather than dropping Market Map entirely.
+  if (oldIdx >= 0) {
+    return { index: oldIdx, source: "old", oldColumnPresent: true };
   }
 
   return { index: -1, source: "none", oldColumnPresent };
@@ -255,12 +271,13 @@ export function mapExecutiveBaseDsRow(
     return normalizeExecutiveCellText(raw);
   };
 
-  values.market_map = readCell(
+  const marketMapLabel =
     headerIndex.marketMap.source === "new"
       ? "Final Market Map (New)"
-      : "Final Market Map",
-    headerIndex.marketMap.index
-  );
+      : headerIndex.marketMap.source === "old"
+        ? "Final Market Map (Old)"
+        : "Final Market Map";
+  values.market_map = readCell(marketMapLabel, headerIndex.marketMap.index);
 
   for (const [field, header] of Object.entries(
     EXECUTIVE_BASE_DS_HEADER_ALIASES

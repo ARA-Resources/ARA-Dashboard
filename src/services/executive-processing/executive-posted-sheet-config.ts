@@ -1,41 +1,33 @@
 /**
  * Executive Posted Sheet source location (Phase E6).
  *
- * Confirmed by the user (2026-09-11): a tab literally named "Posted Sheet"
- * inside a Drive-hosted .xlsm workbook — currently
- * "Copy of ATCI Exec Job Reqs Master Sheet 10 Sep 26.xlsm",
- * Drive file ID 1fe-rSMKlzJm5oWrMgOvoJmD60btG7Z7r.
+ * CORRECTED 2026-09-17: this module used to point at a standalone workbook,
+ * "Copy of ATCI Exec Job Reqs Master Sheet 10 Sep 26.xlsm" (Drive file ID
+ * 1fe-rSMKlzJm5oWrMgOvoJmD60btG7Z7r). That file was deleted by its owner and
+ * replaced by the current master workbook ("Copy of ATCI Exec Job Reqs
+ * Master Sheet 17 Sep 26.xlsm" at the time of this fix) — confirmed these
+ * were never two parallel real systems, just one file that got replaced.
+ * The "Posted Sheet" tab lives inside that same master workbook alongside
+ * Master Sheet/New Sheet, so this module no longer carries its own separate
+ * Drive file ID: it resolves to whatever `ARA_EXECUTIVE_MASTER_DRIVE_FILE_ID`
+ * (`src/lib/config/runtime.ts`) already points at, removing the entire class
+ * of "two files can silently drift apart" risk the old standalone-ID design
+ * had. `ARA_EXECUTIVE_POSTED_SHEET_FILE_ID` remains as an optional override
+ * escape hatch only, matching the same operator-override pattern used
+ * elsewhere in this codebase — it should not normally be set.
  *
- * Resolution strategy (mirrors `lateral-master-workbook-discovery.ts`'s
- * established pattern for Lateral's own Master Workbook, which has the
- * identical "this file might get replaced" characteristic): resolve by a
- * CONFIGURED Drive file ID, not by filename — the filename is known to
- * change (it already carries a date, "10 Sep 26", same spirit as the daily
- * demand-sheet filename) so name-matching would be unreliable. The file ID
- * is expected to be far more stable in practice (Drive file IDs persist
- * across in-place edits/saves of the same file), but if the file is ever
- * fully REPLACED (deleted + a new file uploaded), it would get a new ID —
- * exactly the scenario Lateral already solved for its Master Workbook via a
- * configured, updatable ID rather than a magic hardcoded constant baked into
- * business logic.
- *
- * `ARA_EXECUTIVE_POSTED_SHEET_FILE_ID` lets an operator update this without a
- * code change if the file is ever replaced — same escape-hatch shape as the
- * confirmed `EXECUTIVE_NEW_SHEET_SPREADSHEET_ID_DEFAULT` pattern already used
- * elsewhere in this codebase for another Executive Google resource ID.
- *
- * Unlike Lateral's Master Workbook discovery, this module never restores a
- * trashed file or falls back to folder+name search — Posted Sheet is
- * read-only input here, so an inaccessible file is simply treated as
- * "unreadable" (skip + warn, never mass-update `posted`), never acted on.
+ * `getExecutiveMasterDriveFileId()` throws if
+ * `ARA_EXECUTIVE_MASTER_DRIVE_FILE_ID` isn't configured. Callers of
+ * {@link resolveExecutivePostedSheetDriveFileId} must not assume it never
+ * throws — `executive-posted-sheet-reader.ts` wraps it and converts a throw
+ * into its own typed `ok:false` result, preserving this pipeline's "missing
+ * config is a skip, never a crash" contract.
  */
+import { getExecutiveMasterDriveFileId } from "@/lib/config/runtime";
 
 export const EXECUTIVE_POSTED_SHEET_TAB_NAME = "Posted Sheet" as const;
 
-export const EXECUTIVE_POSTED_SHEET_DRIVE_FILE_ID_DEFAULT =
-  "1fe-rSMKlzJm5oWrMgOvoJmD60btG7Z7r";
-
 export function resolveExecutivePostedSheetDriveFileId(): string {
   const fromEnv = process.env.ARA_EXECUTIVE_POSTED_SHEET_FILE_ID?.trim();
-  return fromEnv || EXECUTIVE_POSTED_SHEET_DRIVE_FILE_ID_DEFAULT;
+  return fromEnv || getExecutiveMasterDriveFileId();
 }

@@ -26,11 +26,17 @@
  *   part of the same pipeline run that processed new source data — it does
  *   NOT run on the "no new demand sheet" idle path, same as Lateral's
  *   Posted-matching step never runs on an idle tick either.
+ * - After that, also mirrors the now-current `executive_master` state into
+ *   the real Master Workbook on Drive (`syncExecutiveMasterWorkbookMirror`)
+ *   — best-effort, same non-blocking contract as the Posted refresh:
+ *   executive_master is already the source of dashboard truth by this
+ *   point, so a mirror failure is logged (`excelMirror`/`excelMirrorOk`)
+ *   but never fails the job or blocks the checkpoint advance.
  *
- * This module builds the callable orchestrator only. No HTTP route, no
- * Dataset Manager "Run All" button, and no scheduler/cron caller exist yet —
- * those are Phase E8 (UI) and Phase E5 (cron) respectively. Nothing here is
- * reachable from a live trigger.
+ * CORRECTED (this was stale): this module IS reachable from a live trigger
+ * — `POST /api/dataset/executive/scheduler` -> `runExecutiveJobAndPersist`
+ * -> `invokeExecutiveJob`, wired to the Dataset Manager "Run All" button and
+ * the cron scheduler, both already live in production.
  */
 import {
   acquireExecutiveJobLock,
@@ -43,6 +49,7 @@ import {
 } from "@/services/executive-processing/executive-gmail-incremental-sync";
 import { reconcileExecutiveMasterFromBaseDs } from "@/services/executive-processing/executive-master-reconcile-postgres";
 import { refreshExecutivePostedFromSheet } from "@/services/executive-processing/executive-posted-refresh";
+import { syncExecutiveMasterWorkbookMirror } from "@/services/executive-processing/executive-master-workbook-sync";
 import type {
   ExecutiveJobOutcome,
   ExecutiveJobTrigger,
@@ -66,6 +73,7 @@ export interface InvokeExecutiveJobDeps {
   reconcile?: typeof reconcileExecutiveMasterFromBaseDs;
   advanceCheckpoint?: typeof advanceExecutiveGmailCheckpoint;
   refreshPosted?: typeof refreshExecutivePostedFromSheet;
+  syncExcelMirror?: typeof syncExecutiveMasterWorkbookMirror;
 }
 
 export async function invokeExecutiveJob(
@@ -89,6 +97,7 @@ export async function invokeExecutiveJob(
       reconcileOk: false,
       checkpointAdvanced: false,
       postedRefreshOk: null,
+      excelMirrorOk: null,
       summary: null,
     };
   }
@@ -129,6 +138,7 @@ async function invokeExecutiveJobBody(
     noNewSource: false,
     counts: null,
     postedRefresh: null,
+    excelMirror: null,
     ...partial,
   });
 
@@ -151,6 +161,7 @@ async function invokeExecutiveJobBody(
       reconcileOk: false,
       checkpointAdvanced: false,
       postedRefreshOk: null,
+      excelMirrorOk: null,
       summary: baseSummary({ failureReason }),
     };
   }
@@ -169,6 +180,7 @@ async function invokeExecutiveJobBody(
       reconcileOk: false,
       checkpointAdvanced: false,
       postedRefreshOk: null,
+      excelMirrorOk: null,
       summary: baseSummary({ failureReason }),
     };
   }
@@ -190,6 +202,7 @@ async function invokeExecutiveJobBody(
       // run either, same as Lateral's Posted-matching step never running on
       // an idle tick with no new source.
       postedRefreshOk: null,
+      excelMirrorOk: null,
       summary: baseSummary({
         result: "success",
         noNewSource: true,
@@ -215,6 +228,7 @@ async function invokeExecutiveJobBody(
       reconcileOk: false,
       checkpointAdvanced: false,
       postedRefreshOk: null,
+      excelMirrorOk: null,
       summary: baseSummary({
         sourceFilename: last.attachmentFilename,
         sender: last.sender ?? null,
@@ -247,6 +261,7 @@ async function invokeExecutiveJobBody(
       reconcileOk: false,
       checkpointAdvanced: false,
       postedRefreshOk: null,
+      excelMirrorOk: null,
       summary: baseSummary({
         sourceFilename: last.attachmentFilename,
         sender: last.sender ?? null,
@@ -270,6 +285,7 @@ async function invokeExecutiveJobBody(
       reconcileOk: false,
       checkpointAdvanced: false,
       postedRefreshOk: null,
+      excelMirrorOk: null,
       summary: baseSummary({
         sourceFilename: last.attachmentFilename,
         sender: last.sender ?? null,
@@ -309,6 +325,29 @@ async function invokeExecutiveJobBody(
         postedDash: null,
       };
 
+  // New: best-effort Excel mirror now that executive_master reflects today's
+  // demand sheet AND its posted refresh. Never throws — see module doc.
+  // Must never fail the overall job or block the checkpoint advance below:
+  // executive_master is already correct and is the dashboard's source of
+  // truth regardless of what happens to the Excel mirror.
+  const syncExcelMirror = deps?.syncExcelMirror ?? syncExecutiveMasterWorkbookMirror;
+  const excelMirrorResult = await syncExcelMirror({
+    localDemandWorkbookPath: last.localWorkbookPath,
+  });
+  const excelMirrorSummary: ExecutiveRunLastSummary["excelMirror"] = excelMirrorResult.ok
+    ? {
+        ok: true,
+        message: excelMirrorResult.message,
+        newSheetRowsWritten: excelMirrorResult.newSheetRowsWritten,
+        masterRowsUpdated: excelMirrorResult.masterRowsUpdated,
+      }
+    : {
+        ok: false,
+        message: `Excel mirror not updated (${excelMirrorResult.phase}): ${excelMirrorResult.reason}`,
+        newSheetRowsWritten: null,
+        masterRowsUpdated: null,
+      };
+
   try {
     await advanceCheckpoint({
       messageId: last.messageId,
@@ -340,6 +379,7 @@ async function invokeExecutiveJobBody(
       reconcileOk: true,
       checkpointAdvanced: false,
       postedRefreshOk: postedResult.ok,
+      excelMirrorOk: excelMirrorResult.ok,
       summary: baseSummary({
         sourceFilename: last.attachmentFilename,
         sender: last.sender ?? null,
@@ -353,6 +393,7 @@ async function invokeExecutiveJobBody(
         failureReason,
         counts,
         postedRefresh: postedRefreshSummary,
+        excelMirror: excelMirrorSummary,
       }),
     };
   }
@@ -361,13 +402,14 @@ async function invokeExecutiveJobBody(
     trigger,
     ranAt,
     status: "success",
-    message: `${reconcileResult.message} Checkpoint advanced (messageId=${last.messageId}, driveFileId=${last.driveFileId}). ${postedResult.message}`,
+    message: `${reconcileResult.message} Checkpoint advanced (messageId=${last.messageId}, driveFileId=${last.driveFileId}). ${postedResult.message} ${excelMirrorSummary?.message ?? ""}`.trim(),
     durationMs: durationMs(),
     lockAcquired: true,
     syncOk: true,
     reconcileOk: true,
     checkpointAdvanced: true,
     postedRefreshOk: postedResult.ok,
+    excelMirrorOk: excelMirrorResult.ok,
     summary: baseSummary({
       result: "success",
       sourceFilename: last.attachmentFilename,
@@ -382,6 +424,7 @@ async function invokeExecutiveJobBody(
       failureReason: null,
       counts,
       postedRefresh: postedRefreshSummary,
+      excelMirror: excelMirrorSummary,
     }),
   };
 }

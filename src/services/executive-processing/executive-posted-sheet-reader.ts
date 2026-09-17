@@ -154,7 +154,18 @@ export async function readExecutivePostedSheet(options?: {
   sheetName?: string;
   drive?: drive_v3.Drive;
 }): Promise<ExecutivePostedSheetReadResult> {
-  const fileId = options?.driveFileId || resolveExecutivePostedSheetDriveFileId();
+  let fileId: string;
+  try {
+    fileId = options?.driveFileId || resolveExecutivePostedSheetDriveFileId();
+  } catch (error) {
+    return {
+      ok: false,
+      reason:
+        error instanceof Error
+          ? `Posted Sheet source is not configured: ${error.message}`
+          : "Posted Sheet source is not configured.",
+    };
+  }
   const sheetName = options?.sheetName?.trim() || EXECUTIVE_POSTED_SHEET_TAB_NAME;
 
   let drive = options?.drive;

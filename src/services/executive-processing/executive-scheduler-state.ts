@@ -103,6 +103,10 @@ function normalizeLastRunSummary(
     v.postedRefresh && typeof v.postedRefresh === "object"
       ? (v.postedRefresh as Record<string, unknown>)
       : null;
+  const excelMirrorRaw =
+    v.excelMirror && typeof v.excelMirror === "object"
+      ? (v.excelMirror as Record<string, unknown>)
+      : null;
   return {
     result,
     ranAt: v.ranAt,
@@ -145,6 +149,23 @@ function normalizeLastRunSummary(
           postedDash:
             typeof postedRefreshRaw.postedDash === "number"
               ? postedRefreshRaw.postedDash
+              : null,
+        }
+      : null,
+    excelMirror: excelMirrorRaw
+      ? {
+          ok: Boolean(excelMirrorRaw.ok),
+          message:
+            typeof excelMirrorRaw.message === "string"
+              ? excelMirrorRaw.message
+              : "",
+          newSheetRowsWritten:
+            typeof excelMirrorRaw.newSheetRowsWritten === "number"
+              ? excelMirrorRaw.newSheetRowsWritten
+              : null,
+          masterRowsUpdated:
+            typeof excelMirrorRaw.masterRowsUpdated === "number"
+              ? excelMirrorRaw.masterRowsUpdated
               : null,
         }
       : null,
