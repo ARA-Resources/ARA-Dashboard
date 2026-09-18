@@ -25,13 +25,14 @@ import {
   discoverLateralExcelInMessage,
   originalExcelFilenameForDrive,
   preserveOriginalExcelFilename,
-  sortLateralDiscoveriesChronologically,
+  sortLateralDiscoveriesForProcessing,
   type LateralDiscoveredEmail,
 } from "@/services/lateral-processing/lateral-excel-discovery";
 import {
   isAfterLateralGmailCheckpoint,
   readLateralGmailCheckpoint,
 } from "@/services/lateral-processing/lateral-gmail-checkpoint-store";
+import { isRecoverableLateralSyncItemStatus } from "@/services/lateral-processing/lateral-failure-handling";
 import {
   ATCI_DS_WORKSHEET_NOT_FOUND,
   LateralSourceWorkbookError,
@@ -79,6 +80,19 @@ export interface LateralIncrementalSyncItem {
   masterFileName?: string;
 }
 
+/** A candidate whose content-specific failure was skipped so the next queued candidate could be tried. */
+export interface LateralSkippedCandidate {
+  messageId: string;
+  attachmentId: string;
+  attachmentName: string;
+  receivedAt: string;
+  receivedAtMs: number;
+  sender?: string;
+  subject?: string;
+  status: LateralIncrementalSyncItem["status"];
+  error: string;
+}
+
 export interface LateralPendingCheckpointAdvance {
   messageId: string;
   attachmentId: string;
@@ -122,8 +136,18 @@ export interface LateralIncrementalSyncResult {
   processedCount: number;
   uploadedCount: number;
   failedCount: number;
-  /** True when a failure stopped the run before later emails were processed */
+  /**
+   * True when a failure stopped the run before later emails were processed.
+   * Now only set for NON-recoverable failures (Drive upload, Master
+   * Workbook / New Sheet discovery, attachment download) — a recoverable,
+   * content-specific failure (bad file, missing ATCI DS) is skipped instead
+   * and recorded in `skippedCandidates`, not treated as a stop.
+   */
   stoppedOnFailure: boolean;
+  /** Alias of `stoppedOnFailure`, named for what it now actually means. */
+  hardStopped: boolean;
+  /** Recoverable candidates that were tried, failed, and skipped in favor of the next queued candidate. */
+  skippedCandidates: LateralSkippedCandidate[];
   items: LateralIncrementalSyncItem[];
   warnings: string[];
   message: string;
@@ -299,8 +323,9 @@ export async function runLateralGmailIncrementalSync(
     });
   }
 
-  // Chronological unless configuration later specifies another order.
-  let queue = sortLateralDiscoveriesChronologically(discoveries);
+  // Match-tier first (attachment > subject > body), chronological as the
+  // tie-break, unless configuration later specifies another order.
+  let queue = sortLateralDiscoveriesForProcessing(discoveries);
   if (options?.processNewestFirst) {
     queue = [...queue].reverse();
   }
@@ -320,6 +345,7 @@ export async function runLateralGmailIncrementalSync(
   let failedCount = 0;
   let stoppedOnFailure = false;
   let processedCount = 0;
+  const skippedCandidates: LateralSkippedCandidate[] = [];
 
   await fs.mkdir(DATASET_TEMP_DIR, { recursive: true });
 
@@ -368,7 +394,8 @@ export async function runLateralGmailIncrementalSync(
       });
       if (!integrity.ok) {
         failedCount += 1;
-        stoppedOnFailure = true;
+        const status = "validation_failed" as const;
+        const error = integrity.error ?? "Excel validation failed.";
         items.push({
           messageId: row.messageId,
           attachmentId: row.attachmentId,
@@ -377,8 +404,8 @@ export async function runLateralGmailIncrementalSync(
           receivedAtMs: row.receivedAtMs,
           sender: discovery.sender,
           subject: discovery.subject,
-          status: "validation_failed",
-          error: integrity.error ?? "Excel validation failed.",
+          status,
+          error,
           selectionReason: discovery.selection.selectionReason,
         });
         await appendLog({
@@ -390,6 +417,30 @@ export async function runLateralGmailIncrementalSync(
           errorCode: integrity.errorCode,
         });
         // Do NOT advance checkpoint — retry this email next run.
+        if (isRecoverableLateralSyncItemStatus(status)) {
+          skippedCandidates.push({
+            messageId: row.messageId,
+            attachmentId: row.attachmentId,
+            attachmentName: originalFilename,
+            receivedAt: row.receivedAt,
+            receivedAtMs: row.receivedAtMs,
+            sender: discovery.sender,
+            subject: discovery.subject,
+            status,
+            error,
+          });
+          await appendLog({
+            at: new Date().toISOString(),
+            event: "lateral_candidate_skipped",
+            messageId: row.messageId,
+            attachmentName: originalFilename,
+            status,
+            error,
+            reason: "Content-specific failure — trying next queued candidate.",
+          });
+          continue;
+        }
+        stoppedOnFailure = true;
         break;
       }
 
@@ -540,7 +591,6 @@ export async function runLateralGmailIncrementalSync(
         });
       } catch (sourceError) {
         failedCount += 1;
-        stoppedOnFailure = true;
         const missing =
           sourceError instanceof LateralSourceWorkbookError &&
           sourceError.code === "WORKSHEET_NOT_FOUND";
@@ -550,6 +600,7 @@ export async function runLateralGmailIncrementalSync(
             : sourceError instanceof Error
               ? sourceError.message
               : ATCI_DS_WORKSHEET_NOT_FOUND;
+        const status = missing ? "source_sheet_missing" : "source_read_failed";
 
         items.push({
           messageId: row.messageId,
@@ -559,7 +610,7 @@ export async function runLateralGmailIncrementalSync(
           receivedAtMs: row.receivedAtMs,
           sender: discovery.sender,
           subject: discovery.subject,
-          status: missing ? "source_sheet_missing" : "source_read_failed",
+          status,
           error: message,
           driveFileId,
           selectionReason: discovery.selection.selectionReason,
@@ -580,7 +631,32 @@ export async function runLateralGmailIncrementalSync(
               ? sourceError.availableWorksheets
               : [],
         });
-        // STOP — Do NOT advance checkpoint. Do NOT modify Master Workbook.
+        // Do NOT advance checkpoint. Do NOT modify Master Workbook.
+        if (isRecoverableLateralSyncItemStatus(status)) {
+          skippedCandidates.push({
+            messageId: row.messageId,
+            attachmentId: row.attachmentId,
+            attachmentName: originalFilename,
+            receivedAt: row.receivedAt,
+            receivedAtMs: row.receivedAtMs,
+            sender: discovery.sender,
+            subject: discovery.subject,
+            status,
+            error: message,
+          });
+          await appendLog({
+            at: new Date().toISOString(),
+            event: "lateral_candidate_skipped",
+            messageId: row.messageId,
+            attachmentName: originalFilename,
+            status,
+            error: message,
+            reason: "Content-specific failure — trying next queued candidate.",
+          });
+          continue;
+        }
+        // STOP — not content-specific to this candidate.
+        stoppedOnFailure = true;
         break;
       }
 
@@ -828,6 +904,13 @@ export async function runLateralGmailIncrementalSync(
         checkpointDeferred: true,
         syncPurpose,
       });
+
+      // A working candidate was found and fully processed for this run —
+      // stop here rather than trying any remaining queued candidates.
+      // Same-day duplicates almost always carry identical content; letting
+      // the loop continue risks double-processing the same demand sheet
+      // (e.g. double-counting "new" rows on New Sheet append).
+      break;
     } catch (error) {
       failedCount += 1;
       stoppedOnFailure = true;
@@ -862,6 +945,10 @@ export async function runLateralGmailIncrementalSync(
     clearSkillClusterCache();
   }
 
+  // sourceMissing/masterFailed/structureFailed describe the item that caused
+  // a HARD stop (uploadedCount === 0 path only) — a recoverable
+  // source_sheet_missing that was skipped-and-continued past, followed by a
+  // later success, must not make this look like a failed run.
   const sourceMissing = items.some((item) => item.status === "source_sheet_missing");
   const masterFailed = items.some(
     (item) => item.status === "master_discovery_failed"
@@ -873,28 +960,38 @@ export async function runLateralGmailIncrementalSync(
     syncPurpose === "staging_only"
       ? "Gmail checkpoint deferred until lateral_staging import succeeds."
       : "Gmail checkpoint deferred until Master Workbook Drive update succeeds.";
+  const skippedNote =
+    skippedCandidates.length > 0
+      ? ` Skipped ${skippedCandidates.length} candidate(s): ${skippedCandidates
+          .map((c) => `"${c.attachmentName}" (${c.error})`)
+          .join("; ")}.`
+      : "";
   const message =
-    uploadedCount === 0 && failedCount === 0
-      ? `No new Lateral Excel emails after checkpoint${
-          checkpointBefore.messageId
-            ? ` (${checkpointBefore.messageId})`
-            : ""
-        }.`
-      : sourceMissing
-        ? ATCI_DS_WORKSHEET_NOT_FOUND
-        : structureFailed
-          ? items.find((item) => item.status === "new_sheet_structure_failed")
-              ?.error || "New Sheet header structure validation failed."
-          : masterFailed
-            ? items.find((item) => item.status === "master_discovery_failed")
-                ?.error || "Master Workbook discovery failed."
-            : stoppedOnFailure
-              ? `Uploaded ${uploadedCount} Lateral file(s); stopped on failure — Gmail checkpoint NOT advanced. Failed: ${failedCount}.`
-              : syncPurpose === "staging_only" && lastSourceRead
-                ? `Uploaded ${uploadedCount} Lateral Excel file(s); read "${lastSourceRead.worksheetName}" (${lastSourceRead.rowCount}×${lastSourceRead.colCount}). ${deferredHint}`
-                : lastSourceRead && lastMasterDiscovery
-                  ? `Uploaded ${uploadedCount} Lateral Excel file(s); read "${lastSourceRead.worksheetName}" (${lastSourceRead.rowCount}×${lastSourceRead.colCount}); Master "${lastMasterDiscovery.fileName}" validated (${lastMasterDiscovery.masterSheet}, ${lastMasterDiscovery.newSheet}); New Sheet headers OK. ${deferredHint}`
-                  : `Uploaded ${uploadedCount} Lateral Excel file(s) from Gmail (incremental). ${deferredHint}`;
+    uploadedCount > 0
+      ? (syncPurpose === "staging_only" && lastSourceRead
+          ? `Uploaded ${uploadedCount} Lateral Excel file(s); read "${lastSourceRead.worksheetName}" (${lastSourceRead.rowCount}×${lastSourceRead.colCount}). ${deferredHint}`
+          : lastSourceRead && lastMasterDiscovery
+            ? `Uploaded ${uploadedCount} Lateral Excel file(s); read "${lastSourceRead.worksheetName}" (${lastSourceRead.rowCount}×${lastSourceRead.colCount}); Master "${lastMasterDiscovery.fileName}" validated (${lastMasterDiscovery.masterSheet}, ${lastMasterDiscovery.newSheet}); New Sheet headers OK. ${deferredHint}`
+            : `Uploaded ${uploadedCount} Lateral Excel file(s) from Gmail (incremental). ${deferredHint}`) +
+        skippedNote
+      : stoppedOnFailure
+        ? (sourceMissing
+            ? ATCI_DS_WORKSHEET_NOT_FOUND
+            : structureFailed
+              ? items.find((item) => item.status === "new_sheet_structure_failed")
+                  ?.error || "New Sheet header structure validation failed."
+              : masterFailed
+                ? items.find((item) => item.status === "master_discovery_failed")
+                    ?.error || "Master Workbook discovery failed."
+                : `Stopped on failure — Gmail checkpoint NOT advanced. Failed: ${failedCount}.`) +
+          skippedNote
+        : skippedCandidates.length > 0
+          ? `All ${skippedCandidates.length} candidate(s) found after checkpoint failed — none could be processed.${skippedNote}`
+          : `No new Lateral Excel emails after checkpoint${
+              checkpointBefore.messageId
+                ? ` (${checkpointBefore.messageId})`
+                : ""
+            }.`;
 
   await appendLog({
     at: new Date().toISOString(),
@@ -904,6 +1001,9 @@ export async function runLateralGmailIncrementalSync(
     uploadedCount,
     failedCount,
     stoppedOnFailure,
+    hardStopped: stoppedOnFailure,
+    skippedCount: skippedCandidates.length,
+    skippedCandidates,
     discoveredCount: queue.length,
     checkpointMessageId: checkpointAfter.messageId,
     pendingCheckpointAdvances: pendingCheckpointAdvances.length,
@@ -923,6 +1023,8 @@ export async function runLateralGmailIncrementalSync(
     uploadedCount,
     failedCount,
     stoppedOnFailure,
+    hardStopped: stoppedOnFailure,
+    skippedCandidates,
     items,
     warnings,
     message,

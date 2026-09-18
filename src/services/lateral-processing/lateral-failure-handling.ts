@@ -35,6 +35,7 @@ export const LATERAL_FAILURE_CODES = [
   "XLSM_SAVE_FAILURE",
   "GOOGLE_DRIVE_FINAL_UPDATE_FAILURE",
   "UNKNOWN_FAILURE",
+  "ALL_CANDIDATES_EXHAUSTED",
 ] as const;
 
 export type LateralFailureCode = (typeof LATERAL_FAILURE_CODES)[number];
@@ -139,6 +140,8 @@ const HUMAN_MESSAGES: Record<LateralFailureCode, string> = {
     "Final Google Drive update of the Master Workbook failed. Checkpoint was not advanced; next run can retry.",
   UNKNOWN_FAILURE:
     "Lateral processing failed unexpectedly. Checkpoint was not advanced; next run can retry.",
+  ALL_CANDIDATES_EXHAUSTED:
+    "Every candidate Lateral email found after the checkpoint failed (bad file, missing ATCI DS, etc). None were processed; checkpoint was not advanced so all of them can be retried, or the good one re-sent, next run.",
 };
 
 const STAGE_LABELS: Record<LateralFailureStage, string> = {
@@ -167,6 +170,60 @@ const STAGE_LABELS: Record<LateralFailureStage, string> = {
   pipeline: "Lateral Dataset pipeline",
   job: "Lateral Dataset job",
 };
+
+/**
+ * Discovery-queue candidate statuses that represent a problem intrinsic to
+ * that ONE candidate's content (bad/corrupt file, missing ATCI DS sheet,
+ * unreadable workbook) — safe to skip and try the next queued candidate.
+ *
+ * Everything else (Drive upload, Master Workbook / New Sheet discovery,
+ * attachment download) is about a shared resource or the Gmail/Drive
+ * connection itself, not this candidate specifically — skipping to the next
+ * candidate wouldn't help and could mask a real infrastructure problem, so
+ * those stay hard stops. Fail closed: an unrecognized status is treated as
+ * non-recoverable.
+ */
+const RECOVERABLE_LATERAL_SYNC_ITEM_STATUSES = new Set<string>([
+  "validation_failed",
+  "source_sheet_missing",
+  "source_read_failed",
+]);
+
+export function isRecoverableLateralSyncItemStatus(status: string): boolean {
+  return RECOVERABLE_LATERAL_SYNC_ITEM_STATUSES.has(status);
+}
+
+/**
+ * Job-level outcome of the Gmail-sync discovery-queue phase, given what the
+ * queue loop actually did. Pure function — extracted so the "continue to
+ * next candidate" decision matrix (clean success / success-with-skips /
+ * all-candidates-exhausted / hard stop) is directly testable without
+ * needing a real or mocked Gmail client.
+ */
+export function evaluateLateralSyncQueueOutcome(input: {
+  uploadedCount: number;
+  hardStopped: boolean;
+  skippedCandidateCount: number;
+}): {
+  /** Sync phase succeeded — safe to proceed to the pipeline. */
+  syncOk: boolean;
+  /** Every discovered candidate was tried and none succeeded (distinct from "nothing matched at all"). */
+  allCandidatesExhausted: boolean;
+  /** Overall sync-phase failure signal (hard stop OR all candidates exhausted). */
+  stoppedOnUploadOrSyncFailure: boolean;
+} {
+  const allCandidatesExhausted =
+    !input.hardStopped &&
+    input.uploadedCount === 0 &&
+    input.skippedCandidateCount > 0;
+  const syncOk =
+    !input.hardStopped && !allCandidatesExhausted && input.uploadedCount > 0;
+  return {
+    syncOk,
+    allCandidatesExhausted,
+    stoppedOnUploadOrSyncFailure: input.hardStopped || allCandidatesExhausted,
+  };
+}
 
 export function createLateralStageFailure(options: {
   code: LateralFailureCode;

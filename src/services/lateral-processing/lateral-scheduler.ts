@@ -205,6 +205,20 @@ function normalizeLastRunSummary(
           closedCount: Number(countsRaw.closedCount) || 0,
         }
       : null,
+    skippedCandidates: Array.isArray(v.skippedCandidates)
+      ? (v.skippedCandidates as unknown[])
+          .filter(
+            (c): c is Record<string, unknown> => Boolean(c) && typeof c === "object"
+          )
+          .map((c) => ({
+            attachmentName:
+              typeof c.attachmentName === "string" ? c.attachmentName : "—",
+            messageId: typeof c.messageId === "string" ? c.messageId : "",
+            receivedAt: typeof c.receivedAt === "string" ? c.receivedAt : "",
+            status: typeof c.status === "string" ? c.status : "",
+            error: typeof c.error === "string" ? c.error : "",
+          }))
+      : [],
   };
 }
 
@@ -463,6 +477,7 @@ async function runAndPersistLateralJob(
             closedCount: summary.closedCount,
           }
         : null,
+      skippedCandidates: outcome.skippedCandidates ?? [],
     };
 
     await writeLateralSchedulerConfig({
@@ -502,6 +517,11 @@ async function runAndPersistLateralJob(
           : outcome.failure?.message || outcome.message,
       trigger,
       durationMs: outcome.durationMs,
+      skippedCount: outcome.skippedCandidates?.length ?? 0,
+      skippedDetail:
+        outcome.skippedCandidates && outcome.skippedCandidates.length > 0
+          ? outcome.skippedCandidates
+          : null,
     }).catch((err) => {
       console.warn("[lateral-scheduler] Failed to append sync history", err);
     });
@@ -546,6 +566,7 @@ async function persistUnexpectedLateralJobCrash(
         failureReason: message,
         noNewSource: false,
         counts: null,
+        skippedCandidates: [],
       },
     });
     await appendLateralSyncHistory({

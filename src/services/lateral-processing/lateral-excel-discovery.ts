@@ -269,3 +269,27 @@ export function sortLateralDiscoveriesChronologically(
     return a.messageId.localeCompare(b.messageId);
   });
 }
+
+/**
+ * Order discovered Lateral emails for PROCESSING: match-tier first
+ * (attachment-filename match beats subject beats body — same `fieldRank`
+ * used within one message's multiple attachments, now applied across
+ * different messages too), chronological (oldest first) as the tie-break,
+ * messageId as the final deterministic tie-break.
+ *
+ * A same-day decoy that only matches on loose body text (weakest tier)
+ * should not get tried before a same-day email whose attachment filename
+ * itself matched, purely because the decoy happened to arrive earlier.
+ */
+export function sortLateralDiscoveriesForProcessing(
+  rows: LateralDiscoveredEmail[]
+): LateralDiscoveredEmail[] {
+  return [...rows].sort((a, b) => {
+    const tierDiff =
+      fieldRank(a.selection.selected.matchedKeyword?.matchedIn) -
+      fieldRank(b.selection.selected.matchedKeyword?.matchedIn);
+    if (tierDiff !== 0) return tierDiff;
+    if (a.receivedAtMs !== b.receivedAtMs) return a.receivedAtMs - b.receivedAtMs;
+    return a.messageId.localeCompare(b.messageId);
+  });
+}

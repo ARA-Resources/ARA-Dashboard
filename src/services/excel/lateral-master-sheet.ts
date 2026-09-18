@@ -61,6 +61,14 @@ export interface LateralMasterFilterSchema {
       reopenCount: number;
       closedCount: number;
     } | null;
+    /** Recoverable candidates skipped before this run's real outcome — never silently dropped. */
+    skippedCandidates: Array<{
+      attachmentName: string;
+      messageId: string;
+      receivedAt: string;
+      status: string;
+      error: string;
+    }>;
   } | null;
 }
 

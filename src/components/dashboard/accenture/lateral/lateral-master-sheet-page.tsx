@@ -454,6 +454,22 @@ export function LateralMasterSheetPage() {
                 {schema.lastRun.failureReason.slice(0, 180)}
               </span>
             ) : null}
+            {schema.lastRun.skippedCandidates &&
+            schema.lastRun.skippedCandidates.length > 0 ? (
+              <span
+                className="w-full text-[10px] text-amber-600 dark:text-amber-400"
+                title={schema.lastRun.skippedCandidates
+                  .map((c) => `"${c.attachmentName}": ${c.error}`)
+                  .join(" · ")}
+              >
+                Skipped {schema.lastRun.skippedCandidates.length} candidate
+                {schema.lastRun.skippedCandidates.length === 1 ? "" : "s"} before
+                success:{" "}
+                {schema.lastRun.skippedCandidates
+                  .map((c) => c.attachmentName)
+                  .join(", ")}
+              </span>
+            ) : null}
           </div>
         </FadeIn>
       ) : null}

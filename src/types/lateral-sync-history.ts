@@ -18,4 +18,14 @@ export interface LateralSyncHistoryEntry {
   error: string | null;
   trigger: "scheduler" | "manual";
   durationMs: number;
+  /** Count of recoverable candidates skipped before this run's real outcome. 0 when none. */
+  skippedCount?: number;
+  /** Detail per skipped candidate (filename, messageId, error) — null when none. */
+  skippedDetail?: Array<{
+    attachmentName: string;
+    messageId: string;
+    receivedAt?: string;
+    status?: string;
+    error: string;
+  }> | null;
 }

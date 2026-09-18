@@ -17,6 +17,22 @@
 import { randomUUID } from "node:crypto";
 import { getDbClient } from "./db-client";
 
+/**
+ * The `postgres` driver returns BIGINT columns as JS strings (never
+ * "bigint"/"number") to avoid silent precision loss — e.g.
+ * gmail_checkpoint.received_at_ms. Parse defensively; `null`/undefined/blank
+ * stay null rather than becoming 0 or NaN.
+ */
+function parsePgBigInt(value: unknown): number | null {
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 import type {
   GmailCheckpointStore,
   EncryptedConfigStore,
@@ -83,9 +99,7 @@ function rowToCheckpoint(row: Record<string, unknown> | undefined): LateralGmail
     receivedAt: row.received_at instanceof Date
       ? row.received_at.toISOString()
       : typeof row.received_at === "string" ? row.received_at : null,
-    receivedAtMs: typeof row.received_at_ms === "bigint"
-      ? Number(row.received_at_ms)
-      : typeof row.received_at_ms === "number" ? row.received_at_ms : null,
+    receivedAtMs: parsePgBigInt(row.received_at_ms),
     attachmentFilename: typeof row.attachment_file === "string" ? row.attachment_file : null,
     driveFileId: typeof row.drive_file_id === "string" ? row.drive_file_id : null,
     processedAt: row.processed_at instanceof Date
@@ -464,6 +478,10 @@ function rowToSyncEntry(row: Record<string, unknown>): LateralSyncHistoryEntry {
     error: typeof row.error === "string" ? row.error : null,
     trigger: (row.trigger === "scheduler" || row.trigger === "manual") ? row.trigger : "manual",
     durationMs: typeof row.duration_ms === "number" ? row.duration_ms : 0,
+    skippedCount: typeof row.skipped_count === "number" ? row.skipped_count : 0,
+    skippedDetail: Array.isArray(row.skipped_detail)
+      ? (row.skipped_detail as LateralSyncHistoryEntry["skippedDetail"])
+      : null,
   };
 }
 
@@ -484,14 +502,15 @@ export class PostgresLateralSyncHistoryStore implements LateralSyncHistoryStoreI
       INSERT INTO lateral_sync_history
         (id, sync_time, source_email, original_filename, drive_file_id,
          rows_imported, new_count, active_count, reopen_count, closed_count,
-         result, error, trigger, duration_ms)
+         result, error, trigger, duration_ms, skipped_count, skipped_detail)
       VALUES
         (${id}, ${new Date(input.syncTime)}, ${input.sourceEmail || "—"},
          ${input.originalFilename || "—"}, ${input.googleDriveFileId || "—"},
          ${input.rowsImported}, ${input.newCount}, ${input.activeCount},
          ${input.reopenCount}, ${input.closedCount},
          ${input.result}, ${input.error ?? null}, ${input.trigger},
-         ${input.durationMs})
+         ${input.durationMs}, ${input.skippedCount ?? 0},
+         ${input.skippedDetail ? sql.json(input.skippedDetail as never) : null})
     `;
     return { id, ...input };
   }
@@ -572,9 +591,7 @@ export class PostgresSyncWatermarkStore implements SyncWatermarkStoreInterface {
     const at = row.last_successful_sync_at instanceof Date
       ? row.last_successful_sync_at.toISOString()
       : typeof row.last_successful_sync_at === "string" ? row.last_successful_sync_at : null;
-    const ms = typeof row.last_successful_sync_ms === "bigint"
-      ? Number(row.last_successful_sync_ms)
-      : typeof row.last_successful_sync_ms === "number" ? row.last_successful_sync_ms : null;
+    const ms = parsePgBigInt(row.last_successful_sync_ms);
     const trigger = row.last_trigger === "scheduler" || row.last_trigger === "manual" || row.last_trigger === "api"
       ? row.last_trigger as "scheduler" | "manual" | "api"
       : null;
@@ -702,7 +719,7 @@ function rowToUnit(row: Record<string, unknown>): HomeUnitWidgetsMetrics {
     posted: typeof row.posted === "number" ? row.posted : 0,
     fresh: typeof row.fresh === "number" ? row.fresh : 0,
     fileName: typeof row.file_name === "string" ? row.file_name : "",
-    mtimeMs: typeof row.mtime_ms === "bigint" ? Number(row.mtime_ms) : typeof row.mtime_ms === "number" ? row.mtime_ms : 0,
+    mtimeMs: parsePgBigInt(row.mtime_ms) ?? 0,
     source: normalizeSource(row.source),
     computedAt: row.computed_at instanceof Date
       ? row.computed_at.toISOString()

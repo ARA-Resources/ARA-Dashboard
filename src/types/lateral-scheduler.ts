@@ -4,6 +4,15 @@ export type LateralJobTrigger = "scheduler" | "manual";
 
 export type LateralJobStatus = "success" | "partial" | "failed";
 
+/** A candidate email that was tried, failed on content specific to it, and skipped in favor of the next one. */
+export interface LateralSkippedCandidateSummary {
+  attachmentName: string;
+  messageId: string;
+  receivedAt: string;
+  status: string;
+  error: string;
+}
+
 export interface LateralRunLastSummary {
   result: LateralJobStatus;
   ranAt: string;
@@ -26,6 +35,8 @@ export interface LateralRunLastSummary {
     reopenCount: number;
     closedCount: number;
   } | null;
+  /** Recoverable candidates skipped before this run's real outcome (success or failure) — never silently dropped. */
+  skippedCandidates: LateralSkippedCandidateSummary[];
 }
 
 export interface LateralSchedulerConfig {
@@ -91,6 +102,8 @@ export interface LateralJobOutcome {
     isHardFailure: boolean;
   } | null;
   checkpointAdvanced: boolean;
+  /** Recoverable candidates skipped before this run's real outcome (success or failure) — never silently dropped. */
+  skippedCandidates: LateralSkippedCandidateSummary[];
   /** Safe fields for UI / sync history (no tokens) */
   syncSummary?: {
     sourceEmail: string;

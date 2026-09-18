@@ -7,6 +7,7 @@ import {
   assertNeverReportSuccessOnFailure,
   classifyLateralFailure,
   createLateralStageFailure,
+  evaluateLateralSyncQueueOutcome,
   formatLateralFailureForLog,
   type LateralStageFailure,
 } from "@/services/lateral-processing/lateral-failure-handling";
@@ -25,6 +26,34 @@ import type {
   LateralJobOutcome,
   LateralJobTrigger,
 } from "@/types/lateral-scheduler";
+
+async function logJobCompletedWithSkips(entry: {
+  ranAt: string;
+  trigger: LateralJobTrigger;
+  skippedCandidates: Array<{ attachmentName: string; messageId: string; error: string }>;
+  sourceFilename: string | null;
+}): Promise<void> {
+  const record = {
+    event: "lateral_run_completed_with_skips",
+    at: entry.ranAt,
+    trigger: entry.trigger,
+    sourceFilename: entry.sourceFilename,
+    skippedCount: entry.skippedCandidates.length,
+    skippedCandidates: entry.skippedCandidates,
+  };
+  console.info("[lateral-job] completed with skips", JSON.stringify(record));
+  try {
+    await fs.mkdir(DATASET_LOG_DIR, { recursive: true });
+    const day = new Date().toISOString().slice(0, 10);
+    await fs.appendFile(
+      path.join(DATASET_LOG_DIR, `lateral-job-${day}.jsonl`),
+      `${JSON.stringify(record)}\n`,
+      "utf8"
+    );
+  } catch {
+    // Non-fatal — logging must not mask the real outcome.
+  }
+}
 
 async function logJobFailure(failure: LateralStageFailure): Promise<void> {
   const entry = formatLateralFailureForLog(failure);
@@ -110,25 +139,25 @@ async function executeLateralDatasetJobBody(
 
   try {
     syncResult = await runLateralGmailIncrementalSync();
-    syncOk = syncResult.failedCount === 0 && !syncResult.stoppedOnFailure;
-    stoppedOnUploadOrSyncFailure =
-      syncResult.failedCount > 0 || syncResult.stoppedOnFailure;
+    // A recoverable candidate failure that was skipped-and-continued-past
+    // does NOT make the sync phase a failure as long as something later in
+    // the queue succeeded — only a genuine hard stop (non-recoverable) or
+    // every candidate being exhausted with none succeeding does.
+    const queueOutcome = evaluateLateralSyncQueueOutcome({
+      uploadedCount: syncResult.uploadedCount,
+      hardStopped: syncResult.hardStopped,
+      skippedCandidateCount: syncResult.skippedCandidates.length,
+    });
+    const allCandidatesExhausted = queueOutcome.allCandidatesExhausted;
+    syncOk = queueOutcome.syncOk;
+    stoppedOnUploadOrSyncFailure = queueOutcome.stoppedOnUploadOrSyncFailure;
     parts.push(`Gmail/Drive: ${syncResult.message}`);
 
-    if (stoppedOnUploadOrSyncFailure) {
-      failedItem =
-        syncResult.items.find((i) =>
-          [
-            "upload_failed",
-            "download_failed",
-            "source_sheet_missing",
-            "master_discovery_failed",
-            "new_sheet_structure_failed",
-            "no_excel_attachment",
-            "validation_failed",
-            "source_read_failed",
-          ].includes(i.status)
-        ) ?? syncResult.items.find((i) => i.error);
+    if (syncResult.hardStopped) {
+      // The hard-stop-causing item is always the last one pushed — every
+      // recoverable failure before it was skipped-and-continued-past, not
+      // pushed as the terminal item.
+      failedItem = syncResult.items[syncResult.items.length - 1];
 
       const classified = classifyLateralFailure({
         error: failedItem?.error || syncResult.message,
@@ -148,9 +177,28 @@ async function executeLateralDatasetJobBody(
       parts.push(
         `FAILED at ${hardFailure.failedStage}: ${hardFailure.message}`
       );
+    } else if (allCandidatesExhausted) {
+      const lastSkip =
+        syncResult.skippedCandidates[syncResult.skippedCandidates.length - 1];
+      hardFailure = createLateralStageFailure({
+        code: "ALL_CANDIDATES_EXHAUSTED",
+        stage: "gmail_email_match",
+        detail: syncResult.skippedCandidates
+          .map((c) => `"${c.attachmentName}": ${c.error}`)
+          .join("; "),
+        messageOverride: `All ${syncResult.skippedCandidates.length} candidate email(s) found after the checkpoint failed. Last: "${lastSkip?.attachmentName}" — ${lastSkip?.error}`,
+      });
+      updateLateralGmailProgress(
+        "gmail_search",
+        "failed",
+        hardFailure.message
+      );
+      parts.push(
+        `FAILED at ${hardFailure.failedStage}: ${hardFailure.message}`
+      );
     } else if (
       syncResult.uploadedCount === 0 &&
-      syncResult.failedCount === 0 &&
+      syncResult.skippedCandidates.length === 0 &&
       syncResult.matchedAttachments === 0
     ) {
       // Clear terminal state — not a hard failure; no Master work required for mail.
@@ -169,6 +217,13 @@ async function executeLateralDatasetJobBody(
       if (syncResult.uploadedCount > 0) {
         updateLateralGmailProgress("drive_upload", "ok");
         updateLateralGmailProgress("drive_replace", "ok");
+        if (syncResult.skippedCandidates.length > 0) {
+          parts.push(
+            `Skipped ${syncResult.skippedCandidates.length} candidate(s) before success: ${syncResult.skippedCandidates
+              .map((c) => `"${c.attachmentName}" (${c.error})`)
+              .join("; ")}.`
+          );
+        }
       } else {
         updateLateralGmailProgress("drive_upload", "skipped");
         updateLateralGmailProgress("drive_replace", "skipped");
@@ -363,6 +418,14 @@ async function executeLateralDatasetJobBody(
 
   const message = parts.join(" · ");
 
+  const skippedCandidates = (syncResult?.skippedCandidates ?? []).map((c) => ({
+    attachmentName: c.attachmentName,
+    messageId: c.messageId,
+    receivedAt: c.receivedAt,
+    status: c.status,
+    error: c.error,
+  }));
+
   const pending = pendingCheckpointAdvances[pendingCheckpointAdvances.length - 1];
   const lastUploaded = syncResult?.items
     ?.slice()
@@ -421,6 +484,11 @@ async function executeLateralDatasetJobBody(
   const successHref = "/company/accenture/lateral/master-sheet";
   const failureHref = "/dataset/lateral";
 
+  // A clean success with a skip behind it still deserves the "not entirely
+  // unremarkable" notification kind — never let it look identical to a run
+  // where nothing at all went wrong.
+  const successWithSkips = effectiveStatus === "success" && skippedCandidates.length > 0;
+
   const notificationTitle =
     effectiveStatus === "failed"
       ? `Lateral Run All failed${hardFailure?.failedStage ? `: ${hardFailure.failedStage}` : ""}`
@@ -428,7 +496,16 @@ async function executeLateralDatasetJobBody(
         ? "Lateral Run All completed with warnings"
         : pendingCheckpointAdvances.length === 0
           ? "Lateral Run All: no new Adhoc DS"
-          : "Lateral Run All succeeded";
+          : successWithSkips
+            ? `Lateral Run All succeeded (skipped ${skippedCandidates.length} candidate(s))`
+            : "Lateral Run All succeeded";
+
+  const skippedSummaryLine =
+    skippedCandidates.length > 0
+      ? `Skipped: ${skippedCandidates
+          .map((c) => `"${c.attachmentName}" (${c.error})`)
+          .join("; ")}`
+      : null;
 
   const notificationBodyParts = [
     `Trigger: ${trigger}`,
@@ -442,13 +519,14 @@ async function executeLateralDatasetJobBody(
         : effectiveStatus === "success"
           ? "Job Status + Posted updated in PostgreSQL lateral_master."
           : message,
+    skippedSummaryLine,
   ].filter(Boolean);
 
   await pushAppNotification({
     kind:
       effectiveStatus === "failed"
         ? "dataset_sync_failed"
-        : effectiveStatus === "partial"
+        : effectiveStatus === "partial" || successWithSkips
           ? "dataset_sync_partial"
           : "dataset_sync_success",
     title: notificationTitle,
@@ -471,6 +549,7 @@ async function executeLateralDatasetJobBody(
       reopenCount: pipelineSummary?.reopenCount ?? 0,
       closedCount: pipelineSummary?.closedCount ?? 0,
       activeCount: pipelineSummary?.activeCount ?? 0,
+      skippedCandidates,
     },
   }).catch(() => undefined);
 
@@ -532,6 +611,15 @@ async function executeLateralDatasetJobBody(
     hardFailure?.isHardFailure ? { skippedRemaining: true } : undefined
   );
 
+  if (effectiveStatus === "success" && skippedCandidates.length > 0) {
+    await logJobCompletedWithSkips({
+      ranAt,
+      trigger,
+      skippedCandidates,
+      sourceFilename,
+    }).catch(() => undefined);
+  }
+
   return {
     trigger,
     ranAt,
@@ -540,6 +628,7 @@ async function executeLateralDatasetJobBody(
       ? `${hardFailure.failedStage}: ${hardFailure.message}`
       : message,
     syncOk: syncOk && !hardFailure?.isHardFailure,
+    skippedCandidates,
     pipelineOk:
       pipelineOk &&
       !hardFailure?.isHardFailure &&

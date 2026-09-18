@@ -106,7 +106,10 @@ function classifyStagingFailure(
 function classifySyncFailure(
   sync: LateralIncrementalSyncResult
 ): LateralGmailStagingFailureStage {
-  const failed = sync.items.find((i) => i.status !== "uploaded_drive");
+  // The item that actually ended this run (hard stop, or the last exhausted
+  // candidate) is always the LAST one pushed — earlier recoverable failures
+  // in `items` were skipped-and-continued-past, not the terminal outcome.
+  const failed = [...sync.items].reverse().find((i) => i.status !== "uploaded_drive");
   if (!failed) return "gmail_search";
   switch (failed.status) {
     case "validation_failed":
@@ -211,9 +214,19 @@ export async function executeLateralGmailStagingJob(options: {
     syncMessage: sync.message,
   };
 
-  if (sync.stoppedOnFailure || sync.failedCount > 0) {
+  // A recoverable candidate that was skipped-and-continued-past does NOT
+  // make this run a failure as long as a later candidate succeeded — only a
+  // genuine hard stop, or every candidate being exhausted with none
+  // succeeding, does. Mirrors lateral-job.ts's full_pipeline gating.
+  const allCandidatesExhausted =
+    !sync.hardStopped && sync.uploadedCount === 0 && sync.skippedCandidates.length > 0;
+
+  if (sync.hardStopped || allCandidatesExhausted) {
     const after = await readCheckpoint();
     const stage = classifySyncFailure(sync);
+    // The item that actually ended the run — always the last one pushed;
+    // earlier entries in `items` may be skipped, non-terminal candidates.
+    const terminalItem = sync.items[sync.items.length - 1];
     return {
       status: "failed",
       message: sync.message,
@@ -223,12 +236,12 @@ export async function executeLateralGmailStagingJob(options: {
       gmailKeywords: sync.gmailKeywords,
       gmailQuery: sync.query,
       email: {
-        messageId: sync.items[0]?.messageId ?? null,
-        subject: sync.items[0]?.subject ?? null,
-        sender: sync.items[0]?.sender ?? null,
-        receivedAt: sync.items[0]?.receivedAt ?? null,
+        messageId: terminalItem?.messageId ?? null,
+        subject: terminalItem?.subject ?? null,
+        sender: terminalItem?.sender ?? null,
+        receivedAt: terminalItem?.receivedAt ?? null,
       },
-      attachmentFilename: sync.items[0]?.attachmentName ?? null,
+      attachmentFilename: terminalItem?.attachmentName ?? null,
       worksheet: sync.lastSourceRead?.worksheetName ?? null,
       stagingImport: null,
       checkpoint: {

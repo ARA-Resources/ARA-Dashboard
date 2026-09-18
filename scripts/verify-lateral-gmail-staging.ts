@@ -210,6 +210,8 @@ function makeSyncResult(
     uploadedCount: partial.pendingCheckpointAdvances.length,
     failedCount: 0,
     stoppedOnFailure: false,
+    hardStopped: false,
+    skippedCandidates: [],
     items: [],
     warnings: [],
     message: "ok",

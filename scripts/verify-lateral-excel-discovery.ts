@@ -7,6 +7,7 @@ import {
   preserveOriginalExcelFilename,
   selectLateralExcelAttachment,
   sortLateralDiscoveriesChronologically,
+  sortLateralDiscoveriesForProcessing,
   type LateralDiscoveredEmail,
 } from "../src/services/lateral-processing/lateral-excel-discovery";
 import type { RawGmailAttachment } from "../src/services/gmail/attachments";
@@ -219,5 +220,106 @@ const emails: LateralDiscoveredEmail[] = [
 const ordered = sortLateralDiscoveriesChronologically(emails);
 assert(ordered[0].messageId === "msg-old", "must process oldest email first");
 assert(ordered[1].messageId === "msg-new", "newest email second");
+
+// --- Regression: 2026-09-18 Book2.xlsx incident ---
+// Real candidates from that day's .data/logs/lateral-gmail-2026-09-18.jsonl.
+// Chronological-only order tried Book2.xlsx (05:55am, decoy, body-only
+// match) before the real "AdhocDS (Lateral Vendors)..." file (09:33am,
+// attachment-filename match) and hard-stopped on the first failure — the
+// real file was never attempted. Tier-aware order must put the real file
+// first regardless of arrival time.
+function realCandidate(
+  messageId: string,
+  attachmentName: string,
+  receivedAt: string,
+  matchedIn: "attachment" | "body"
+): LateralDiscoveredEmail {
+  const receivedAtMs = Date.parse(receivedAt);
+  return {
+    messageId,
+    threadId: "t",
+    subject:
+      matchedIn === "attachment"
+        ? "FW: ATCI_Adhoc DS 18th Sep 2026"
+        : "FW: Ad hoc DS - AI & Data",
+    sender: "<anurag.shah@araresources.com>",
+    receivedAt,
+    receivedAtMs,
+    selection: {
+      selected: mockAttachment({
+        messageId,
+        attachmentId: `att-${messageId}`,
+        attachmentName,
+        receivedAt,
+        receivedAtMs,
+        sender: "<anurag.shah@araresources.com>",
+        matchedKeyword: {
+          keyword: "AdhocDS",
+          matchMode: "contains",
+          matchedIn,
+          priority: 1,
+        },
+      }),
+      selectionReason: "only",
+      rejectedAttachments: [],
+    },
+  };
+}
+
+const incidentCandidates: LateralDiscoveredEmail[] = [
+  realCandidate(
+    "1a0b3153fd0b6707",
+    "Book2.xlsx",
+    "2026-09-18T05:55:02.000Z",
+    "body"
+  ),
+  realCandidate(
+    "1a0b3154eb48ac9d",
+    "Book2.xlsx",
+    "2026-09-18T05:55:02.000Z",
+    "body"
+  ),
+  realCandidate(
+    "1a0b3dd462baf0ba",
+    "AdhocDS (Lateral Vendors) as on 18th Sep 2026.xlsx",
+    "2026-09-18T09:33:04.000Z",
+    "attachment"
+  ),
+  realCandidate(
+    "1a0b3ddba95cb3e0",
+    "AdhocDS (Lateral Vendors) as on 18th Sep 2026.xlsx",
+    "2026-09-18T09:33:06.000Z",
+    "attachment"
+  ),
+];
+
+// Old (chronological-only) order: Book2.xlsx tried first — this is the bug.
+const chronological = sortLateralDiscoveriesChronologically(incidentCandidates);
+assert(
+  chronological[0].selection.selected.attachmentName === "Book2.xlsx",
+  "sanity check: chronological-only order reproduces the incident (Book2.xlsx first)"
+);
+
+// New (tier-aware) order: the real, attachment-matched file must be tried first.
+const forProcessing = sortLateralDiscoveriesForProcessing(incidentCandidates);
+assert(
+  forProcessing[0].selection.selected.attachmentName ===
+    "AdhocDS (Lateral Vendors) as on 18th Sep 2026.xlsx",
+  "tier-aware order must try the real attachment-matched file before the body-matched decoy"
+);
+assert(
+  forProcessing[1].selection.selected.attachmentName ===
+    "AdhocDS (Lateral Vendors) as on 18th Sep 2026.xlsx",
+  "both real-file duplicate messages must sort before both decoy duplicates"
+);
+assert(
+  forProcessing[0].messageId === "1a0b3dd462baf0ba",
+  "within the same tier, earlier-received message must still come first (09:33:04 before 09:33:06)"
+);
+assert(
+  forProcessing[2].selection.selected.attachmentName === "Book2.xlsx" &&
+    forProcessing[3].selection.selected.attachmentName === "Book2.xlsx",
+  "decoy duplicates must sort last, after both real-file candidates"
+);
 
 console.log("verify-lateral-excel-discovery: OK");
