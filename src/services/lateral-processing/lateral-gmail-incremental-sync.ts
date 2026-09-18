@@ -360,10 +360,12 @@ export async function runLateralGmailIncrementalSync(
       if (!data) {
         throw new Error("Gmail returned an empty attachment body.");
       }
-      const buffer = Buffer.from(data, "base64url");
+      let buffer: Buffer = Buffer.from(data, "base64url");
       await fs.writeFile(tempPath, buffer);
 
-      const integrity = await validateExcelBuffer(buffer, originalFilename);
+      const integrity = await validateExcelBuffer(buffer, originalFilename, {
+        password: process.env.ARA_LATERAL_EXCEL_PASSWORD || undefined,
+      });
       if (!integrity.ok) {
         failedCount += 1;
         stoppedOnFailure = true;
@@ -373,6 +375,8 @@ export async function runLateralGmailIncrementalSync(
           attachmentName: originalFilename,
           receivedAt: row.receivedAt,
           receivedAtMs: row.receivedAtMs,
+          sender: discovery.sender,
+          subject: discovery.subject,
           status: "validation_failed",
           error: integrity.error ?? "Excel validation failed.",
           selectionReason: discovery.selection.selectionReason,
@@ -383,9 +387,23 @@ export async function runLateralGmailIncrementalSync(
           messageId: row.messageId,
           attachmentName: originalFilename,
           error: integrity.error,
+          errorCode: integrity.errorCode,
         });
         // Do NOT advance checkpoint — retry this email next run.
         break;
+      }
+
+      if (integrity.wasEncrypted && integrity.decryptedBuffer) {
+        // Decrypted bytes are what get stored/uploaded going forward —
+        // overwrite the still-encrypted temp file written above.
+        buffer = integrity.decryptedBuffer;
+        await fs.writeFile(tempPath, buffer);
+        await appendLog({
+          at: new Date().toISOString(),
+          event: "lateral_gmail_attachment_decrypted",
+          messageId: row.messageId,
+          attachmentName: originalFilename,
+        });
       }
 
       // Lateral Drive upload stage (COMMON Google Drive connection).
@@ -457,6 +475,8 @@ export async function runLateralGmailIncrementalSync(
           attachmentName: originalFilename,
           receivedAt: row.receivedAt,
           receivedAtMs: row.receivedAtMs,
+          sender: discovery.sender,
+          subject: discovery.subject,
           status: "upload_failed",
           error: message,
           driveFileId: null,
@@ -537,6 +557,8 @@ export async function runLateralGmailIncrementalSync(
           attachmentName: originalFilename,
           receivedAt: row.receivedAt,
           receivedAtMs: row.receivedAtMs,
+          sender: discovery.sender,
+          subject: discovery.subject,
           status: missing ? "source_sheet_missing" : "source_read_failed",
           error: message,
           driveFileId,
@@ -644,6 +666,8 @@ export async function runLateralGmailIncrementalSync(
               attachmentName: originalFilename,
               receivedAt: row.receivedAt,
               receivedAtMs: row.receivedAtMs,
+              sender: discovery.sender,
+              subject: discovery.subject,
               status: "new_sheet_structure_failed",
               error: message,
               driveFileId,
@@ -691,6 +715,8 @@ export async function runLateralGmailIncrementalSync(
             attachmentName: originalFilename,
             receivedAt: row.receivedAt,
             receivedAtMs: row.receivedAtMs,
+            sender: discovery.sender,
+            subject: discovery.subject,
             status: "master_discovery_failed",
             error: message,
             driveFileId,
@@ -813,6 +839,8 @@ export async function runLateralGmailIncrementalSync(
         attachmentName: originalFilename,
         receivedAt: row.receivedAt,
         receivedAtMs: row.receivedAtMs,
+        sender: discovery.sender,
+        subject: discovery.subject,
         status: "download_failed",
         error: message,
         selectionReason: discovery.selection.selectionReason,

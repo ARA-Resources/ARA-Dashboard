@@ -313,10 +313,12 @@ export async function runExecutiveGmailIncrementalSync(
       if (!data) {
         throw new Error("Gmail returned an empty attachment body.");
       }
-      const buffer = Buffer.from(data, "base64url");
+      let buffer: Buffer = Buffer.from(data, "base64url");
       await fs.writeFile(tempPath, buffer);
 
-      const integrity = await validateExcelBuffer(buffer, originalFilename);
+      const integrity = await validateExcelBuffer(buffer, originalFilename, {
+        password: process.env.ARA_EXECUTIVE_EXCEL_PASSWORD || undefined,
+      });
       if (!integrity.ok) {
         failedCount += 1;
         stoppedOnFailure = true;
@@ -336,9 +338,23 @@ export async function runExecutiveGmailIncrementalSync(
           messageId: row.messageId,
           attachmentName: originalFilename,
           error: integrity.error,
+          errorCode: integrity.errorCode,
         });
         // Do NOT advance checkpoint — retry this email next run.
         break;
+      }
+
+      if (integrity.wasEncrypted && integrity.decryptedBuffer) {
+        // Decrypted bytes are what get stored/uploaded going forward —
+        // overwrite the still-encrypted temp file written above.
+        buffer = integrity.decryptedBuffer;
+        await fs.writeFile(tempPath, buffer);
+        await appendLog({
+          at: new Date().toISOString(),
+          event: "executive_gmail_attachment_decrypted",
+          messageId: row.messageId,
+          attachmentName: originalFilename,
+        });
       }
 
       let driveFileId: string;

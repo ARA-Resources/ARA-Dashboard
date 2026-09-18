@@ -212,7 +212,7 @@ export function classifyLateralFailure(input: {
   if (status === "source_sheet_missing" || /atci ds/.test(err)) {
     return { code: "ATCI_DS_MISSING", stage: "atci_ds" };
   }
-  if (status === "new_sheet_structure_failed" || /header/.test(err)) {
+  if (status === "new_sheet_structure_failed") {
     return { code: "HEADER_MISMATCH", stage: "header_structure" };
   }
   if (status === "master_discovery_failed") {

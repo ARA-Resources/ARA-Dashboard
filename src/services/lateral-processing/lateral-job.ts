@@ -90,6 +90,14 @@ async function executeLateralDatasetJobBody(
 
   let syncResult: Awaited<ReturnType<typeof runLateralGmailIncrementalSync>> | null =
     null;
+  // The specific sync item this run actually attempted and failed on (if any) —
+  // hoisted so the sync-history row below can prefer THIS run's real
+  // messageId/sender/subject/attachmentName over the stale pre-run checkpoint.
+  let failedItem:
+    | NonNullable<
+        Awaited<ReturnType<typeof runLateralGmailIncrementalSync>>
+      >["items"][number]
+    | undefined;
   let pipelineSummary: {
     rowsImported: number;
     newCount: number;
@@ -108,7 +116,7 @@ async function executeLateralDatasetJobBody(
     parts.push(`Gmail/Drive: ${syncResult.message}`);
 
     if (stoppedOnUploadOrSyncFailure) {
-      const failedItem =
+      failedItem =
         syncResult.items.find((i) =>
           [
             "upload_failed",
@@ -361,12 +369,19 @@ async function executeLateralDatasetJobBody(
     .reverse()
     .find((i) => i.status === "uploaded_drive" || i.driveFileId);
 
+  // failedItem (this run's actual attempted-and-failed email, when there is
+  // one) takes priority over pending/lastUploaded/checkpoint fallbacks —
+  // otherwise a validation/download/etc. failure on a genuinely NEW email
+  // would misreport the PREVIOUS run's already-succeeded email/file instead
+  // of the one that actually failed just now.
   const sourceReceivedAt =
+    failedItem?.receivedAt ||
     pending?.receivedAt ||
     lastUploaded?.receivedAt ||
     syncResult?.checkpointBefore.receivedAt ||
     null;
   const sourceFilename =
+    failedItem?.attachmentName ||
     pending?.attachmentFilename ||
     lastUploaded?.attachmentName ||
     syncResult?.checkpointBefore.attachmentFilename ||
@@ -483,20 +498,28 @@ async function executeLateralDatasetJobBody(
 
   const syncSummary = {
     sourceEmail: formatEmailInfo({
-      sender: pending?.sender || lastUploaded?.sender,
-      subject: pending?.subject || lastUploaded?.subject,
+      sender: failedItem?.sender || pending?.sender || lastUploaded?.sender,
+      subject: failedItem?.subject || pending?.subject || lastUploaded?.subject,
       messageId:
+        failedItem?.messageId ||
         pending?.messageId ||
         lastUploaded?.messageId ||
         syncResult?.checkpointBefore.messageId,
       receivedAt: sourceReceivedAt,
     }),
     originalFilename: sourceFilename || "—",
-    googleDriveFileId:
-      pending?.driveFileId ||
-      lastUploaded?.driveFileId ||
-      syncResult?.checkpointBefore.driveFileId ||
-      "—",
+    // Note: a failedItem from an early failure (validation/download/etc.)
+    // never has its own driveFileId — the file never reached Drive. Falling
+    // back to pending/lastUploaded/checkpoint is correct ONLY when there is
+    // no failedItem; when there IS one, showing an unrelated OLD Drive file
+    // next to the NEW failed filename would be actively misleading, so that
+    // fallback chain is skipped entirely in that case.
+    googleDriveFileId: failedItem
+      ? failedItem.driveFileId || "—"
+      : pending?.driveFileId ||
+        lastUploaded?.driveFileId ||
+        syncResult?.checkpointBefore.driveFileId ||
+        "—",
     sourceReceivedAt,
     rowsImported: pipelineSummary?.rowsImported ?? 0,
     newCount: pipelineSummary?.newCount ?? 0,

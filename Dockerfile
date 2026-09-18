@@ -19,8 +19,10 @@ RUN apk update && apk add --no-cache \
     bash \
     python3 \
     py3-openpyxl \
+    py3-pip \
     su-exec \
     && ln -sf /usr/bin/python3 /usr/bin/python \
+    && pip install --no-cache-dir --break-system-packages msoffcrypto-tool \
     && rm -rf /var/cache/apk/*
 
 RUN mkdir -p /run/postgresql && chown -R postgres:postgres /run/postgresql
