@@ -70,6 +70,7 @@ async function main() {
       receivedAt: "2026-09-17T11:36:56.000Z",
       receivedAtMs: Date.parse("2026-09-17T11:36:56.000Z"),
       attachmentFilename: "AdhocDS (Lateral Vendors) as on 17th Sep 2026.xlsx",
+      attachmentSize: 3_083_203,
       driveFileId: "live-test-baseline-drive-id",
       processingResult: "SUCCESS",
     });
@@ -94,6 +95,7 @@ async function main() {
       receivedAt: "2026-09-18T09:33:04.000Z",
       receivedAtMs: Date.parse("2026-09-18T09:33:04.000Z"),
       attachmentFilename: "AdhocDS (Lateral Vendors) as on 18th Sep 2026.xlsx",
+      attachmentSize: 3_205_892,
       driveFileId: "live-test-realfile-drive-id",
     };
 
@@ -134,6 +136,7 @@ async function main() {
       receivedAt: goodCandidate.receivedAt,
       receivedAtMs: goodCandidate.receivedAtMs,
       attachmentFilename: goodCandidate.attachmentFilename,
+      attachmentSize: goodCandidate.attachmentSize,
       driveFileId: goodCandidate.driveFileId,
       processingResult: "SUCCESS",
     });
@@ -268,6 +271,7 @@ async function main() {
       receivedAt: "2026-09-19T09:33:04.000Z",
       receivedAtMs: Date.parse("2026-09-19T09:33:04.000Z"),
       attachmentFilename: "AdhocDS (Lateral Vendors) as on 19th Sep 2026.xlsx",
+      attachmentSize: 3_218_305,
       driveFileId: "live-test-clean-drive-id",
     };
     const cleanOutcome = evaluateLateralSyncQueueOutcome({
@@ -287,6 +291,7 @@ async function main() {
       receivedAt: cleanCandidate.receivedAt,
       receivedAtMs: cleanCandidate.receivedAtMs,
       attachmentFilename: cleanCandidate.attachmentFilename,
+      attachmentSize: cleanCandidate.attachmentSize,
       driveFileId: cleanCandidate.driveFileId,
       processingResult: "SUCCESS",
     });
@@ -370,6 +375,7 @@ async function main() {
           drive_file_id = ${originalCheckpoint.driveFileId},
           processed_at = ${originalCheckpoint.processedAt ? new Date(originalCheckpoint.processedAt) : null},
           result = ${originalCheckpoint.processingResult},
+          recent_fingerprints = ${sql.json(originalCheckpoint.recentFingerprints as never)},
           updated_at = now()
         WHERE account_email = 'default'
       `;

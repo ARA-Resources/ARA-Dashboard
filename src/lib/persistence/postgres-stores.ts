@@ -47,7 +47,14 @@ import type {
   OAuthStatePayload,
 } from "./interfaces";
 
-import type { LateralGmailCheckpoint } from "@/types/lateral-gmail-checkpoint";
+import type {
+  LateralGmailCheckpoint,
+  LateralGmailRecentFingerprint,
+} from "@/types/lateral-gmail-checkpoint";
+import {
+  appendRecentFingerprint,
+  type RecentFingerprintEntry,
+} from "@/services/gmail/attachments";
 import type { LateralSchedulerConfig, LateralJobStatus, LateralJobTrigger } from "@/types/lateral-scheduler";
 import type { LateralSyncHistoryEntry } from "@/types/lateral-sync-history";
 import type { ExecutiveSyncHistoryEntry } from "@/types/executive-sync-history";
@@ -77,6 +84,19 @@ import { DEFAULT_LATERAL_TIMEZONE } from "@/types/lateral-processing-setup";
 
 // ─── Gmail Checkpoint ────────────────────────────────────────────────────────
 
+function parsePgRecentFingerprints(value: unknown): LateralGmailRecentFingerprint[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is LateralGmailRecentFingerprint =>
+      !!entry &&
+      typeof entry === "object" &&
+      typeof (entry as Record<string, unknown>).fingerprint === "string" &&
+      typeof (entry as Record<string, unknown>).messageId === "string" &&
+      typeof (entry as Record<string, unknown>).receivedAtMs === "number" &&
+      typeof (entry as Record<string, unknown>).processedAt === "string"
+  );
+}
+
 function rowToCheckpoint(row: Record<string, unknown> | undefined): LateralGmailCheckpoint {
   if (!row) {
     return {
@@ -89,6 +109,7 @@ function rowToCheckpoint(row: Record<string, unknown> | undefined): LateralGmail
       driveFileId: null,
       processedAt: null,
       processingResult: null,
+      recentFingerprints: [],
       updatedAt: new Date().toISOString(),
     };
   }
@@ -106,6 +127,7 @@ function rowToCheckpoint(row: Record<string, unknown> | undefined): LateralGmail
       ? row.processed_at.toISOString()
       : typeof row.processed_at === "string" ? row.processed_at : null,
     processingResult: row.result === "SUCCESS" ? "SUCCESS" : null,
+    recentFingerprints: parsePgRecentFingerprints(row.recent_fingerprints),
     updatedAt: row.updated_at instanceof Date
       ? row.updated_at.toISOString()
       : typeof row.updated_at === "string" ? row.updated_at : new Date().toISOString(),
@@ -142,6 +164,7 @@ export class PostgresGmailCheckpointStore implements GmailCheckpointStore {
     processedAt?: string;
     processingResult: "SUCCESS";
     accountEmail?: string;
+    newFingerprint?: RecentFingerprintEntry;
   }): Promise<LateralGmailCheckpoint> {
     if (input.processingResult !== "SUCCESS") {
       throw new Error(
@@ -162,6 +185,22 @@ export class PostgresGmailCheckpointStore implements GmailCheckpointStore {
       ON CONFLICT (account_email) DO NOTHING
     `;
 
+    // Recent-fingerprint history is computed from a plain read, not folded
+    // into the CAS WHERE clause below — that clause is what actually
+    // prevents an out-of-order/duplicate checkpoint advance, which is the
+    // real correctness guarantee. A concurrent advance racing this read
+    // could at worst drop one history entry (self-healing on the very next
+    // successful run), never allow a stale or duplicate advance of the
+    // checkpoint cursor itself. This store never computes a fingerprint
+    // itself (that's dataset-specific) — it only appends/trims whatever the
+    // caller already computed; omit newFingerprint to leave history as-is
+    // (e.g. Executive, which doesn't populate this yet).
+    const currentFingerprints =
+      (await this.read(account)).recentFingerprints ?? [];
+    const nextFingerprints = input.newFingerprint
+      ? appendRecentFingerprint(currentFingerprints, input.newFingerprint)
+      : currentFingerprints;
+
     // Optimistic CAS: only advance if stored value is NULL or OLDER than incoming
     const result = await sql`
       UPDATE gmail_checkpoint
@@ -174,6 +213,7 @@ export class PostgresGmailCheckpointStore implements GmailCheckpointStore {
         drive_file_id   = ${input.driveFileId},
         processed_at    = ${processedAt},
         result          = 'SUCCESS',
+        recent_fingerprints = ${sql.json(nextFingerprints as never)},
         updated_at      = ${now}
       WHERE account_email = ${account}
         AND (received_at_ms IS NULL OR received_at_ms < ${input.receivedAtMs}

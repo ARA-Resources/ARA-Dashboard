@@ -151,3 +151,27 @@ export function versionGroupKey(
     ""
   )}`;
 }
+
+export interface RecentFingerprintEntry {
+  fingerprint: string;
+  messageId: string;
+  receivedAtMs: number;
+  processedAt: string;
+}
+
+/** Bound on how many recently-processed fingerprints a checkpoint remembers. */
+export const RECENT_FINGERPRINT_LIMIT = 25;
+
+/**
+ * Append a newly-processed fingerprint to a bounded, deduped history list.
+ * Pure — callers own persistence. Dedupes by fingerprint (keeping the new
+ * entry's position) so a reprocessed fingerprint doesn't pile up multiple
+ * stale entries, then trims to the most recent `RECENT_FINGERPRINT_LIMIT`.
+ */
+export function appendRecentFingerprint(
+  prior: RecentFingerprintEntry[],
+  entry: RecentFingerprintEntry
+): RecentFingerprintEntry[] {
+  const deduped = prior.filter((e) => e.fingerprint !== entry.fingerprint);
+  return [...deduped, entry].slice(-RECENT_FINGERPRINT_LIMIT);
+}

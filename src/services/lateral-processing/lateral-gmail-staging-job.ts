@@ -386,6 +386,7 @@ export async function executeLateralGmailStagingJob(options: {
         receivedAt: pending.receivedAt,
         receivedAtMs: pending.receivedAtMs,
         attachmentFilename: pending.attachmentFilename,
+        attachmentSize: pending.attachmentSize,
         driveFileId: pending.driveFileId,
         processingResult: "SUCCESS",
       });

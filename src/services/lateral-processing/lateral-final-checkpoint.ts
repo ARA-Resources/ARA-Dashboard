@@ -166,6 +166,7 @@ export async function advanceFinalLateralGmailCheckpoint(
     receivedAt: pending.receivedAt,
     receivedAtMs: pending.receivedAtMs,
     attachmentFilename: pending.attachmentFilename,
+    attachmentSize: pending.attachmentSize,
     driveFileId: pending.driveFileId,
     processedAt,
     processingResult: LATERAL_CHECKPOINT_PROCESSING_SUCCESS,

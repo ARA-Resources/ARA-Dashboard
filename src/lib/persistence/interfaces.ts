@@ -9,6 +9,7 @@
  */
 
 import type { LateralGmailCheckpoint } from "@/types/lateral-gmail-checkpoint";
+import type { RecentFingerprintEntry } from "@/services/gmail/attachments";
 import type { LateralSchedulerConfig } from "@/types/lateral-scheduler";
 import type { ExecutiveSchedulerConfig } from "@/types/executive-scheduler";
 import type {
@@ -55,6 +56,15 @@ export interface GmailCheckpointStore {
     processedAt?: string;
     processingResult: "SUCCESS";
     accountEmail?: string;
+    /**
+     * Pre-computed content-fingerprint entry to append to the checkpoint's
+     * recentFingerprints history. Optional and dataset-agnostic by design —
+     * the store itself never computes a fingerprint (that's dataset-specific,
+     * e.g. `datasetName: "Lateral"`), it only appends/trims whatever the
+     * caller hands it. Omit to leave the history unchanged (Executive does
+     * not populate this yet).
+     */
+    newFingerprint?: RecentFingerprintEntry;
   }): Promise<LateralGmailCheckpoint>;
 }
 

@@ -7,6 +7,15 @@
  */
 export type LateralCheckpointProcessingResult = "SUCCESS";
 
+/** One entry in the bounded recently-processed-fingerprint history. */
+export interface LateralGmailRecentFingerprint {
+  /** `attachmentFingerprint()` value: dataset::filename::size */
+  fingerprint: string;
+  messageId: string;
+  receivedAtMs: number;
+  processedAt: string;
+}
+
 export interface LateralGmailCheckpoint {
   version: 1;
   /** Gmail message ID of the last successfully processed matching email */
@@ -28,6 +37,16 @@ export interface LateralGmailCheckpoint {
    * null means empty / not yet successfully completed.
    */
   processingResult: LateralCheckpointProcessingResult | null;
+  /**
+   * Bounded history of recently-processed content fingerprints (filename+size),
+   * newest last. Catches a same-content duplicate arriving under a DIFFERENT
+   * Gmail messageId (e.g. a forwarded copy) that the single (receivedAtMs,
+   * messageId) cursor above cannot recognize as already-processed on its own.
+   * Optional: this type is reused as-is by Executive's checkpoint (see
+   * executive-gmail-checkpoint-store.ts), which does not populate this field
+   * yet — always present and populated for Lateral.
+   */
+  recentFingerprints?: LateralGmailRecentFingerprint[];
   updatedAt: string;
 }
 

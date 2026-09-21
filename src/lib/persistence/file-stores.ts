@@ -70,6 +70,7 @@ import type {
 } from "./interfaces";
 
 import type { LateralGmailCheckpoint } from "@/types/lateral-gmail-checkpoint";
+import type { RecentFingerprintEntry } from "@/services/gmail/attachments";
 import type { BusinessUnitId } from "@/types/business-unit";
 import type { MergeHomeUnitMetricsInput } from "@/services/home/home-widgets-metrics-store";
 import type { AppNotificationKind } from "@/types/notifications";
@@ -91,8 +92,17 @@ export class FileGmailCheckpointStore implements GmailCheckpointStore {
     processedAt?: string;
     processingResult: "SUCCESS";
     accountEmail?: string;
+    newFingerprint?: RecentFingerprintEntry;
   }): Promise<LateralGmailCheckpoint> {
-    return advanceLateralGmailCheckpoint(input);
+    // Pre-existing: this class ignores accountEmail (like read() above) and
+    // always delegates to Lateral's own file, so it is not genuinely
+    // account-aware — not exercised by any real caller today (both Lateral
+    // and Executive only reach getGmailCheckpointStore() in Postgres mode).
+    // advanceLateralGmailCheckpoint() needs a raw attachment size to compute
+    // its own fingerprint, which this generic interface doesn't carry
+    // (newFingerprint here is already pre-computed) — size 0 is a
+    // placeholder, harmless given this path isn't actually reached.
+    return advanceLateralGmailCheckpoint({ ...input, attachmentSize: 0 });
   }
 }
 

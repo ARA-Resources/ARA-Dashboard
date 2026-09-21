@@ -10,8 +10,13 @@ import {
   sortLateralDiscoveriesForProcessing,
   type LateralDiscoveredEmail,
 } from "../src/services/lateral-processing/lateral-excel-discovery";
-import type { RawGmailAttachment } from "../src/services/gmail/attachments";
+import {
+  isAfterLateralGmailCheckpoint,
+  isKnownProcessedLateralFingerprint,
+} from "../src/services/lateral-processing/lateral-gmail-checkpoint-store";
+import { appendRecentFingerprint, attachmentFingerprint, type RawGmailAttachment } from "../src/services/gmail/attachments";
 import type { DatasetKeywordConfig } from "../src/types/dataset-setup";
+import type { LateralGmailCheckpoint } from "../src/types/lateral-gmail-checkpoint";
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg);
@@ -34,7 +39,7 @@ function mockAttachment(
     attachmentId: partial.attachmentId,
     attachmentName: partial.attachmentName,
     mimeType: "application/vnd.ms-excel.sheet.macroEnabled.12",
-    size: 100,
+    size: partial.size ?? 100,
     matchedKeyword: partial.matchedKeyword ?? {
       keyword: "ATCI Lateral",
       matchMode: "contains",
@@ -320,6 +325,150 @@ assert(
   forProcessing[2].selection.selected.attachmentName === "Book2.xlsx" &&
     forProcessing[3].selection.selected.attachmentName === "Book2.xlsx",
   "decoy duplicates must sort last, after both real-file candidates"
+);
+
+// --- Regression: 2026-09-21 incident — stale duplicates starving the real file ---
+// Real shape from that day's .data/logs/lateral-gmail-2026-09-21.jsonl:
+// checkpoint sat on the 18th-Sep file; two near-duplicate messages carrying
+// the SAME 18th-Sep attachment content kept re-qualifying as "new" candidates
+// (one via the exact-same-messageId/attachmentId-churn bug, one via a
+// genuinely different messageId carrying identical content) and, because
+// they're older, always sorted ahead of the genuinely new 21st-Sep file
+// under sortLateralDiscoveriesForProcessing's oldest-first tie-break — so
+// the real file was never tried. This reproduces the full discovery
+// pipeline (checkpoint filter -> fingerprint filter -> tier sort) the way
+// the real loop in lateral-gmail-incremental-sync.ts applies it, and
+// asserts only the genuine candidate survives.
+const STALE_FILENAME = "AdhocDS (Lateral Vendors) as on 18th Sep 2026.xlsx";
+const STALE_SIZE = 3_205_892;
+const GENUINE_FILENAME = "AdhocDS (Lateral Vendors) as on 21st Sep 2026.xlsx";
+const GENUINE_SIZE = 3_312_500;
+
+const incidentCheckpoint: LateralGmailCheckpoint = {
+  version: 1,
+  messageId: "1a0b3dd462baf0ba",
+  attachmentId: "some-attachment-id-from-checkpoint-time",
+  receivedAt: "2026-09-18T09:33:04.000Z",
+  receivedAtMs: Date.parse("2026-09-18T09:33:04.000Z"),
+  attachmentFilename: STALE_FILENAME,
+  driveFileId: "drive-checkpointed",
+  processedAt: "2026-09-18T12:02:50.945Z",
+  processingResult: "SUCCESS",
+  recentFingerprints: appendRecentFingerprint([], {
+    fingerprint: attachmentFingerprint({
+      datasetName: "Lateral",
+      attachmentName: STALE_FILENAME,
+      size: STALE_SIZE,
+    }),
+    messageId: "1a0b3dd462baf0ba",
+    receivedAtMs: Date.parse("2026-09-18T09:33:04.000Z"),
+    processedAt: "2026-09-18T12:02:50.945Z",
+  }),
+  updatedAt: "2026-09-18T12:02:50.945Z",
+};
+
+function incidentCandidate(
+  messageId: string,
+  attachmentName: string,
+  size: number,
+  receivedAt: string
+): LateralDiscoveredEmail {
+  const receivedAtMs = Date.parse(receivedAt);
+  return {
+    messageId,
+    threadId: "t",
+    subject: "Fwd/FW: ATCI_Adhoc DS",
+    sender: "<someone@araresources.com>",
+    receivedAt,
+    receivedAtMs,
+    selection: {
+      selected: mockAttachment({
+        messageId,
+        attachmentId: `att-${messageId}`,
+        attachmentName,
+        receivedAt,
+        receivedAtMs,
+        sender: "<someone@araresources.com>",
+        size,
+        matchedKeyword: {
+          keyword: "AdhocDS",
+          matchMode: "contains",
+          matchedIn: "attachment",
+          priority: 1,
+        },
+      }),
+      selectionReason: "only",
+      rejectedAttachments: [],
+    },
+  };
+}
+
+const staleExactSameMessage = incidentCandidate(
+  "1a0b3dd462baf0ba", // same messageId as the checkpoint itself
+  STALE_FILENAME,
+  STALE_SIZE,
+  "2026-09-18T09:33:04.000Z"
+);
+const staleDifferentMessageSameContent = incidentCandidate(
+  "1a0b3ddba95cb3e0", // different messageId, later receivedAtMs, identical content
+  STALE_FILENAME,
+  STALE_SIZE,
+  "2026-09-18T09:33:06.000Z"
+);
+const genuineNewCandidate = incidentCandidate(
+  "1a0c31f2f1fffcb1",
+  GENUINE_FILENAME,
+  GENUINE_SIZE,
+  "2026-09-21T08:39:37.000Z"
+);
+
+// Mirrors the discovery loop's two-stage filter in
+// lateral-gmail-incremental-sync.ts: isAfterLateralGmailCheckpoint first,
+// then isKnownProcessedLateralFingerprint.
+function discoveryFilter(
+  candidates: LateralDiscoveredEmail[],
+  checkpoint: LateralGmailCheckpoint
+): LateralDiscoveredEmail[] {
+  return candidates.filter((c) => {
+    const selected = c.selection.selected;
+    if (
+      !isAfterLateralGmailCheckpoint(
+        {
+          messageId: selected.messageId,
+          attachmentId: selected.attachmentId,
+          receivedAtMs: selected.receivedAtMs,
+        },
+        checkpoint
+      )
+    ) {
+      return false;
+    }
+    if (
+      isKnownProcessedLateralFingerprint(
+        { attachmentName: selected.attachmentName, size: selected.size },
+        checkpoint
+      )
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
+const filtered = discoveryFilter(
+  [staleExactSameMessage, staleDifferentMessageSameContent, genuineNewCandidate],
+  incidentCheckpoint
+);
+assert(
+  filtered.length === 1 && filtered[0].messageId === "1a0c31f2f1fffcb1",
+  `hardened discovery filter must leave only the genuine 21st-Sep candidate, got ${JSON.stringify(filtered.map((f) => f.messageId))}`
+);
+
+const finalQueue = sortLateralDiscoveriesForProcessing(filtered);
+assert(
+  finalQueue.length === 1 &&
+    finalQueue[0].selection.selected.attachmentName === GENUINE_FILENAME,
+  "final processing queue must contain only the genuine candidate — neither stale duplicate reaches the queue at all"
 );
 
 console.log("verify-lateral-excel-discovery: OK");

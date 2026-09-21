@@ -115,6 +115,11 @@ async function main() {
           receivedAt: c.receivedAt ?? new Date(c.receivedAtMs).toISOString(),
           receivedAtMs: c.receivedAtMs,
           attachmentFilename: c.attachmentFilename ?? "unknown.xlsx",
+          // Legacy pre-migration checkpoint shape never recorded attachment
+          // size; unknown for this one-off historical migration. Only used
+          // to seed the recent-fingerprint dedup history, so 0 is harmless
+          // here (this script has already been run once, historically).
+          attachmentSize: 0,
           driveFileId: c.driveFileId ?? "unknown",
           processedAt: c.processedAt ?? new Date().toISOString(),
           processingResult: "SUCCESS",

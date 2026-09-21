@@ -4,9 +4,14 @@ import type {
   LateralCheckpointProcessingResult,
   LateralGmailCheckpoint,
   LateralGmailCheckpointCursor,
+  LateralGmailRecentFingerprint,
 } from "@/types/lateral-gmail-checkpoint";
 import { isPostgresMode } from "@/lib/persistence/persistence-mode";
 import { getGmailCheckpointStore } from "@/lib/persistence/store-factory";
+import {
+  appendRecentFingerprint,
+  attachmentFingerprint,
+} from "@/services/gmail/attachments";
 
 const STORE_PATH = path.join(
   process.cwd(),
@@ -25,8 +30,22 @@ function emptyCheckpoint(): LateralGmailCheckpoint {
     driveFileId: null,
     processedAt: null,
     processingResult: null,
+    recentFingerprints: [],
     updatedAt: new Date().toISOString(),
   };
+}
+
+function parseRecentFingerprints(value: unknown): LateralGmailRecentFingerprint[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is LateralGmailRecentFingerprint =>
+      !!entry &&
+      typeof entry === "object" &&
+      typeof (entry as Record<string, unknown>).fingerprint === "string" &&
+      typeof (entry as Record<string, unknown>).messageId === "string" &&
+      typeof (entry as Record<string, unknown>).receivedAtMs === "number" &&
+      typeof (entry as Record<string, unknown>).processedAt === "string"
+  );
 }
 
 export async function readLateralGmailCheckpoint(): Promise<LateralGmailCheckpoint> {
@@ -58,6 +77,7 @@ export async function readLateralGmailCheckpoint(): Promise<LateralGmailCheckpoi
         typeof parsed.processedAt === "string" ? parsed.processedAt : null,
       processingResult:
         parsed.processingResult === "SUCCESS" ? "SUCCESS" : null,
+      recentFingerprints: parseRecentFingerprints(parsed.recentFingerprints),
       updatedAt:
         typeof parsed.updatedAt === "string"
           ? parsed.updatedAt
@@ -78,16 +98,12 @@ export async function advanceLateralGmailCheckpoint(input: {
   receivedAt: string;
   receivedAtMs: number;
   attachmentFilename: string;
+  /** Attachment size in bytes — used only to compute a content fingerprint. */
+  attachmentSize: number;
   driveFileId: string;
   processedAt?: string;
   processingResult: LateralCheckpointProcessingResult;
 }): Promise<LateralGmailCheckpoint> {
-  if (isPostgresMode()) {
-    return getGmailCheckpointStore().advance({
-      ...input,
-      processingResult: "SUCCESS",
-    });
-  }
   if (input.processingResult !== "SUCCESS") {
     throw new Error(
       "Lateral Gmail checkpoint may only be written with processingResult=SUCCESS."
@@ -99,14 +115,41 @@ export async function advanceLateralGmailCheckpoint(input: {
     !input.receivedAt.trim() ||
     !Number.isFinite(input.receivedAtMs) ||
     !input.attachmentFilename.trim() ||
+    !Number.isFinite(input.attachmentSize) ||
     !input.driveFileId.trim()
   ) {
     throw new Error(
-      "Lateral Gmail checkpoint requires Message ID, email timestamp, original attachment filename, and Drive file ID."
+      "Lateral Gmail checkpoint requires Message ID, email timestamp, original attachment filename, attachment size, and Drive file ID."
     );
   }
 
   const processedAt = input.processedAt ?? new Date().toISOString();
+  const newFingerprint = {
+    fingerprint: attachmentFingerprint({
+      datasetName: "Lateral",
+      attachmentName: input.attachmentFilename.trim(),
+      size: input.attachmentSize,
+    }),
+    messageId: input.messageId.trim(),
+    receivedAtMs: input.receivedAtMs,
+    processedAt,
+  };
+
+  if (isPostgresMode()) {
+    return getGmailCheckpointStore().advance({
+      messageId: input.messageId,
+      attachmentId: input.attachmentId,
+      receivedAt: input.receivedAt,
+      receivedAtMs: input.receivedAtMs,
+      attachmentFilename: input.attachmentFilename,
+      driveFileId: input.driveFileId,
+      processedAt: input.processedAt,
+      processingResult: "SUCCESS",
+      newFingerprint,
+    });
+  }
+
+  const current = await readLateralGmailCheckpoint();
   const next: LateralGmailCheckpoint = {
     version: 1,
     messageId: input.messageId.trim(),
@@ -117,6 +160,10 @@ export async function advanceLateralGmailCheckpoint(input: {
     driveFileId: input.driveFileId.trim(),
     processedAt,
     processingResult: "SUCCESS",
+    recentFingerprints: appendRecentFingerprint(
+      current.recentFingerprints ?? [],
+      newFingerprint
+    ),
     updatedAt: new Date().toISOString(),
   };
   await fs.mkdir(path.dirname(STORE_PATH), { recursive: true });
@@ -125,7 +172,18 @@ export async function advanceLateralGmailCheckpoint(input: {
 }
 
 /**
- * Strict cursor compare: (receivedAtMs, messageId, attachmentId).
+ * Strict cursor compare: (receivedAtMs, messageId) only.
+ *
+ * `attachmentId` is deliberately NOT part of this comparison. Gmail's
+ * attachmentId is not guaranteed stable across separate `messages.get()`
+ * calls for the very same message/attachment — a fresh fetch of an
+ * already-checkpointed message can return a different-looking attachmentId
+ * that would otherwise sort lexicographically after the one stored at
+ * checkpoint time, spuriously re-admitting an already-processed message as
+ * "new" (confirmed live, 2026-09-21). When receivedAtMs and messageId both
+ * match the checkpoint exactly, this is unambiguously the same message —
+ * there is nothing left to tie-break on.
+ *
  * Positive means `candidate` is strictly after `cursor`.
  */
 export function compareLateralGmailCursor(
@@ -135,9 +193,7 @@ export function compareLateralGmailCursor(
   if (candidate.receivedAtMs !== cursor.receivedAtMs) {
     return candidate.receivedAtMs - cursor.receivedAtMs;
   }
-  const byMessage = candidate.messageId.localeCompare(cursor.messageId);
-  if (byMessage !== 0) return byMessage;
-  return candidate.attachmentId.localeCompare(cursor.attachmentId);
+  return candidate.messageId.localeCompare(cursor.messageId);
 }
 
 export function isAfterLateralGmailCheckpoint(
@@ -153,5 +209,27 @@ export function isAfterLateralGmailCheckpoint(
       attachmentId: checkpoint.attachmentId || "",
       receivedAtMs: checkpoint.receivedAtMs,
     }) > 0
+  );
+}
+
+/**
+ * True when `candidate`'s content (filename+size fingerprint) matches a
+ * recently-processed entry in the checkpoint's bounded history — catches a
+ * same-content duplicate arriving under a DIFFERENT Gmail messageId (e.g. a
+ * forwarded copy), which `isAfterLateralGmailCheckpoint`'s single cursor
+ * cannot recognize on its own (confirmed live, 2026-09-21: two distinct
+ * messageIds carried the same stale attachment, seconds apart).
+ */
+export function isKnownProcessedLateralFingerprint(
+  candidate: { attachmentName: string; size: number },
+  checkpoint: LateralGmailCheckpoint
+): boolean {
+  const fingerprint = attachmentFingerprint({
+    datasetName: "Lateral",
+    attachmentName: candidate.attachmentName,
+    size: candidate.size,
+  });
+  return (checkpoint.recentFingerprints ?? []).some(
+    (entry) => entry.fingerprint === fingerprint
   );
 }

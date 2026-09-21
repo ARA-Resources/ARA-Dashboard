@@ -30,8 +30,10 @@ import {
 } from "@/services/lateral-processing/lateral-excel-discovery";
 import {
   isAfterLateralGmailCheckpoint,
+  isKnownProcessedLateralFingerprint,
   readLateralGmailCheckpoint,
 } from "@/services/lateral-processing/lateral-gmail-checkpoint-store";
+import { attachmentFingerprint } from "@/services/gmail/attachments";
 import { isRecoverableLateralSyncItemStatus } from "@/services/lateral-processing/lateral-failure-handling";
 import {
   ATCI_DS_WORKSHEET_NOT_FOUND,
@@ -69,7 +71,8 @@ export interface LateralIncrementalSyncItem {
     | "source_read_failed"
     | "master_discovery_failed"
     | "new_sheet_structure_failed"
-    | "skipped";
+    | "skipped"
+    | "duplicate_of_processed";
   driveFileId?: string | null;
   error?: string;
   selectionReason?: string;
@@ -99,6 +102,8 @@ export interface LateralPendingCheckpointAdvance {
   receivedAt: string;
   receivedAtMs: number;
   attachmentFilename: string;
+  /** Attachment size in bytes — used only to compute a content fingerprint. */
+  attachmentSize: number;
   driveFileId: string;
   /**
    * Local temp path of the downloaded workbook (Phase 3A staging handoff).
@@ -303,6 +308,27 @@ export async function runLateralGmailIncrementalSync(
         checkpointBefore
       )
     ) {
+      continue;
+    }
+
+    // A DIFFERENT messageId (e.g. a forwarded copy) can still carry the
+    // exact same, already-processed attachment content — the cursor check
+    // above can't see that. Exclude it via the recent-fingerprint history.
+    if (
+      isKnownProcessedLateralFingerprint(
+        { attachmentName: selected.attachmentName, size: selected.size },
+        checkpointBefore
+      )
+    ) {
+      await appendLog({
+        at: new Date().toISOString(),
+        event: "lateral_excel_discovery_duplicate_content_skipped",
+        messageId: discovered.messageId,
+        attachmentFilename: selected.attachmentName,
+        size: selected.size,
+        reason:
+          "Matches a recently processed Lateral attachment fingerprint — excluded as a stale duplicate.",
+      });
       continue;
     }
 
@@ -857,6 +883,7 @@ export async function runLateralGmailIncrementalSync(
         receivedAt: row.receivedAt,
         receivedAtMs: row.receivedAtMs,
         attachmentFilename: originalFilename,
+        attachmentSize: row.size,
         driveFileId,
         localWorkbookPath: tempPath,
         sender: discovery.sender,
@@ -907,9 +934,66 @@ export async function runLateralGmailIncrementalSync(
 
       // A working candidate was found and fully processed for this run —
       // stop here rather than trying any remaining queued candidates.
-      // Same-day duplicates almost always carry identical content; letting
-      // the loop continue risks double-processing the same demand sheet
-      // (e.g. double-counting "new" rows on New Sheet append).
+      // runLateralDatasetPipeline() runs exactly once per job, against
+      // whichever file was just promoted into datasetCurrentDir("Lateral"),
+      // so actually processing a second, distinct candidate in this same
+      // run would upload/checkpoint it without ever running Master/New
+      // Sheet reconciliation for it — worse than deferring it. Before
+      // stopping, cheaply classify whatever's left in the queue (no
+      // downloads) so nothing is silently dropped: a same-content
+      // duplicate of what was just processed is recorded as skipped; a
+      // genuinely distinct candidate is logged as deferred — it will sort
+      // to the front and be tried automatically on the next run, since the
+      // checkpoint has already advanced past the item processed here.
+      const processedFingerprint = attachmentFingerprint({
+        datasetName: "Lateral",
+        attachmentName: originalFilename,
+        size: row.size,
+      });
+      const remainingQueue = queue.slice(queue.indexOf(discovery) + 1);
+      for (const candidate of remainingQueue) {
+        const candidateRow = candidate.selection.selected;
+        const candidateFingerprint = attachmentFingerprint({
+          datasetName: "Lateral",
+          attachmentName: candidateRow.attachmentName,
+          size: candidateRow.size,
+        });
+        if (candidateFingerprint === processedFingerprint) {
+          skippedCandidates.push({
+            messageId: candidate.messageId,
+            attachmentId: candidateRow.attachmentId,
+            attachmentName: candidateRow.attachmentName,
+            receivedAt: candidate.receivedAt,
+            receivedAtMs: candidate.receivedAtMs,
+            sender: candidate.sender,
+            subject: candidate.subject,
+            status: "duplicate_of_processed",
+            error: `Same content as the candidate already processed this run ("${originalFilename}") — not reprocessed.`,
+          });
+          await appendLog({
+            at: new Date().toISOString(),
+            event: "lateral_candidate_skipped",
+            messageId: candidate.messageId,
+            attachmentName: candidateRow.attachmentName,
+            status: "duplicate_of_processed",
+            reason: "Same-content duplicate of the candidate processed this run.",
+          });
+        } else {
+          warnings.push(
+            `Additional distinct candidate "${candidateRow.attachmentName}" found this run — deferred to the next Run All.`
+          );
+          await appendLog({
+            at: new Date().toISOString(),
+            event: "lateral_excel_candidate_deferred_to_next_run",
+            messageId: candidate.messageId,
+            attachmentName: candidateRow.attachmentName,
+            receivedAt: candidate.receivedAt,
+            reason:
+              "Distinct candidate found alongside a successful upload in the same run — deferred to the next run rather than processed in this one.",
+          });
+        }
+      }
+
       break;
     } catch (error) {
       failedCount += 1;

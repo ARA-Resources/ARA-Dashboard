@@ -32,6 +32,7 @@
     "test:lateral-failure-recoverability": "tsx scripts/verify-lateral-failure-recoverability.ts",
     "test:lateral-run-all-continue": "tsx scripts/verify-lateral-run-all-continue.ts",
     "test:lateral-skip-and-continue-live": "tsx scripts/verify-lateral-skip-and-continue-live.ts",
+    "test:lateral-duplicate-fingerprint-live": "tsx scripts/verify-lateral-duplicate-fingerprint-live.ts",
     "test:lateral-posted-postgres-step18": "tsx scripts/verify-lateral-posted-postgres-step18.ts",
     "test:stepc-posted-safety": "tsx scripts/verify-stepc-posted-safety.ts",
     "worker:dev": "tsx --tsconfig worker/tsconfig.json worker/src/index.ts",
