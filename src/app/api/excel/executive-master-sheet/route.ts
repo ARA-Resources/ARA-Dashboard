@@ -34,10 +34,13 @@ function parseJsonRecord<T>(raw: string | null, fallback: T): T {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const schemaOnly = searchParams.get("schema") === "1";
+  const forceRefresh = searchParams.get("refresh") === "1";
 
   try {
     if (schemaOnly) {
-      const schema = await getExecutiveMasterSheetSchema();
+      const schema = await getExecutiveMasterSheetSchema(undefined, {
+        forceRefresh,
+      });
       return NextResponse.json({ ok: true, schema });
     }
 
@@ -55,13 +58,17 @@ export async function GET(request: Request) {
       Record<string, ExecutiveMasterDateFilter>
     >(searchParams.get("dateFilters"), {});
 
-    const result = await queryExecutiveMasterSheetPage({
-      page,
-      pageSize,
-      columnFilters,
-      textFilters,
-      dateFilters,
-    });
+    const result = await queryExecutiveMasterSheetPage(
+      {
+        page,
+        pageSize,
+        columnFilters,
+        textFilters,
+        dateFilters,
+      },
+      undefined,
+      { forceRefresh }
+    );
 
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {

@@ -92,11 +92,47 @@ function toSheetRow(row: ExecutiveMasterRow): ExecutiveMasterSheetPgRow {
   return next;
 }
 
+/**
+ * Short-lived cache + in-flight dedupe around the full-table read.
+ *
+ * The Master Sheet page always fires two requests in parallel on load (filter
+ * schema + page data), and every filter/pagination click re-requests the page
+ * data — each of those independently re-ran the identical unbounded
+ * `SELECT * FROM executive_master` and re-derived everything in Node. This
+ * collapses concurrent callers onto one DB round trip and reuses the result
+ * for a few seconds after, mirroring the TTL-cache pattern already used in
+ * `build-home-widgets.ts` / `folder-stats.ts`. `forceRefresh` (wired to the
+ * page's "Refresh" button) bypasses both.
+ */
+const ROWS_CACHE_TTL_MS = 10_000;
+let rowsCache: { rows: ExecutiveMasterSheetPgRow[]; at: number } | null = null;
+let rowsInFlight: Promise<ExecutiveMasterSheetPgRow[]> | null = null;
+
 async function loadRows(
-  sqlClient?: SqlClient
+  sqlClient?: SqlClient,
+  options?: { forceRefresh?: boolean }
 ): Promise<ExecutiveMasterSheetPgRow[]> {
-  const rows = await listExecutiveMasterRows(sqlClient);
-  return rows.map(toSheetRow);
+  const forceRefresh = options?.forceRefresh ?? false;
+
+  if (!forceRefresh && rowsCache && Date.now() - rowsCache.at < ROWS_CACHE_TTL_MS) {
+    return rowsCache.rows;
+  }
+  if (!forceRefresh && rowsInFlight) {
+    return rowsInFlight;
+  }
+
+  rowsInFlight = (async () => {
+    const rows = await listExecutiveMasterRows(sqlClient);
+    const mapped = rows.map(toSheetRow);
+    rowsCache = { rows: mapped, at: Date.now() };
+    return mapped;
+  })();
+
+  try {
+    return await rowsInFlight;
+  } finally {
+    rowsInFlight = null;
+  }
 }
 
 function asText(value: ExcelCellValue): string {
@@ -346,9 +382,10 @@ export function applyExecutiveMasterSheetFilters(
 }
 
 export async function getExecutiveMasterSheetSchema(
-  sqlClient?: SqlClient
+  sqlClient?: SqlClient,
+  options?: { forceRefresh?: boolean }
 ): Promise<ExecutiveMasterSheetSchema> {
-  const rows = await loadRows(sqlClient);
+  const rows = await loadRows(sqlClient, options);
   return {
     sheetName: EXECUTIVE_MASTER_SHEET_PG_NAME,
     sourceFile: EXECUTIVE_MASTER_PG_SOURCE_FILE,
@@ -360,9 +397,10 @@ export async function getExecutiveMasterSheetSchema(
 
 export async function queryExecutiveMasterSheetPage(
   query: ExecutiveMasterSheetQuery,
-  sqlClient?: SqlClient
+  sqlClient?: SqlClient,
+  options?: { forceRefresh?: boolean }
 ): Promise<ExecutiveMasterSheetPageResult> {
-  const rows = await loadRows(sqlClient);
+  const rows = await loadRows(sqlClient, options);
   const filtered = applyExecutiveMasterSheetFilters(rows, query);
   const page = paginateExecutiveRows(filtered, query.page, query.pageSize);
 
@@ -384,13 +422,14 @@ export async function queryExecutiveMasterSheetPage(
  * (ignore active UI filters, return everything).
  */
 export async function exportExecutiveMasterSheetRows(
-  sqlClient?: SqlClient
+  sqlClient?: SqlClient,
+  options?: { forceRefresh?: boolean }
 ): Promise<{
   rows: ExecutiveMasterSheetPgRow[];
   headers: string[];
   sheetName: string;
 }> {
-  const rows = await loadRows(sqlClient);
+  const rows = await loadRows(sqlClient, options);
   return {
     rows,
     headers: [...EXECUTIVE_MASTER_EXCEL_HEADERS],
