@@ -24,7 +24,7 @@
  *  - Every other blank cell — including every cell of a fully blank source
  *    row — is imported as the literal "-", not SQL NULL. This is an
  *    intentional, explicit choice for this table.
- *  - date_of_upload / submitted_date_tracker are stored as free TEXT, not
+ *  - date_of_upload / submitted_date are stored as free TEXT, not
  *    DATE. Genuine Excel date-serial/date cells are reformatted to
  *    DD/MM/YYYY text. A short, explicit list of known-bad source values is
  *    corrected to a literal override value (see DATE_OF_UPLOAD_OVERRIDES /
@@ -42,10 +42,52 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
 import postgres from "postgres";
-import {
-  CANDIDATE_MASTER_COLUMN_MAP,
-  type CandidateMasterSheetDbColumn,
-} from "../src/services/persistence/candidate-master-sheet-columns";
+import type { CandidateMasterSheetDbColumn } from "../src/services/persistence/candidate-master-sheet-columns";
+
+/**
+ * This script's own snapshot of the original legacy workbook's header
+ * spellings — deliberately NOT imported from candidate-master-sheet-columns.ts,
+ * whose `CANDIDATE_MASTER_EXCEL_HEADERS`/`_COLUMN_MAP` are the live
+ * dashboard's display shape and will keep evolving (see that file's C1
+ * doc comment). This script already ran once against prod and is frozen
+ * (aborts if `candidate_master` is non-empty, below); decoupling from the
+ * live map means a future dashboard column redesign can never change this
+ * historical script's typecheck or (hypothetical re-run) behavior.
+ */
+const LEGACY_IMPORT_COLUMN_ALIASES: ReadonlyArray<{
+  dbColumn: CandidateMasterSheetDbColumn;
+  importAliases: readonly string[];
+}> = [
+  { dbColumn: "cid", importAliases: ["CID"] },
+  { dbColumn: "name", importAliases: ["Name"] },
+  { dbColumn: "gender", importAliases: ["Diversity"] },
+  { dbColumn: "contact_number", importAliases: ["Contact Number"] },
+  { dbColumn: "date_of_upload", importAliases: ["Date of Upload"] },
+  { dbColumn: "submitter", importAliases: ["Recruiter"] },
+  {
+    dbColumn: "customer",
+    importAliases: ["ATCI - Vertical", "ATCI-Vertical", "ATCI Vertical"],
+  },
+  { dbColumn: "job_requisition_id", importAliases: ["Job Requisition ID"] },
+  { dbColumn: "primary_skills", importAliases: ["Role Name/Primary Skill"] },
+  {
+    dbColumn: "job_management_level",
+    importAliases: [
+      "Management Level /Career Level",
+      "Management Level/Career Level",
+    ],
+  },
+  { dbColumn: "market", importAliases: ["Market"] },
+  {
+    dbColumn: "submitted_date",
+    importAliases: [
+      "Submitted Date - Tracker (dd/mm/yyyy)",
+      "Submitted Date - Tracker",
+    ],
+  },
+  { dbColumn: "status", importAliases: ["Status (Recruiter)"] },
+  { dbColumn: "submission_comments", importAliases: ["Remarks - Status"] },
+];
 
 const SHEET_NAME = "ATCI";
 const NBSP_RE = / /g;
@@ -238,7 +280,7 @@ function mapHeaders(sourceHeaders: string[]):
   const missing: CandidateMasterSheetDbColumn[] = [];
   const ambiguous: string[] = [];
 
-  for (const entry of CANDIDATE_MASTER_COLUMN_MAP) {
+  for (const entry of LEGACY_IMPORT_COLUMN_ALIASES) {
     const aliases = entry.importAliases;
     const matches: Array<{ i: number; header: string }> = [];
 
@@ -375,18 +417,18 @@ interface BuiltRow {
   excelRow: number;
   cid: string;
   name: string;
-  diversity: string;
+  gender: string;
   contact_number: string;
   date_of_upload: string;
-  recruiter: string;
-  atci_vertical: string;
+  submitter: string;
+  customer: string;
   job_requisition_id: string;
-  role_name_primary_skill: string;
-  management_level: string;
+  primary_skills: string;
+  job_management_level: string;
   market: string;
-  submitted_date_tracker: string;
-  status_recruiter: string;
-  remarks_status: string;
+  submitted_date: string;
+  status: string;
+  submission_comments: string;
 }
 
 interface ValidationResult {
@@ -430,7 +472,7 @@ function validateAndBuild(
     const submittedDateTracker = dateCellToText(
       SUBMITTED_DATE_TRACKER_OVERRIDES,
       excelRow,
-      cell(cells, "submitted_date_tracker")
+      cell(cells, "submitted_date")
     );
     if (submittedDateTracker.overrideApplied) submittedDateTrackerOverridesApplied += 1;
 
@@ -438,18 +480,18 @@ function validateAndBuild(
       excelRow,
       cid: genericCellToText(cell(cells, "cid")),
       name: genericCellToText(cell(cells, "name")),
-      diversity: genericCellToText(cell(cells, "diversity")),
+      gender: genericCellToText(cell(cells, "gender")),
       contact_number: genericCellToText(contactRaw),
       date_of_upload: dateOfUpload.text,
-      recruiter: genericCellToText(cell(cells, "recruiter")),
-      atci_vertical: genericCellToText(cell(cells, "atci_vertical")),
+      submitter: genericCellToText(cell(cells, "submitter")),
+      customer: genericCellToText(cell(cells, "customer")),
       job_requisition_id: "-",
-      role_name_primary_skill: genericCellToText(cell(cells, "role_name_primary_skill")),
-      management_level: genericCellToText(cell(cells, "management_level")),
+      primary_skills: genericCellToText(cell(cells, "primary_skills")),
+      job_management_level: genericCellToText(cell(cells, "job_management_level")),
       market: genericCellToText(cell(cells, "market")),
-      submitted_date_tracker: submittedDateTracker.text,
-      status_recruiter: genericCellToText(cell(cells, "status_recruiter")),
-      remarks_status: genericCellToText(cell(cells, "remarks_status")),
+      submitted_date: submittedDateTracker.text,
+      status: genericCellToText(cell(cells, "status")),
+      submission_comments: genericCellToText(cell(cells, "submission_comments")),
     });
   }
 
@@ -472,10 +514,10 @@ const SPOT_CHECKS: Array<{ excelRow: number; column: keyof BuiltRow; expected: s
   })),
   ...Object.entries(SUBMITTED_DATE_TRACKER_OVERRIDES).map(([row, expected]) => ({
     excelRow: Number(row),
-    column: "submitted_date_tracker" as const,
+    column: "submitted_date" as const,
     expected,
   })),
-  { excelRow: 3154, column: "submitted_date_tracker", expected: "C" },
+  { excelRow: 3154, column: "submitted_date", expected: "C" },
 ];
 
 function printSpotChecks(rows: BuiltRow[]) {
@@ -579,18 +621,18 @@ async function main() {
         const batch = validated.rows.slice(i, i + BATCH).map((r) => ({
           cid: r.cid,
           name: r.name,
-          diversity: r.diversity,
+          gender: r.gender,
           contact_number: r.contact_number,
           date_of_upload: r.date_of_upload,
-          recruiter: r.recruiter,
-          atci_vertical: r.atci_vertical,
+          submitter: r.submitter,
+          customer: r.customer,
           job_requisition_id: r.job_requisition_id,
-          role_name_primary_skill: r.role_name_primary_skill,
-          management_level: r.management_level,
+          primary_skills: r.primary_skills,
+          job_management_level: r.job_management_level,
           market: r.market,
-          submitted_date_tracker: r.submitted_date_tracker,
-          status_recruiter: r.status_recruiter,
-          remarks_status: r.remarks_status,
+          submitted_date: r.submitted_date,
+          status: r.status,
+          submission_comments: r.submission_comments,
           created_at: importTimestamp,
           updated_at: importTimestamp,
         }));

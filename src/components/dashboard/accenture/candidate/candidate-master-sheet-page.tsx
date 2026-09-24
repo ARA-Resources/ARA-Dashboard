@@ -295,6 +295,7 @@ export function CandidateMasterSheetPage() {
               onClearColumn={clearColumn}
               onTextChange={onTextChange}
               onDateChange={onDateChange}
+              highlights={data?.highlights}
             />
           </CardContent>
         </Card>

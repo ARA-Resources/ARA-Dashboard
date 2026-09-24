@@ -11,6 +11,7 @@
   datasetLateral: "/dataset/lateral",
   datasetExecutive: "/dataset/executive",
   datasetConsulting: "/dataset/consulting",
+  datasetCandidate: "/dataset/candidate",
   /** @deprecated Prefer datasetConnections / datasetLateral */
   datasetConfiguration: "/dataset/configuration",
   datasetSyncHistory: "/dataset/sync-history",

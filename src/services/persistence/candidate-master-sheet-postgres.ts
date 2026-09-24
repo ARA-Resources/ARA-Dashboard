@@ -1,5 +1,3 @@
-import "server-only";
-
 import type postgres from "postgres";
 import {
   listCandidateMasterRows,
@@ -9,8 +7,15 @@ import {
   CANDIDATE_MASTER_COLUMN_MAP,
   CANDIDATE_MASTER_EXCEL_HEADERS,
   CANDIDATE_MASTER_PG_SOURCE_FILE,
+  excelHeaderForCandidateDbColumn,
   type CandidateMasterExcelHeader,
+  type CandidateMasterSheetDbColumn,
 } from "@/services/persistence/candidate-master-sheet-columns";
+import {
+  getLatestCandidateChangedFields,
+  getLatestCandidateReviewFlags,
+  type CandidateReviewFlagRow,
+} from "@/services/persistence/read-candidate-highlights";
 import {
   isCandidateRoleNameColumn,
   type CandidateFilterControl,
@@ -21,7 +26,16 @@ import {
 
 /**
  * Read-only in-memory filter/paginate engine for the Candidate Master Sheet
- * page, sourced from PostgreSQL `candidate_master` (14 columns).
+ * page, sourced from PostgreSQL `candidate_master` (16 display columns).
+ *
+ * No `import "server-only"` — same reasoning as read-candidate-master.ts:
+ * this module is imported directly by standalone tsx verify scripts
+ * (scripts/verify-candidate-highlights.ts), which never run inside Next's
+ * bundler where "server-only" resolves. Every current client-side consumer
+ * (candidate-master-sheet-table.tsx, candidate-flag-detail-modal.tsx,
+ * use-candidate-master-sheet.ts) already uses `import type` for anything it
+ * pulls from here, so this file's runtime code is never actually bundled
+ * client-side regardless.
  *
  * Fully standalone: does not import from, or share filter/pagination logic
  * with, the lateral/executive equivalents (mirrors their shape, not their
@@ -57,6 +71,31 @@ export interface CandidateMasterSheetQuery {
   dateFilters: Record<string, CandidateMasterDateFilter>;
 }
 
+/** One open per-field review flag, resolved to a display header (C9 highlighting). */
+export interface CandidateFieldFlag {
+  header: CandidateMasterExcelHeader;
+  reason: string;
+  detail: Record<string, unknown>;
+}
+
+/**
+ * C9 highlight state for the rows on the current page only — reason: 1)
+ * green (changedCellsByCid) and amber (fieldFlagsByCid) highlights are
+ * "most recent per issue" snapshots of small, purpose-built audit tables
+ * (candidate_sync_changes / candidate_review_flags), unlike the ~12k-row
+ * candidate_master table itself, and 2) there's no reason to ship the whole
+ * dataset's highlight state to the client on every page load when only the
+ * visible page's rows can render it.
+ */
+export interface CandidateMasterSheetHighlights {
+  /** CID -> display headers changed in the most recent sync that touched that CID. */
+  changedCellsByCid: Record<string, CandidateMasterExcelHeader[]>;
+  /** CIDs with an open (latest-sync) duplicate_name_mismatch flag — row-level highlight. */
+  duplicateFlagCids: string[];
+  /** CID -> open per-field flags (jr_id_conflict / unclean_contact_number / legacy_contact_number_unclean). */
+  fieldFlagsByCid: Record<string, CandidateFieldFlag[]>;
+}
+
 export interface CandidateMasterSheetPageResult {
   sheetName: string;
   sourceFile: string;
@@ -67,6 +106,7 @@ export interface CandidateMasterSheetPageResult {
   page: number;
   pageSize: number;
   pageCount: number;
+  highlights: CandidateMasterSheetHighlights;
 }
 
 function toSheetRow(row: CandidateMasterRow): CandidateMasterSheetPgRow {
@@ -83,6 +123,72 @@ async function loadRows(
 ): Promise<CandidateMasterSheetPgRow[]> {
   const rows = await listCandidateMasterRows(sqlClient);
   return rows.map(toSheetRow);
+}
+
+/** Resolves a per-field review flag's field to a display header. See candidate-sync-engine.ts for exact `detail` shapes per reason. */
+function fieldFlagHeader(flag: CandidateReviewFlagRow): CandidateMasterExcelHeader | null {
+  if (flag.reason === "unclean_contact_number" || flag.reason === "legacy_contact_number_unclean") {
+    return "Contact Number";
+  }
+  if (flag.reason === "jr_id_conflict") {
+    const field = flag.detail.field;
+    if (typeof field !== "string") return null;
+    try {
+      return excelHeaderForCandidateDbColumn(field as CandidateMasterSheetDbColumn);
+    } catch {
+      return null;
+    }
+  }
+  // duplicate_name_mismatch is a row-level flag, not a per-field one.
+  return null;
+}
+
+async function buildHighlightState(
+  cidsOnPage: string[],
+  sqlClient?: SqlClient
+): Promise<CandidateMasterSheetHighlights> {
+  const cidSet = new Set(cidsOnPage);
+  const [changedFields, reviewFlags] = await Promise.all([
+    getLatestCandidateChangedFields(sqlClient),
+    getLatestCandidateReviewFlags(sqlClient),
+  ]);
+
+  const changedCellsByCid: Record<string, CandidateMasterExcelHeader[]> = {};
+  for (const cid of cidsOnPage) {
+    const fields = changedFields.get(cid);
+    if (!fields || fields.size === 0) continue;
+    const headers: CandidateMasterExcelHeader[] = [];
+    for (const field of fields) {
+      try {
+        headers.push(excelHeaderForCandidateDbColumn(field as CandidateMasterSheetDbColumn));
+      } catch {
+        // field_name isn't a displayed column (shouldn't happen post-C1 — every
+        // diffable field now has a header — but never let a stray value break the page).
+      }
+    }
+    if (headers.length > 0) changedCellsByCid[cid] = headers;
+  }
+
+  const duplicateFlagCids = new Set<string>();
+  const fieldFlagsByCid: Record<string, CandidateFieldFlag[]> = {};
+  for (const flag of reviewFlags) {
+    if (!cidSet.has(flag.cid)) continue;
+    if (flag.reason === "duplicate_name_mismatch") {
+      duplicateFlagCids.add(flag.cid);
+      continue;
+    }
+    const header = fieldFlagHeader(flag);
+    if (!header) continue;
+    const list = fieldFlagsByCid[flag.cid] ?? [];
+    list.push({ header, reason: flag.reason, detail: flag.detail });
+    fieldFlagsByCid[flag.cid] = list;
+  }
+
+  return {
+    changedCellsByCid,
+    duplicateFlagCids: [...duplicateFlagCids],
+    fieldFlagsByCid,
+  };
 }
 
 function asText(value: string | null | undefined): string {
@@ -150,7 +256,7 @@ function inferCandidateFilterControl(
   header: CandidateMasterExcelHeader,
   stats: { unique: number; nonNull: number; avgLength: number }
 ): CandidateFilterControl {
-  if (/^date\b|date of upload|submitted date/i.test(header)) return "date";
+  if (/^date\b|upload date|submitted date/i.test(header)) return "date";
   if (isCandidateRoleNameColumn(header)) return "text";
   if (stats.unique > 40 || stats.avgLength > 40) return "text";
   if (stats.unique > 25) return "searchable-multi-select";
@@ -298,6 +404,10 @@ export async function queryCandidateMasterSheetPage(
   const rows = await loadRows(sqlClient);
   const filtered = applyCandidateMasterSheetFilters(rows, query);
   const page = paginate(filtered, query.page, query.pageSize);
+  const highlights = await buildHighlightState(
+    page.rows.map((row) => row["Candidate ID"]),
+    sqlClient
+  );
 
   return {
     sheetName: CANDIDATE_MASTER_SHEET_PG_NAME,
@@ -309,5 +419,6 @@ export async function queryCandidateMasterSheetPage(
     page: page.page,
     pageSize: page.pageSize,
     pageCount: page.pageCount,
+    highlights,
   };
 }

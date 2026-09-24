@@ -39,5 +39,10 @@ export interface CandidateMasterSheetQuery {
 }
 
 export function isCandidateRoleNameColumn(header: string): boolean {
-  return header.trim() === "Role Name/Primary Skill";
+  return header.trim() === "Primary Skills";
+}
+
+/** C10: the Candidate ID column is clickable — opens the full change-history popup. */
+export function isCandidateIdColumn(header: string): boolean {
+  return header.trim() === "Candidate ID";
 }

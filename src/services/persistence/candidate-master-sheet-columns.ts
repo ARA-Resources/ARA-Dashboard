@@ -5,55 +5,72 @@
  * it decides the on-screen column order — the frontend maps over it and
  * looks up each cell by header name, so order here is purely presentational
  * and safe to change. It does NOT reflect the `candidate_master` schema
- * column order; the one-time import matches the real workbook headers via
- * `importAliases`.
+ * column order.
  *
  * Mirrors the shape of `executive-master-sheet-columns.ts` / the Lateral
  * equivalent, but is a fully standalone module — no imports from, or shared
  * types with, the lateral/executive column-map modules.
  *
- * Source: "ATCI Candidate Master Data.xlsx", sheet "ATCI". Dropped vs. the
- * source sheet: "SNo" (Sr. No. is computed client-side) and every column
- * after "Remarks - Status" (Resubmission Date onward).
+ * This is the FINAL Oorwin-sync-era display shape (16 columns, C1 of the
+ * Candidate Master Sheet Oorwin sync plan) — not the original legacy
+ * workbook's shape. `importAliases` below still points at the ORIGINAL
+ * legacy workbook's header spellings (e.g. "Diversity", "Recruiter") for
+ * historical-record purposes only; the one-time legacy import script
+ * (`scripts/import-candidate-master-to-postgres.ts`, already run against
+ * prod, frozen) has its own independent local column-alias list rather than
+ * importing this map, specifically so this dashboard's display shape can
+ * keep evolving without ever affecting that frozen script's typecheck or
+ * (hypothetical re-run) behavior.
  */
 
-/** Candidate header keys in dashboard display order (matches source sheet order, minus SNo). */
+/** Candidate header keys in dashboard display order (Sr. No. is computed client-side, not listed here). */
 export const CANDIDATE_MASTER_EXCEL_HEADERS = [
-  "CID",
+  "Candidate ID",
+  "Upload Date",
   "Name",
-  "Diversity",
+  "Email",
   "Contact Number",
-  "Date of Upload",
-  "Recruiter",
-  "ATCI - Vertical",
+  "Submitter",
+  "Customer",
   "Job Requisition ID",
-  "Role Name/Primary Skill",
-  "Management Level /Career Level",
+  "Primary Skills",
+  "Job Management Level",
   "Market",
-  "Submitted Date - Tracker (dd/mm/yyyy)",
-  "Status (Recruiter)",
-  "Remarks - Status",
+  "Client SPOC",
+  "Status",
+  "Submitted Date",
+  "Submission Comments",
+  "Gender",
 ] as const;
 
 export type CandidateMasterExcelHeader =
   (typeof CANDIDATE_MASTER_EXCEL_HEADERS)[number];
 
-/** Business columns stored for the Candidate Master dataset. */
+/**
+ * Business columns stored for the Candidate Master dataset.
+ *
+ * Migration 015 (Candidate Master Sheet Oorwin sync feature) renamed 8 of
+ * these DB columns in place — no data moved, same values, new names — and
+ * added `email`/`client_spoc` (default `'-'` for every pre-existing row,
+ * since neither had a legacy-workbook equivalent).
+ */
 export const CANDIDATE_MASTER_SHEET_DB_COLUMNS = [
   "cid",
-  "name",
-  "diversity",
-  "contact_number",
   "date_of_upload",
-  "recruiter",
-  "atci_vertical",
+  "name",
+  "email",
+  "contact_number",
+  "submitter", // was recruiter
+  "customer", // was atci_vertical
   "job_requisition_id",
-  "role_name_primary_skill",
-  "management_level",
+  "primary_skills", // was role_name_primary_skill
+  "job_management_level", // was management_level
   "market",
-  "submitted_date_tracker",
-  "status_recruiter",
-  "remarks_status",
+  "client_spoc",
+  "status", // was status_recruiter
+  "submitted_date", // was submitted_date_tracker
+  "submission_comments", // was remarks_status
+  "gender", // was diversity
 ] as const;
 
 export type CandidateMasterSheetDbColumn =
@@ -66,34 +83,37 @@ export interface CandidateMasterColumnMapping {
   importAliases: readonly string[];
 }
 
-/** One entry per stored column. `excelHeader` is the canonical display/API key. */
+/**
+ * One entry per stored column. `excelHeader` is the canonical dashboard
+ * display/API key (the new Oorwin-sync shape). `importAliases` is kept only
+ * as a historical record of the ORIGINAL legacy workbook's header spelling
+ * for each pre-existing column — no live code path reads it (see the
+ * `scripts/import-candidate-master-to-postgres.ts` note above); `email`/
+ * `client_spoc` have no legacy equivalent so their aliases are empty.
+ */
 export const CANDIDATE_MASTER_COLUMN_MAP: readonly CandidateMasterColumnMapping[] =
   [
-    { excelHeader: "CID", dbColumn: "cid", importAliases: ["CID"] },
-    { excelHeader: "Name", dbColumn: "name", importAliases: ["Name"] },
+    { excelHeader: "Candidate ID", dbColumn: "cid", importAliases: ["CID"] },
     {
-      excelHeader: "Diversity",
-      dbColumn: "diversity",
-      importAliases: ["Diversity"],
+      excelHeader: "Upload Date",
+      dbColumn: "date_of_upload",
+      importAliases: ["Date of Upload"],
     },
+    { excelHeader: "Name", dbColumn: "name", importAliases: ["Name"] },
+    { excelHeader: "Email", dbColumn: "email", importAliases: [] },
     {
       excelHeader: "Contact Number",
       dbColumn: "contact_number",
       importAliases: ["Contact Number"],
     },
     {
-      excelHeader: "Date of Upload",
-      dbColumn: "date_of_upload",
-      importAliases: ["Date of Upload"],
-    },
-    {
-      excelHeader: "Recruiter",
-      dbColumn: "recruiter",
+      excelHeader: "Submitter",
+      dbColumn: "submitter",
       importAliases: ["Recruiter"],
     },
     {
-      excelHeader: "ATCI - Vertical",
-      dbColumn: "atci_vertical",
+      excelHeader: "Customer",
+      dbColumn: "customer",
       importAliases: ["ATCI - Vertical", "ATCI-Vertical", "ATCI Vertical"],
     },
     {
@@ -102,36 +122,42 @@ export const CANDIDATE_MASTER_COLUMN_MAP: readonly CandidateMasterColumnMapping[
       importAliases: ["Job Requisition ID"],
     },
     {
-      excelHeader: "Role Name/Primary Skill",
-      dbColumn: "role_name_primary_skill",
+      excelHeader: "Primary Skills",
+      dbColumn: "primary_skills",
       importAliases: ["Role Name/Primary Skill"],
     },
     {
-      excelHeader: "Management Level /Career Level",
-      dbColumn: "management_level",
+      excelHeader: "Job Management Level",
+      dbColumn: "job_management_level",
       importAliases: [
         "Management Level /Career Level",
         "Management Level/Career Level",
       ],
     },
     { excelHeader: "Market", dbColumn: "market", importAliases: ["Market"] },
+    { excelHeader: "Client SPOC", dbColumn: "client_spoc", importAliases: [] },
     {
-      excelHeader: "Submitted Date - Tracker (dd/mm/yyyy)",
-      dbColumn: "submitted_date_tracker",
+      excelHeader: "Status",
+      dbColumn: "status",
+      importAliases: ["Status (Recruiter)"],
+    },
+    {
+      excelHeader: "Submitted Date",
+      dbColumn: "submitted_date",
       importAliases: [
         "Submitted Date - Tracker (dd/mm/yyyy)",
         "Submitted Date - Tracker",
       ],
     },
     {
-      excelHeader: "Status (Recruiter)",
-      dbColumn: "status_recruiter",
-      importAliases: ["Status (Recruiter)"],
+      excelHeader: "Submission Comments",
+      dbColumn: "submission_comments",
+      importAliases: ["Remarks - Status"],
     },
     {
-      excelHeader: "Remarks - Status",
-      dbColumn: "remarks_status",
-      importAliases: ["Remarks - Status"],
+      excelHeader: "Gender",
+      dbColumn: "gender",
+      importAliases: ["Diversity"],
     },
   ];
 

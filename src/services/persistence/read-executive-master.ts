@@ -163,6 +163,44 @@ export function toExecutivePDashboardInputRow(
 }
 
 /**
+ * Single-row lookup by Job Requisition ID. No filter/pagination engine
+ * exists for `executive_master` (unlike `lateral_master`'s
+ * `queryLateralMaster`) to delegate to, so this queries directly —
+ * mirrors `getLateralMasterByJobRequisitionId`'s signature/null-handling.
+ */
+export async function getExecutiveMasterByJobRequisitionId(
+  jobRequisitionId: string,
+  sqlClient?: SqlClient
+): Promise<ExecutiveMasterRow | null> {
+  const jr = String(jobRequisitionId ?? "").trim();
+  if (!jr) return null;
+  const sql = sqlClient ?? getDbClient();
+  const dataRows = await sql<Record<string, unknown>[]>`
+    SELECT
+      job_requisition_id,
+      date::text AS date,
+      market_map,
+      primary_skills,
+      primary_location,
+      job_management_level,
+      must_have_skills,
+      location_flex,
+      skill_categorization,
+      job_description,
+      job_status,
+      posted,
+      priority,
+      created_at,
+      updated_at,
+      last_seen_at
+    FROM executive_master
+    WHERE job_requisition_id = ${jr}
+    LIMIT 1
+  `;
+  return dataRows[0] ? mapRow(dataRows[0]) : null;
+}
+
+/**
  * P - Dashboard detail rows from PostgreSQL, keyed for
  * `buildExecutivePDashboardFromRows` / `collectExecutivePDashboardFilterOptions`.
  */
