@@ -90,9 +90,9 @@ export interface CandidateFieldFlag {
 export interface CandidateMasterSheetHighlights {
   /** CID -> display headers changed in the most recent sync that touched that CID. */
   changedCellsByCid: Record<string, CandidateMasterExcelHeader[]>;
-  /** CIDs with an open (latest-sync) duplicate_name_mismatch flag — row-level highlight. */
-  duplicateFlagCids: string[];
-  /** CID -> open per-field flags (jr_id_conflict / unclean_contact_number / legacy_contact_number_unclean). */
+  /** CID -> open row-level flag reason (duplicate_name_mismatch / invalid_candidate_id). */
+  duplicateFlagCids: Record<string, "duplicate_name_mismatch" | "invalid_candidate_id">;
+  /** CID -> open per-field flags (jr_id_conflict / unclean_contact_number / legacy_contact_number_unclean / missing_job_requisition_id). */
   fieldFlagsByCid: Record<string, CandidateFieldFlag[]>;
 }
 
@@ -130,6 +130,9 @@ function fieldFlagHeader(flag: CandidateReviewFlagRow): CandidateMasterExcelHead
   if (flag.reason === "unclean_contact_number" || flag.reason === "legacy_contact_number_unclean") {
     return "Contact Number";
   }
+  if (flag.reason === "missing_job_requisition_id") {
+    return excelHeaderForCandidateDbColumn("job_requisition_id");
+  }
   if (flag.reason === "jr_id_conflict") {
     const field = flag.detail.field;
     if (typeof field !== "string") return null;
@@ -139,7 +142,7 @@ function fieldFlagHeader(flag: CandidateReviewFlagRow): CandidateMasterExcelHead
       return null;
     }
   }
-  // duplicate_name_mismatch is a row-level flag, not a per-field one.
+  // duplicate_name_mismatch / invalid_candidate_id are row-level flags, not per-field ones.
   return null;
 }
 
@@ -169,12 +172,12 @@ async function buildHighlightState(
     if (headers.length > 0) changedCellsByCid[cid] = headers;
   }
 
-  const duplicateFlagCids = new Set<string>();
+  const duplicateFlagCids: Record<string, "duplicate_name_mismatch" | "invalid_candidate_id"> = {};
   const fieldFlagsByCid: Record<string, CandidateFieldFlag[]> = {};
   for (const flag of reviewFlags) {
     if (!cidSet.has(flag.cid)) continue;
-    if (flag.reason === "duplicate_name_mismatch") {
-      duplicateFlagCids.add(flag.cid);
+    if (flag.reason === "duplicate_name_mismatch" || flag.reason === "invalid_candidate_id") {
+      duplicateFlagCids[flag.cid] = flag.reason;
       continue;
     }
     const header = fieldFlagHeader(flag);
@@ -186,7 +189,7 @@ async function buildHighlightState(
 
   return {
     changedCellsByCid,
-    duplicateFlagCids: [...duplicateFlagCids],
+    duplicateFlagCids,
     fieldFlagsByCid,
   };
 }

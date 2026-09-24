@@ -34,6 +34,20 @@
  *     an 'unclean_contact_number' review flag (raw value still stored, not
  *     rejected) — same append-only, flag-every-recurrence philosophy as
  *     jr_id_conflict (migration 017).
+ *  6. A non-blank CID that doesn't match "C" + one or more digits is
+ *     quarantined — same mechanism as duplicate_name_mismatch (excluded
+ *     from candidate_master entirely, review flag written with reason
+ *     'invalid_candidate_id') — because CID is the sole matching key for
+ *     every future sync, and a malformed one can never be reliably
+ *     re-matched later. This is stricter than blank-CID handling: a blank
+ *     CID is silently skipped (nothing to work with), but a non-blank,
+ *     wrong-shaped CID is surfaced for review since someone likely typed or
+ *     pasted something into the wrong column (migration 018).
+ *  7. A live row whose Job Requisition ID is blank/"-" gets a
+ *     'missing_job_requisition_id' review flag but is still inserted/
+ *     updated normally — JR ID isn't part of the matching key, so unlike
+ *     invalid_candidate_id this doesn't block the row (same flag-only
+ *     philosophy as unclean_contact_number; migration 018).
  *
  * A row whose CID is blank is skipped entirely (can never be matched by
  * name, no old or new equivalent) — counted separately in the summary
@@ -122,6 +136,13 @@ function isBlankCid(cid: string): boolean {
   return t === "" || t === "-";
 }
 
+/** Migration 018: a valid CID is "C" followed by one or more digits — nothing else. */
+const CID_FORMAT_REGEX = /^C[0-9]+$/;
+
+function isValidCidFormat(cid: string): boolean {
+  return CID_FORMAT_REGEX.test(cid.trim());
+}
+
 function normalizeNameForMatch(name: string): string {
   return name.trim().toLowerCase();
 }
@@ -142,14 +163,21 @@ interface SheetIndexedRow {
 interface DedupePlan {
   survivors: SheetIndexedRow[];
   quarantined: { cid: string; members: SheetIndexedRow[] }[];
+  /** Non-blank CID that doesn't match "C" + digits — excluded before dedupe grouping even runs. */
+  invalidCid: SheetIndexedRow[];
 }
 
 /** Step 1: within-sheet CID dedupe. Pure — no DB access. */
 export function planCandidateSheetDedupe(rows: CandidateOorwinParsedRow[]): DedupePlan {
   const groups = new Map<string, SheetIndexedRow[]>();
+  const invalidCid: SheetIndexedRow[] = [];
   rows.forEach((row, sheetIndex) => {
     if (isBlankCid(row.cid)) return;
     const key = row.cid.trim();
+    if (!isValidCidFormat(key)) {
+      invalidCid.push({ row, sheetIndex });
+      return;
+    }
     const list = groups.get(key) ?? [];
     list.push({ row, sheetIndex });
     groups.set(key, list);
@@ -174,7 +202,7 @@ export function planCandidateSheetDedupe(rows: CandidateOorwinParsedRow[]): Dedu
     }
   }
 
-  return { survivors, quarantined };
+  return { survivors, quarantined, invalidCid };
 }
 
 interface DesiredFields {
@@ -183,6 +211,8 @@ interface DesiredFields {
   reviewConflicts: { field: DiffableField; lateralValue: string; executiveValue: string }[];
   /** Non-blank Mobile that didn't cleanly reduce to 10 digits — raw value is still stored, but flagged. */
   uncleanContactNumberRaw: string | null;
+  /** Job Requisition ID is blank/"-" on this live-sync row — row is still stored, but flagged. */
+  missingJobRequisitionId: boolean;
 }
 
 /** Builds the desired field values for one row (name combine, mobile normalize, comments fallback, auto-fetch). */
@@ -200,6 +230,9 @@ async function buildDesiredFields(
     row.submissionComments.trim() !== "" && row.submissionComments.trim() !== "-"
       ? row.submissionComments.trim()
       : coerceBlank(row.reasonForRejection);
+
+  const jobRequisitionId = coerceBlank(row.clientSubmissionJr);
+  const missingJobRequisitionId = jobRequisitionId === "-";
 
   const autoFetch = await resolveCandidateAutoFetchFields(
     row.clientSubmissionJr,
@@ -232,7 +265,7 @@ async function buildDesiredFields(
     contact_number: contactNumber,
     submitter: coerceBlank(row.submitter),
     customer: coerceBlank(row.customer),
-    job_requisition_id: coerceBlank(row.clientSubmissionJr),
+    job_requisition_id: jobRequisitionId,
     primary_skills: conflictFields.has("primary_skills") ? "" : coerceBlank(autoFetch.values.primarySkills ?? "-"),
     job_management_level: conflictFields.has("job_management_level")
       ? ""
@@ -245,12 +278,14 @@ async function buildDesiredFields(
     email: coerceBlank(row.email),
   };
 
-  return { values, conflictFields, reviewConflicts, uncleanContactNumberRaw };
+  return { values, conflictFields, reviewConflicts, uncleanContactNumberRaw, missingJobRequisitionId };
 }
 
 type CandidateReviewFlagReason =
   | "duplicate_name_mismatch"
+  | "invalid_candidate_id"
   | "jr_id_conflict"
+  | "missing_job_requisition_id"
   | "unclean_contact_number";
 
 async function writeReviewFlag(
@@ -299,6 +334,13 @@ async function processSurvivorRow(
   if (desired.uncleanContactNumberRaw !== null) {
     await writeReviewFlag(sqlClient, syncId, cid, "unclean_contact_number", {
       raw: desired.uncleanContactNumberRaw,
+    });
+    reviewFlagsWritten += 1;
+  }
+
+  if (desired.missingJobRequisitionId) {
+    await writeReviewFlag(sqlClient, syncId, cid, "missing_job_requisition_id", {
+      sheetRowNumber: row.sheetRowNumber,
     });
     reviewFlagsWritten += 1;
   }
@@ -400,6 +442,15 @@ export async function runCandidateSync(
     }
   }
 
+  for (const item of dedupe.invalidCid) {
+    await writeReviewFlag(sql, syncId, item.row.cid.trim(), "invalid_candidate_id", {
+      sheetRowNumber: item.row.sheetRowNumber,
+      name: combineCandidateName(item.row.firstName, item.row.middleName, item.row.lastName),
+      rawCid: item.row.cid,
+    });
+    reviewFlagCount += 1;
+  }
+
   const outcomes: CandidateSyncRowOutcome[] = [];
   let insertedCount = 0;
   let updatedCount = 0;
@@ -414,7 +465,8 @@ export async function runCandidateSync(
     else unchangedCount += 1;
   }
 
-  const quarantinedCount = dedupe.quarantined.reduce((n, g) => n + g.members.length, 0);
+  const quarantinedCount =
+    dedupe.quarantined.reduce((n, g) => n + g.members.length, 0) + dedupe.invalidCid.length;
 
   return {
     rowsInSheet: parsedRows.length,

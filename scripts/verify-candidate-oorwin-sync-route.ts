@@ -173,15 +173,15 @@ async function main() {
       assertEq(body.ok, true, "ok true (partial is still a completed run)");
       assertEq(body.result, "partial", "result (2 known duplicate-mismatch pairs need review)");
       assertEq((body.counts as Record<string, number>).rowsInSheet, 60, "rowsInSheet");
-      assertEq((body.counts as Record<string, number>).quarantined, 4, "quarantined");
-      assertEq((body.counts as Record<string, number>).inserted, 56, "inserted (fresh DB)");
+      assertEq((body.counts as Record<string, number>).quarantined, 5, "quarantined (2 duplicate-mismatch pairs + 1 invalid-CID row)");
+      assertEq((body.counts as Record<string, number>).inserted, 55, "inserted (fresh DB)");
       assert(typeof body.syncId === "number", "syncId set");
 
       const historyRow = (await db`SELECT * FROM candidate_sync_history WHERE id = ${realSyncId}`)[0];
       assert(historyRow !== undefined, "history row exists");
       assertEq(historyRow?.result, "partial", "history row result");
       assertEq(historyRow?.triggered_by, editor.email, "history row triggered_by === authenticated user's email");
-      assertEq(Number(historyRow?.inserted_count), 56, "history row inserted_count matches response");
+      assertEq(Number(historyRow?.inserted_count), 55, "history row inserted_count matches response");
     });
   } finally {
     // -- cleanup --

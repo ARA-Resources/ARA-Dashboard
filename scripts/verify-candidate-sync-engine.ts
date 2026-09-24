@@ -51,7 +51,11 @@ function row(partial: Partial<CandidateOorwinParsedRow> & { sheetRowNumber: numb
     gender: "-",
     submitter: "-",
     customer: "-",
-    clientSubmissionJr: "-",
+    // Non-blank but nonexistent by default so ordinary rows don't
+    // incidentally trip the new missing_job_requisition_id flag (migration
+    // 018) — resolveCandidateAutoFetchFields treats "not found" identically
+    // to "blank" for every field value, so this changes nothing else.
+    clientSubmissionJr: "TEST-JR-DEFAULT",
     customerJobTitle: "-",
     market: "-",
     clientSpoc: "-",
@@ -95,8 +99,14 @@ async function main() {
   );
   check(
     results,
-    "Real file: 60 total rows - 4 quarantined rows = 56 survivors",
-    realDedupe.survivors.length === 56,
+    "Real file: exactly 1 invalid-CID row found (a bare-numeric CID, no 'C' prefix)",
+    realDedupe.invalidCid.length === 1 && realDedupe.invalidCid[0]?.row.cid === "7447312071",
+    JSON.stringify(realDedupe.invalidCid.map((r) => r.row.cid))
+  );
+  check(
+    results,
+    "Real file: 60 total rows - 4 duplicate-mismatch quarantined - 1 invalid-CID quarantined = 55 survivors",
+    realDedupe.survivors.length === 55,
     `got ${realDedupe.survivors.length}`
   );
 
@@ -134,14 +144,14 @@ async function main() {
         job_requisition_id, primary_skills, job_management_level, market,
         client_spoc, status, submitted_date, submission_comments, email
       ) VALUES
-        ('TEST-EXISTING-1', 'Existing One', 'Male', '9000000001', '01/01/2026', 'Old Submitter', 'Old Customer',
-         '-', 'Old Skill', '-', 'Old Market', '-', 'Old Status', '01/01/2026', 'Old Comments', 'old@example.com'),
-        ('TEST-EXISTING-2', 'Existing Two', 'Female', '9000000006', '01/01/2026', 'Same Submitter', 'Same Customer',
-         '-', 'Same Skill', '-', 'Same Market', '-', 'Same Status', '05/01/2026', 'Same Comments', 'same@example.com'),
-        ('TEST-UNTOUCHED', 'Untouched Person', 'Male', '9000000007', '01/01/2026', 'Untouched Submitter', 'Untouched Customer',
+        ('C90000001', 'Existing One', 'Male', '9000000001', '01/01/2026', 'Old Submitter', 'Old Customer',
+         'TEST-JR-DEFAULT', 'Old Skill', '-', 'Old Market', '-', 'Old Status', '01/01/2026', 'Old Comments', 'old@example.com'),
+        ('C90000002', 'Existing Two', 'Female', '9000000006', '01/01/2026', 'Same Submitter', 'Same Customer',
+         'TEST-JR-DEFAULT', 'Same Skill', '-', 'Same Market', '-', 'Same Status', '05/01/2026', 'Same Comments', 'same@example.com'),
+        ('C90000003', 'Untouched Person', 'Male', '9000000007', '01/01/2026', 'Untouched Submitter', 'Untouched Customer',
          '-', 'Untouched Skill', '-', 'Untouched Market', '-', 'Untouched Status', '01/01/2026', 'Untouched Comments', 'untouched@example.com')
     `;
-    const untouchedBefore = (await sql`SELECT * FROM candidate_master WHERE cid = 'TEST-UNTOUCHED'`)[0];
+    const untouchedBefore = (await sql`SELECT * FROM candidate_master WHERE cid = 'C90000003'`)[0];
 
     // -- Create a real candidate_sync_history row to get a real sync_id --
     const [historyRow] = await sql<{ id: number }[]>`
@@ -156,7 +166,7 @@ async function main() {
       // 1. New candidate, clean mobile with 91 country code.
       row({
         sheetRowNumber: 1,
-        cid: "TEST-NEW-CLEAN-MOBILE",
+        cid: "C90000010",
         firstName: "New",
         lastName: "Clean",
         mobile: "919000000002",
@@ -165,7 +175,7 @@ async function main() {
       // 2. New candidate, mobile with embedded space.
       row({
         sheetRowNumber: 2,
-        cid: "TEST-NEW-MESSY-MOBILE",
+        cid: "C90000011",
         firstName: "New",
         lastName: "Messy",
         mobile: "90000 00003",
@@ -174,7 +184,7 @@ async function main() {
       // 3. New candidate, unresolvable mobile (two numbers) — raw stored as-is.
       row({
         sheetRowNumber: 3,
-        cid: "TEST-NEW-UNRESOLVABLE-MOBILE",
+        cid: "C90000012",
         firstName: "New",
         lastName: "Unresolvable",
         mobile: "9000000004/9000000005",
@@ -183,7 +193,7 @@ async function main() {
       // 4. Existing-1: only Status changes.
       row({
         sheetRowNumber: 4,
-        cid: "TEST-EXISTING-1",
+        cid: "C90000001",
         firstName: "Existing",
         lastName: "One",
         mobile: "9000000001",
@@ -201,7 +211,7 @@ async function main() {
       // 5. Existing-2: everything identical — true no-op.
       row({
         sheetRowNumber: 5,
-        cid: "TEST-EXISTING-2",
+        cid: "C90000002",
         firstName: "Existing",
         lastName: "Two",
         mobile: "9000000006",
@@ -219,7 +229,7 @@ async function main() {
       // 6. JR conflict: management_level and market conflict, primary_skills agrees, client_spoc lateral-only.
       row({
         sheetRowNumber: 6,
-        cid: "TEST-NEW-JR-CONFLICT",
+        cid: "C90000013",
         firstName: "New",
         lastName: "Conflict",
         mobile: "9000000008",
@@ -232,7 +242,7 @@ async function main() {
       // 7. JR found in lateral_master only.
       row({
         sheetRowNumber: 7,
-        cid: "TEST-NEW-JR-LATERAL-ONLY",
+        cid: "C90000014",
         firstName: "New",
         lastName: "LateralOnly",
         mobile: "9000000009",
@@ -245,7 +255,7 @@ async function main() {
       // 8. JR not found anywhere — Oorwin fallback used.
       row({
         sheetRowNumber: 8,
-        cid: "TEST-NEW-JR-NOT-FOUND",
+        cid: "C90000015",
         firstName: "New",
         lastName: "NotFound",
         mobile: "9000000010",
@@ -260,7 +270,7 @@ async function main() {
       // 10. Comments: primary present.
       row({
         sheetRowNumber: 10,
-        cid: "TEST-NEW-COMMENTS-PRIMARY",
+        cid: "C90000016",
         firstName: "New",
         lastName: "CommentsPrimary",
         mobile: "9000000011",
@@ -270,7 +280,7 @@ async function main() {
       // 11. Comments: primary blank, fallback used.
       row({
         sheetRowNumber: 11,
-        cid: "TEST-NEW-COMMENTS-FALLBACK",
+        cid: "C90000017",
         firstName: "New",
         lastName: "CommentsFallback",
         mobile: "9000000012",
@@ -280,7 +290,7 @@ async function main() {
       // 12. Comments: both blank.
       row({
         sheetRowNumber: 12,
-        cid: "TEST-NEW-COMMENTS-BOTH-BLANK",
+        cid: "C90000018",
         firstName: "New",
         lastName: "CommentsBothBlank",
         mobile: "9000000013",
@@ -290,7 +300,7 @@ async function main() {
       // 13 & 14. Duplicate CID within sheet, SAME name — last row wins.
       row({
         sheetRowNumber: 13,
-        cid: "TEST-DUP-SAME",
+        cid: "C90000019",
         firstName: "Dup",
         lastName: "Same",
         mobile: "9000000014",
@@ -298,11 +308,39 @@ async function main() {
       }),
       row({
         sheetRowNumber: 14,
-        cid: "TEST-DUP-SAME",
+        cid: "C90000019",
         firstName: "Dup",
         lastName: "Same",
         mobile: "9000000014",
         status: "Second Status",
+      }),
+      // 15. Invalid CID format (bare phone-number digits, no "C" prefix) —
+      // must be quarantined, never inserted into candidate_master.
+      row({
+        sheetRowNumber: 15,
+        cid: "9000000099",
+        firstName: "Invalid",
+        lastName: "CidFormat",
+        mobile: "9000000015",
+      }),
+      // 16. Invalid CID format (free-text value, not even numeric) — same
+      // shape as the real production incident this feature is fixing.
+      row({
+        sheetRowNumber: 16,
+        cid: "data integration, enhancing reporting accuracy",
+        firstName: "Invalid",
+        lastName: "CidFreeText",
+        mobile: "9000000016",
+      }),
+      // 17. Valid CID, but blank Job Requisition ID — must still insert
+      // normally, but with a 'missing_job_requisition_id' review flag.
+      row({
+        sheetRowNumber: 17,
+        cid: "C90000020",
+        firstName: "New",
+        lastName: "MissingJr",
+        mobile: "9000000017",
+        clientSubmissionJr: "-",
       }),
     ];
 
@@ -312,53 +350,59 @@ async function main() {
     check(results, "Summary: skippedBlankCidCount === 1", summary.skippedBlankCidCount === 1, `${summary.skippedBlankCidCount}`);
     check(
       results,
-      "Summary: insertedCount === 10 (10 genuinely new CIDs, dup-same-name collapses to 1)",
-      summary.insertedCount === 10,
+      "Summary: insertedCount === 11 (10 genuinely new CIDs + the blank-JR row, dup-same-name collapses to 1)",
+      summary.insertedCount === 11,
       `${summary.insertedCount}`
     );
-    check(results, "Summary: updatedCount === 1 (TEST-EXISTING-1)", summary.updatedCount === 1, `${summary.updatedCount}`);
-    check(results, "Summary: unchangedCount === 1 (TEST-EXISTING-2)", summary.unchangedCount === 1, `${summary.unchangedCount}`);
+    check(results, "Summary: updatedCount === 1 (C90000001)", summary.updatedCount === 1, `${summary.updatedCount}`);
+    check(results, "Summary: unchangedCount === 1 (C90000002)", summary.unchangedCount === 1, `${summary.unchangedCount}`);
     check(
       results,
-      "Summary: reviewFlagCount === 3 (2 JR conflict fields + 1 unclean mobile)",
-      summary.reviewFlagCount === 3,
+      "Summary: quarantinedCount === 2 (the 2 invalid-CID-format rows; no duplicate-name-mismatch groups in this sheet)",
+      summary.quarantinedCount === 2,
+      `${summary.quarantinedCount}`
+    );
+    check(
+      results,
+      "Summary: reviewFlagCount === 6 (2 JR conflict fields + 1 unclean mobile + 2 invalid CID + 1 missing JR ID)",
+      summary.reviewFlagCount === 6,
       `${summary.reviewFlagCount}`
     );
 
     const byCid = async (cid: string) => (await sql`SELECT * FROM candidate_master WHERE cid = ${cid}`)[0];
 
-    const existing1 = await byCid("TEST-EXISTING-1");
-    check(results, "TEST-EXISTING-1: status updated to 'New Status'", existing1?.status === "New Status");
-    check(results, "TEST-EXISTING-1: unrelated field (customer) untouched", existing1?.customer === "Old Customer");
-    check(results, "TEST-EXISTING-1: date_of_upload untouched (write-once)", existing1?.date_of_upload === "01/01/2026");
-    check(results, "TEST-EXISTING-1: last_touched_at now set", existing1?.last_touched_at !== null);
-    const changes1 = await sql`SELECT field_name FROM candidate_sync_changes WHERE cid = 'TEST-EXISTING-1' AND sync_id = ${syncId}`;
+    const existing1 = await byCid("C90000001");
+    check(results, "C90000001: status updated to 'New Status'", existing1?.status === "New Status");
+    check(results, "C90000001: unrelated field (customer) untouched", existing1?.customer === "Old Customer");
+    check(results, "C90000001: date_of_upload untouched (write-once)", existing1?.date_of_upload === "01/01/2026");
+    check(results, "C90000001: last_touched_at now set", existing1?.last_touched_at !== null);
+    const changes1 = await sql`SELECT field_name FROM candidate_sync_changes WHERE cid = 'C90000001' AND sync_id = ${syncId}`;
     check(
       results,
-      "TEST-EXISTING-1: exactly one candidate_sync_changes row, for 'status'",
+      "C90000001: exactly one candidate_sync_changes row, for 'status'",
       changes1.length === 1 && changes1[0].field_name === "status",
       JSON.stringify(changes1.map((r: { field_name: string }) => r.field_name))
     );
 
-    const existing2 = await byCid("TEST-EXISTING-2");
-    check(results, "TEST-EXISTING-2: last_touched_at still null (true no-op)", existing2?.last_touched_at === null);
-    const changes2 = await sql`SELECT * FROM candidate_sync_changes WHERE cid = 'TEST-EXISTING-2'`;
-    check(results, "TEST-EXISTING-2: zero candidate_sync_changes rows written", changes2.length === 0);
+    const existing2 = await byCid("C90000002");
+    check(results, "C90000002: last_touched_at still null (true no-op)", existing2?.last_touched_at === null);
+    const changes2 = await sql`SELECT * FROM candidate_sync_changes WHERE cid = 'C90000002'`;
+    check(results, "C90000002: zero candidate_sync_changes rows written", changes2.length === 0);
 
-    const untouchedAfter = await byCid("TEST-UNTOUCHED");
+    const untouchedAfter = await byCid("C90000003");
     check(
       results,
-      "TEST-UNTOUCHED: row completely identical before/after (absent from sheet = true no-op)",
+      "C90000003: row completely identical before/after (absent from sheet = true no-op)",
       JSON.stringify(untouchedBefore) === JSON.stringify(untouchedAfter)
     );
 
-    const cleanMobile = await byCid("TEST-NEW-CLEAN-MOBILE");
+    const cleanMobile = await byCid("C90000010");
     check(results, "New row: 91-prefixed mobile normalized to 10 digits", cleanMobile?.contact_number === "9000000002");
 
-    const messyMobile = await byCid("TEST-NEW-MESSY-MOBILE");
+    const messyMobile = await byCid("C90000011");
     check(results, "New row: space-embedded mobile normalized", messyMobile?.contact_number === "9000000003");
 
-    const unresolvableMobile = await byCid("TEST-NEW-UNRESOLVABLE-MOBILE");
+    const unresolvableMobile = await byCid("C90000012");
     check(
       results,
       "New row: unresolvable mobile (two numbers) stored as raw text, not mangled/rejected",
@@ -366,7 +410,7 @@ async function main() {
       unresolvableMobile?.contact_number
     );
     const uncleanMobileFlags = await sql`
-      SELECT reason, detail FROM candidate_review_flags WHERE cid = 'TEST-NEW-UNRESOLVABLE-MOBILE'
+      SELECT reason, detail FROM candidate_review_flags WHERE cid = 'C90000012'
     `;
     check(
       results,
@@ -379,7 +423,7 @@ async function main() {
 
     // Blank/placeholder mobile ("-") must NOT be flagged — it's intentionally blank, not unclean.
     const blankMobileFlags = await sql`
-      SELECT * FROM candidate_review_flags WHERE cid IN ('TEST-EXISTING-1', 'TEST-EXISTING-2', 'TEST-UNTOUCHED') AND reason = 'unclean_contact_number'
+      SELECT * FROM candidate_review_flags WHERE cid IN ('C90000001', 'C90000002', 'C90000003') AND reason = 'unclean_contact_number'
     `;
     check(
       results,
@@ -387,7 +431,7 @@ async function main() {
       blankMobileFlags.length === 0
     );
 
-    const jrConflict = await byCid("TEST-NEW-JR-CONFLICT");
+    const jrConflict = await byCid("C90000013");
     check(
       results,
       "JR conflict: primary_skills (agrees in both tables) used normally, not blanked",
@@ -404,7 +448,7 @@ async function main() {
       "JR conflict: client_spoc (lateral-only, executive has no column) used normally, not blanked",
       jrConflict?.client_spoc === "Lateral SPOC"
     );
-    const conflictFlags = await sql`SELECT reason, detail FROM candidate_review_flags WHERE cid = 'TEST-NEW-JR-CONFLICT'`;
+    const conflictFlags = await sql`SELECT reason, detail FROM candidate_review_flags WHERE cid = 'C90000013'`;
     check(
       results,
       "JR conflict: 2 review flags written (job_management_level + market), both both tables' values recorded",
@@ -423,7 +467,7 @@ async function main() {
       [
         row({
           sheetRowNumber: 1,
-          cid: "TEST-NEW-JR-CONFLICT",
+          cid: "C90000013",
           firstName: "New",
           lastName: "Conflict",
           mobile: "9000000008",
@@ -438,7 +482,7 @@ async function main() {
       sql
     );
     const conflictFlagsAfterRerun = await sql`
-      SELECT sync_id, reason FROM candidate_review_flags WHERE cid = 'TEST-NEW-JR-CONFLICT' ORDER BY sync_id, reason
+      SELECT sync_id, reason FROM candidate_review_flags WHERE cid = 'C90000013' ORDER BY sync_id, reason
     `;
     check(
       results,
@@ -456,11 +500,11 @@ async function main() {
       JOIN (
         SELECT cid, reason, MAX(sync_id) AS latest_sync_id
         FROM candidate_review_flags
-        WHERE cid = 'TEST-NEW-JR-CONFLICT'
+        WHERE cid = 'C90000013'
         GROUP BY cid, reason
       ) latest
         ON crf.cid = latest.cid AND crf.reason = latest.reason AND crf.sync_id = latest.latest_sync_id
-      WHERE crf.cid = 'TEST-NEW-JR-CONFLICT'
+      WHERE crf.cid = 'C90000013'
     `;
     check(
       results,
@@ -471,7 +515,7 @@ async function main() {
     const naiveDistinctOn = await sql`
       SELECT DISTINCT ON (cid, reason) cid, reason, sync_id
       FROM candidate_review_flags
-      WHERE cid = 'TEST-NEW-JR-CONFLICT'
+      WHERE cid = 'C90000013'
       ORDER BY cid, reason, created_at DESC
     `;
     check(
@@ -483,7 +527,7 @@ async function main() {
     await sql`DELETE FROM candidate_review_flags WHERE sync_id = ${syncId2}`;
     await sql`DELETE FROM candidate_sync_history WHERE id = ${syncId2}`;
 
-    const lateralOnly = await byCid("TEST-NEW-JR-LATERAL-ONLY");
+    const lateralOnly = await byCid("C90000014");
     check(
       results,
       "JR found in lateral_master only: uses lateral's real values, ignores the poisoned Oorwin fallback",
@@ -493,7 +537,7 @@ async function main() {
         lateralOnly?.client_spoc === "Lateral Only SPOC"
     );
 
-    const notFound = await byCid("TEST-NEW-JR-NOT-FOUND");
+    const notFound = await byCid("C90000015");
     check(
       results,
       "JR not found anywhere: falls back to Oorwin's own values for primary_skills/market/client_spoc",
@@ -507,20 +551,20 @@ async function main() {
       notFound?.job_management_level === "-"
     );
 
-    const commentsPrimary = await byCid("TEST-NEW-COMMENTS-PRIMARY");
+    const commentsPrimary = await byCid("C90000016");
     check(results, "Comments: primary column used when present", commentsPrimary?.submission_comments === "Primary Comment");
 
-    const commentsFallback = await byCid("TEST-NEW-COMMENTS-FALLBACK");
+    const commentsFallback = await byCid("C90000017");
     check(
       results,
       "Comments: falls back to Reason for Rejection when Submission Comments is blank",
       commentsFallback?.submission_comments === "Fallback Comment"
     );
 
-    const commentsBothBlank = await byCid("TEST-NEW-COMMENTS-BOTH-BLANK");
+    const commentsBothBlank = await byCid("C90000018");
     check(results, "Comments: both blank → '-'", commentsBothBlank?.submission_comments === "-");
 
-    const dupSame = await byCid("TEST-DUP-SAME");
+    const dupSame = await byCid("C90000019");
     check(
       results,
       "Duplicate CID, same name in-sheet: collapses to ONE row (last row in sheet order wins)",
@@ -528,18 +572,73 @@ async function main() {
     );
     check(results, "Duplicate CID, same name: last row's Status wins ('Second Status')", dupSame?.status === "Second Status");
     const dupSameCount = Number(
-      (await sql<{ c: string }[]>`SELECT COUNT(*)::text AS c FROM candidate_master WHERE cid = 'TEST-DUP-SAME'`)[0]?.c ?? "0"
+      (await sql<{ c: string }[]>`SELECT COUNT(*)::text AS c FROM candidate_master WHERE cid = 'C90000019'`)[0]?.c ?? "0"
     );
     check(results, "Duplicate CID, same name: exactly one row exists (not two)", dupSameCount === 1);
 
     check(
       results,
-      "combineCandidateName sanity: TEST-DUP-SAME's name combined correctly",
+      "combineCandidateName sanity: C90000019's name combined correctly",
       dupSame?.name === combineCandidateName("Dup", "-", "Same")
     );
 
+    // -- Invalid CID format: quarantined, never touches candidate_master --
+    const invalidCidNumeric = await byCid("9000000099");
+    check(results, "Invalid CID (bare digits): never inserted into candidate_master", invalidCidNumeric === undefined);
+    const invalidCidFreeText = await byCid("data integration, enhancing reporting accuracy");
+    check(
+      results,
+      "Invalid CID (free text): never inserted into candidate_master",
+      invalidCidFreeText === undefined
+    );
+    const invalidCidFlags = await sql`
+      SELECT cid, reason, detail FROM candidate_review_flags
+      WHERE cid IN ('9000000099', 'data integration, enhancing reporting accuracy')
+    `;
+    check(
+      results,
+      "Invalid CID: exactly 2 'invalid_candidate_id' review flags written, one per bad row",
+      invalidCidFlags.length === 2 && invalidCidFlags.every((f: { reason: string }) => f.reason === "invalid_candidate_id"),
+      JSON.stringify(invalidCidFlags)
+    );
+    const numericFlag = invalidCidFlags.find((f: { cid: string }) => f.cid === "9000000099");
+    check(
+      results,
+      "Invalid CID flag detail: bare-digits row records sheetRowNumber/name/rawCid",
+      numericFlag?.detail.sheetRowNumber === 15 &&
+        numericFlag?.detail.name === combineCandidateName("Invalid", "-", "CidFormat") &&
+        numericFlag?.detail.rawCid === "9000000099",
+      JSON.stringify(numericFlag?.detail)
+    );
+
+    // -- Missing Job Requisition ID: still inserted, but flagged --
+    const missingJr = await byCid("C90000020");
+    check(results, "Missing JR ID: row still inserted normally", missingJr !== undefined);
+    check(results, "Missing JR ID: job_requisition_id stored as '-'", missingJr?.job_requisition_id === "-");
+    const missingJrFlags = await sql`
+      SELECT reason, detail FROM candidate_review_flags WHERE cid = 'C90000020'
+    `;
+    check(
+      results,
+      "Missing JR ID: exactly 1 'missing_job_requisition_id' review flag written",
+      missingJrFlags.length === 1 &&
+        missingJrFlags[0].reason === "missing_job_requisition_id" &&
+        missingJrFlags[0].detail.sheetRowNumber === 17,
+      JSON.stringify(missingJrFlags)
+    );
+
+    // -- A row WITH a Job Requisition ID never gets the missing-JR flag --
+    const jrConflictMissingJrFlags = await sql`
+      SELECT * FROM candidate_review_flags WHERE cid = 'C90000013' AND reason = 'missing_job_requisition_id'
+    `;
+    check(
+      results,
+      "Row with a real (even if conflicting) JR ID never gets a 'missing_job_requisition_id' flag",
+      jrConflictMissingJrFlags.length === 0
+    );
+
     // -- cleanup: remove everything this test wrote, leave the DB as found --
-    const testCids = sheet.map((r) => r.cid).filter((c) => c !== "-").concat(["TEST-UNTOUCHED"]);
+    const testCids = sheet.map((r) => r.cid).filter((c) => c !== "-").concat(["C90000003"]);
     await sql`DELETE FROM candidate_review_flags WHERE cid = ANY(${testCids})`;
     await sql`DELETE FROM candidate_sync_changes WHERE cid = ANY(${testCids})`;
     await sql`DELETE FROM candidate_master WHERE cid = ANY(${testCids})`;

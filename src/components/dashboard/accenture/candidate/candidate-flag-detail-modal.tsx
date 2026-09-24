@@ -17,9 +17,22 @@ const REASON_LABELS: Record<string, string> = {
   jr_id_conflict: "Job Requisition Conflict",
   unclean_contact_number: "Unclean Contact Number",
   legacy_contact_number_unclean: "Unclean Contact Number (legacy)",
+  missing_job_requisition_id: "Missing Job Requisition ID",
 };
 
 function FlagBody({ flag }: { flag: CandidateFieldFlag }) {
+  if (flag.reason === "missing_job_requisition_id") {
+    return (
+      <div className="space-y-2 text-sm">
+        <p className="text-muted-foreground">
+          This candidate has no Job Requisition ID on the most recent live
+          sync — every real Oorwin row is expected to carry one going
+          forward. The row was still saved as-is; nothing was guessed at.
+        </p>
+      </div>
+    );
+  }
+
   if (flag.reason === "jr_id_conflict") {
     const lateralValue = String(flag.detail.lateralValue ?? "-");
     const executiveValue = String(flag.detail.executiveValue ?? "-");

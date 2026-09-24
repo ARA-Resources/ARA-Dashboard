@@ -60,14 +60,14 @@ async function main() {
     check(results, "Real file: rowsInSheet === 60", realResult.counts.rowsInSheet === 60, `${realResult.counts.rowsInSheet}`);
     check(
       results,
-      "Real file: quarantined === 4 (the 2 known pairs, 2 rows each)",
-      realResult.counts.quarantined === 4,
+      "Real file: quarantined === 5 (2 known duplicate-mismatch pairs, 2 rows each, + 1 invalid-CID row)",
+      realResult.counts.quarantined === 5,
       `${realResult.counts.quarantined}`
     );
     check(
       results,
-      "Real file: inserted === 56 (fresh DB, no pre-existing CIDs)",
-      realResult.counts.inserted === 56,
+      "Real file: inserted === 55 (fresh DB, no pre-existing CIDs; 1 fewer than total-quarantined since the bare-numeric CID never reaches candidate_master)",
+      realResult.counts.inserted === 55,
       `${realResult.counts.inserted}`
     );
     check(results, "Real file: failureReason is null on a partial (not failed) run", realResult.failureReason === null);

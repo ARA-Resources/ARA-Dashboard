@@ -183,8 +183,8 @@ export function CandidateMasterSheetTable({
     [headers]
   );
 
-  const duplicateFlagCidSet = React.useMemo(
-    () => new Set(highlights?.duplicateFlagCids ?? []),
+  const duplicateFlagReasonByCid = React.useMemo(
+    () => new Map(Object.entries(highlights?.duplicateFlagCids ?? {})),
     [highlights]
   );
 
@@ -390,7 +390,8 @@ export function CandidateMasterSheetTable({
                     rows.map((row, rowIndex) => {
                       const srNo = (page - 1) * pageSize + rowIndex + 1;
                       const cid = row["Candidate ID"];
-                      const isDuplicateFlagged = Boolean(cid && duplicateFlagCidSet.has(cid));
+                      const duplicateFlagReason = cid ? duplicateFlagReasonByCid.get(cid) : undefined;
+                      const isDuplicateFlagged = Boolean(duplicateFlagReason);
                       const changedHeaders = cid ? highlights?.changedCellsByCid[cid] : undefined;
                       const fieldFlags = cid ? highlights?.fieldFlagsByCid[cid] : undefined;
                       return (
@@ -401,9 +402,11 @@ export function CandidateMasterSheetTable({
                             isDuplicateFlagged && "bg-rose-500/5 hover:bg-rose-500/10"
                           )}
                           title={
-                            isDuplicateFlagged
-                              ? "This Candidate ID appeared more than once in the most recent sync with mismatched names — needs manual review."
-                              : undefined
+                            duplicateFlagReason === "invalid_candidate_id"
+                              ? "This Candidate ID doesn't match the expected format (\"C\" + digits) — needs manual review."
+                              : duplicateFlagReason === "duplicate_name_mismatch"
+                                ? "This Candidate ID appeared more than once in the most recent sync with mismatched names — needs manual review."
+                                : undefined
                           }
                         >
                           <TableCell className="px-3 py-3 text-sm tabular-nums text-muted-foreground">
