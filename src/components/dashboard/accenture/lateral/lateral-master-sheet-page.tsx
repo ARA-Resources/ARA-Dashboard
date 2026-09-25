@@ -30,16 +30,8 @@ import {
   useLateralMasterSheet,
   type LateralMasterSheetClientQuery,
 } from "@/hooks/use-lateral-master-sheet";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { cn } from "@/lib/utils";
-
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = React.useState(value);
-  React.useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(id);
-  }, [value, delayMs]);
-  return debounced;
-}
 
 /** DD/MM/YYYY , HH:MM:SS am/pm (12h, zero-padded). */
 function formatLastRunDateTime(iso: string): string {

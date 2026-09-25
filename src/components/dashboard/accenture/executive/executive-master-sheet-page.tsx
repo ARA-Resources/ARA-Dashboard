@@ -29,15 +29,7 @@ import {
   useExecutiveMasterSheet,
   type ExecutiveMasterSheetClientQuery,
 } from "@/hooks/use-executive-master-sheet";
-
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = React.useState(value);
-  React.useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(id);
-  }, [value, delayMs]);
-  return debounced;
-}
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 
 /**
  * Filter params the page accepts on navigation (e.g. from the dashboard pivot's
@@ -392,7 +384,7 @@ export function ExecutiveMasterSheetPage() {
               page={data?.page ?? page}
               pageSize={pageSize}
               pageCount={data?.pageCount ?? 0}
-              isLoading={isLoading && !data}
+              isLoading={isLoading || schemaLoading}
               isFetching={isFetching}
               errorMessage={errorMessage}
               onPageChange={setPage}

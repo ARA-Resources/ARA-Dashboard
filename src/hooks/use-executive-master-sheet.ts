@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type {
   ExecutiveMasterDateFilter,
   ExecutiveMasterPageSize,
@@ -139,15 +139,15 @@ export function useExecutiveMasterFilterSchema() {
 }
 
 export function useExecutiveMasterSheet(query: ExecutiveMasterSheetClientQuery) {
-  const hasActiveFilters =
-    Object.values(query.columnFilters).some((v) => v.length > 0) ||
-    Object.values(query.textFilters).some((v) => v.trim().length > 0) ||
-    Object.values(query.dateFilters).some((v) => Boolean(v.from || v.to));
-
   return useQuery({
     queryKey: executiveMasterSheetQueryKey(query),
     queryFn: () => fetchExecutiveMasterSheet(query),
     staleTime: 30_000,
-    placeholderData: hasActiveFilters ? undefined : (previous) => previous,
+    // Keep the last result on screen (dimmed via isFetching) while a filter /
+    // page change refetches. Header-filter dropdowns live inside <thead>, so the
+    // table must NOT unmount into a skeleton on every filter change — that tears
+    // down whatever dropdown the user has open. Same fix as Lateral's
+    // useLateralMasterSheet; keep this in sync with it.
+    placeholderData: keepPreviousData,
   });
 }

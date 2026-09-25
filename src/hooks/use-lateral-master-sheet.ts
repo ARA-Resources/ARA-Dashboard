@@ -143,7 +143,8 @@ export function useLateralMasterSheet(query: LateralMasterSheetClientQuery) {
     // Keep the last result on screen (dimmed via isFetching) while a filter /
     // page change refetches. Header-filter dropdowns live inside <thead>, so the
     // table must NOT unmount into a skeleton on every filter change — that tears
-    // down whatever dropdown the user has open.
+    // down whatever dropdown the user has open. Same fix in Candidate's
+    // useCandidateMasterSheet and Executive's useExecutiveMasterSheet; keep in sync.
     placeholderData: keepPreviousData,
   });
 }
