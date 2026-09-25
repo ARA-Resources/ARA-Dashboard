@@ -2,13 +2,28 @@
 
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, RefreshCw, X } from "lucide-react";
+import {
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  RefreshCw,
+  Upload,
+  X,
+} from "lucide-react";
 import { PageHeader } from "@/components/layouts/page-header";
 import { PageTransition } from "@/animations/page-transition";
 import { FadeIn } from "@/animations/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { CandidateMasterSheetTable } from "@/components/dashboard/accenture/candidate/candidate-master-sheet-table";
 import { MasterSheetPaginationBar } from "@/components/dashboard/accenture/master-sheet-pagination-bar";
 import {
@@ -26,7 +41,14 @@ import {
   useCandidateMasterSheet,
   type CandidateMasterSheetClientQuery,
 } from "@/hooks/use-candidate-master-sheet";
+import {
+  CANDIDATE_OORWIN_ACCEPTED_EXTENSIONS,
+  isAcceptedCandidateOorwinFile,
+  useCandidateOorwinSync,
+} from "@/hooks/use-candidate-oorwin-sync";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { cn } from "@/lib/utils";
 
 export function CandidateMasterSheetPage() {
   const queryClient = useQueryClient();
@@ -40,6 +62,14 @@ export function CandidateMasterSheetPage() {
     Record<string, CandidateMasterDateFilter>
   >({});
   const [refreshing, setRefreshing] = React.useState(false);
+
+  const { isAtLeast } = useCurrentUser();
+  const canUploadOorwin = isAtLeast("editor");
+  const oorwinSync = useCandidateOorwinSync();
+  const [uploadOpen, setUploadOpen] = React.useState(false);
+  const [uploadInputKey, setUploadInputKey] = React.useState(0);
+  const [selectedOorwinFile, setSelectedOorwinFile] = React.useState<File | null>(null);
+  const [oorwinFileError, setOorwinFileError] = React.useState<string | null>(null);
 
   const debouncedTextFilters = useDebouncedValue(textFilters, 450);
   const debouncedDateFilters = useDebouncedValue(dateFilters, 450);
@@ -111,6 +141,29 @@ export function CandidateMasterSheetPage() {
     }
   }
 
+  function handleOorwinFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    if (file && !isAcceptedCandidateOorwinFile(file.name)) {
+      setSelectedOorwinFile(null);
+      setOorwinFileError("Unsupported file type. Expected .xls, .xlsx, or .xlsm.");
+      return;
+    }
+    setOorwinFileError(null);
+    setSelectedOorwinFile(file);
+  }
+
+  async function handleRunOorwinSync() {
+    if (!selectedOorwinFile) return;
+    try {
+      await oorwinSync.mutateAsync(selectedOorwinFile);
+      setSelectedOorwinFile(null);
+      setUploadInputKey((k) => k + 1);
+      setUploadOpen(false);
+    } catch {
+      // surfaced via oorwinSync.error in the result banner below
+    }
+  }
+
   function toggleColumnValue(column: string, value: string) {
     setColumnFilters((prev) => {
       const current = prev[column] ?? [];
@@ -163,28 +216,150 @@ export function CandidateMasterSheetPage() {
         ? schemaError.message
         : null;
 
+  const oorwinError = oorwinSync.error instanceof Error ? oorwinSync.error.message : null;
+  const oorwinResult = oorwinSync.data ?? null;
+  const oorwinBannerTone: "success" | "partial" | "failed" | null = oorwinError
+    ? "failed"
+    : oorwinResult
+      ? oorwinResult.result
+      : null;
+
   return (
     <PageTransition>
       <PageHeader
         title="Candidates"
         description="Candidate Master Sheet from PostgreSQL (candidate_master)."
         actions={
-          <Button
-            type="button"
-            variant="outline"
-            className="rounded-xl gap-2"
-            onClick={() => void handleRefresh()}
-            disabled={refreshing || isFetching}
-          >
-            {refreshing || isFetching ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <RefreshCw className="size-4" />
-            )}
-            Refresh
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {canUploadOorwin ? (
+              <DropdownMenu open={uploadOpen} onOpenChange={setUploadOpen}>
+                <DropdownMenuTrigger
+                  render={
+                    <Button type="button" variant="outline" className="rounded-xl gap-2" />
+                  }
+                >
+                  <Upload className="size-4" />
+                  Upload
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-80 p-3">
+                  <DropdownMenuLabel className="px-0 pb-2 text-xs">
+                    Upload Oorwin Export
+                  </DropdownMenuLabel>
+                  <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+                    <p className="text-xs text-muted-foreground">
+                      Accepts .xls, .xlsx, or .xlsm — the raw Oorwin &quot;Candidate
+                      Master Tracker&quot; export, unmodified.
+                    </p>
+                    <Input
+                      key={uploadInputKey}
+                      type="file"
+                      accept={CANDIDATE_OORWIN_ACCEPTED_EXTENSIONS.join(",")}
+                      onChange={handleOorwinFileChange}
+                      disabled={oorwinSync.isPending}
+                      className="h-auto py-1.5 text-xs"
+                      onKeyDown={(e) => e.stopPropagation()}
+                    />
+                    {oorwinFileError ? (
+                      <p className="text-xs text-destructive">{oorwinFileError}</p>
+                    ) : null}
+                    <Button
+                      type="button"
+                      className="w-full rounded-xl gap-2"
+                      onClick={() => void handleRunOorwinSync()}
+                      disabled={oorwinSync.isPending || !selectedOorwinFile}
+                    >
+                      {oorwinSync.isPending ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Upload className="size-4" />
+                      )}
+                      {oorwinSync.isPending ? "Syncing…" : "Run Sync"}
+                    </Button>
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-xl gap-2"
+              onClick={() => void handleRefresh()}
+              disabled={refreshing || isFetching}
+            >
+              {refreshing || isFetching ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCw className="size-4" />
+              )}
+              Refresh
+            </Button>
+          </div>
         }
       />
+
+      {oorwinBannerTone ? (
+        <FadeIn>
+          <div
+            className={cn(
+              "mb-3 flex items-start gap-2 rounded-xl border p-3 text-sm",
+              oorwinBannerTone === "success"
+                ? "border-primary/30 bg-primary/5 text-foreground"
+                : oorwinBannerTone === "partial"
+                  ? "border-amber-500/25 bg-amber-500/5 text-foreground"
+                  : "border-destructive/30 bg-destructive/5 text-destructive"
+            )}
+            role="status"
+          >
+            {oorwinBannerTone === "success" ? (
+              <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+            ) : oorwinBannerTone === "partial" ? (
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            ) : (
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            )}
+            <div className="min-w-0 flex-1 space-y-1">
+              {oorwinError ? (
+                <p>{oorwinError}</p>
+              ) : oorwinResult ? (
+                <>
+                  <p
+                    className={
+                      oorwinBannerTone === "partial"
+                        ? "font-medium text-amber-600 dark:text-amber-400"
+                        : "font-medium"
+                    }
+                  >
+                    {oorwinResult.result === "success"
+                      ? "Sync completed — no issues."
+                      : oorwinResult.result === "partial"
+                        ? "Sync completed — some rows need review."
+                        : "Sync failed."}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {oorwinResult.sourceFilename} · {oorwinResult.counts.rowsInSheet} row(s) in
+                    sheet · {oorwinResult.counts.inserted} inserted ·{" "}
+                    {oorwinResult.counts.updated} updated · {oorwinResult.counts.unchanged}{" "}
+                    unchanged · {oorwinResult.counts.quarantined} quarantined ·{" "}
+                    {oorwinResult.counts.skippedBlankCid} skipped (blank CID) ·{" "}
+                    {oorwinResult.counts.reviewFlags} review flag(s)
+                  </p>
+                  {oorwinResult.failureReason ? (
+                    <p className="text-xs text-destructive/90">{oorwinResult.failureReason}</p>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => oorwinSync.reset()}
+              aria-label="Dismiss sync result"
+              className="-mr-0.5 -mt-0.5 shrink-0 rounded-sm p-0.5 hover:bg-foreground/10"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        </FadeIn>
+      ) : null}
 
       <FadeIn>
         <div className="mb-4 flex flex-wrap items-center gap-2">

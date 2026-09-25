@@ -196,12 +196,6 @@ export const DATASET_GROUPS: NavModuleNode[] = [
         icon: Building2,
         badge: "Soon",
       },
-      {
-        id: "dataset:candidate",
-        label: "Candidate",
-        href: ROUTES.datasetCandidate,
-        icon: UserRound,
-      },
     ],
   },
 ];
