@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   DEFAULT_CANDIDATE_MASTER_PAGE_SIZE,
   CANDIDATE_MASTER_PAGE_SIZE_OPTIONS,
+  type CandidateHighlightFilterValue,
   type CandidateMasterDateFilter,
   type CandidateMasterPageSize,
 } from "@/services/excel/candidate-master-sheet";
@@ -53,6 +54,10 @@ export async function GET(request: Request) {
       searchParams.get("dateFilters"),
       {}
     );
+    const highlightFilters = parseJsonRecord<CandidateHighlightFilterValue[]>(
+      searchParams.get("highlightFilters"),
+      []
+    );
 
     const result = await queryCandidateMasterSheetPage({
       page,
@@ -60,6 +65,7 @@ export async function GET(request: Request) {
       columnFilters,
       textFilters,
       dateFilters,
+      highlightFilters,
     });
 
     return NextResponse.json({ ok: true, ...result });

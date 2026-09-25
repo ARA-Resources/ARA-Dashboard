@@ -14,11 +14,13 @@ import {
 import {
   getLatestCandidateChangedFields,
   getLatestCandidateReviewFlags,
+  type CandidateChangedFieldsByCid,
   type CandidateReviewFlagRow,
 } from "@/services/persistence/read-candidate-highlights";
 import {
   isCandidateRoleNameColumn,
   type CandidateFilterControl,
+  type CandidateHighlightFilterValue,
   type CandidateMasterDateFilter,
   type CandidateMasterFilterField,
   type CandidateMasterPageSize,
@@ -69,6 +71,7 @@ export interface CandidateMasterSheetQuery {
   columnFilters: Record<string, string[]>;
   textFilters: Record<string, string>;
   dateFilters: Record<string, CandidateMasterDateFilter>;
+  highlightFilters?: CandidateHighlightFilterValue[];
 }
 
 /** One open per-field review flag, resolved to a display header (C9 highlighting). */
@@ -146,15 +149,13 @@ function fieldFlagHeader(flag: CandidateReviewFlagRow): CandidateMasterExcelHead
   return null;
 }
 
-async function buildHighlightState(
+/** Builds the page-scoped display highlight state from already-fetched, full-table highlight data (see queryCandidateMasterSheetPage — fetched once and shared with the highlight-filter predicate). */
+function buildHighlightState(
   cidsOnPage: string[],
-  sqlClient?: SqlClient
-): Promise<CandidateMasterSheetHighlights> {
+  changedFields: CandidateChangedFieldsByCid,
+  reviewFlags: CandidateReviewFlagRow[]
+): CandidateMasterSheetHighlights {
   const cidSet = new Set(cidsOnPage);
-  const [changedFields, reviewFlags] = await Promise.all([
-    getLatestCandidateChangedFields(sqlClient),
-    getLatestCandidateReviewFlags(sqlClient),
-  ]);
 
   const changedCellsByCid: Record<string, CandidateMasterExcelHeader[]> = {};
   for (const cid of cidsOnPage) {
@@ -329,16 +330,44 @@ function parseFilterBoundary(raw: string): Date | null {
 
 export function applyCandidateMasterSheetFilters(
   rows: CandidateMasterSheetPgRow[],
-  query: Pick<CandidateMasterSheetQuery, "columnFilters" | "textFilters" | "dateFilters">
+  query: Pick<
+    CandidateMasterSheetQuery,
+    "columnFilters" | "textFilters" | "dateFilters" | "highlightFilters"
+  >,
+  highlightData?: {
+    changedFields: CandidateChangedFieldsByCid;
+    reviewFlags: CandidateReviewFlagRow[];
+  }
 ): CandidateMasterSheetPgRow[] {
   const columnEntries = Object.entries(query.columnFilters).filter(([, v]) => v.length > 0);
   const textEntries = Object.entries(query.textFilters).filter(([, v]) => v.trim().length > 0);
   const dateEntries = Object.entries(query.dateFilters).filter(
     ([, r]) => Boolean(r.from || r.to)
   );
+  const highlightFilters = query.highlightFilters ?? [];
 
-  if (columnEntries.length === 0 && textEntries.length === 0 && dateEntries.length === 0) {
+  if (
+    columnEntries.length === 0 &&
+    textEntries.length === 0 &&
+    dateEntries.length === 0 &&
+    highlightFilters.length === 0
+  ) {
     return rows;
+  }
+
+  // OR within the selected highlight types, same as multi-select within one column filter.
+  let highlightMatchCids: Set<string> | null = null;
+  if (highlightFilters.length > 0 && highlightData) {
+    highlightMatchCids = new Set<string>();
+    if (highlightFilters.includes("changed")) {
+      for (const cid of highlightData.changedFields.keys()) highlightMatchCids.add(cid);
+    }
+    const reasonFilters = new Set(highlightFilters.filter((value) => value !== "changed"));
+    if (reasonFilters.size > 0) {
+      for (const flag of highlightData.reviewFlags) {
+        if (reasonFilters.has(flag.reason)) highlightMatchCids.add(flag.cid);
+      }
+    }
   }
 
   return rows.filter((row) => {
@@ -367,6 +396,8 @@ export function applyCandidateMasterSheetFilters(
         if (to && stamp > toDayStamp(to)) return false;
       }
     }
+
+    if (highlightMatchCids && !highlightMatchCids.has(row["Candidate ID"])) return false;
 
     return true;
   });
@@ -405,11 +436,21 @@ export async function queryCandidateMasterSheetPage(
   sqlClient?: SqlClient
 ): Promise<CandidateMasterSheetPageResult> {
   const rows = await loadRows(sqlClient);
-  const filtered = applyCandidateMasterSheetFilters(rows, query);
+  // Fetched once, full-table (both queries are already unfiltered — see
+  // read-candidate-highlights.ts), and shared between the highlight-filter
+  // predicate (needs full-table coverage, pre-pagination) and the page's
+  // display highlight state (page-scoped, post-pagination) below — avoids
+  // querying candidate_sync_changes/candidate_review_flags twice per request.
+  const [changedFields, reviewFlags] = await Promise.all([
+    getLatestCandidateChangedFields(sqlClient),
+    getLatestCandidateReviewFlags(sqlClient),
+  ]);
+  const filtered = applyCandidateMasterSheetFilters(rows, query, { changedFields, reviewFlags });
   const page = paginate(filtered, query.page, query.pageSize);
-  const highlights = await buildHighlightState(
+  const highlights = buildHighlightState(
     page.rows.map((row) => row["Candidate ID"]),
-    sqlClient
+    changedFields,
+    reviewFlags
   );
 
   return {

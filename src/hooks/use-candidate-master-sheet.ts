@@ -2,6 +2,7 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type {
+  CandidateHighlightFilterValue,
   CandidateMasterDateFilter,
   CandidateMasterPageSize,
 } from "@/services/excel/candidate-master-sheet";
@@ -16,6 +17,7 @@ export interface CandidateMasterSheetClientQuery {
   columnFilters: Record<string, string[]>;
   textFilters: Record<string, string>;
   dateFilters: Record<string, CandidateMasterDateFilter>;
+  highlightFilters: CandidateHighlightFilterValue[];
 }
 
 export function candidateMasterSchemaQueryKey() {
@@ -39,13 +41,14 @@ function buildParams(
     params.set("columnFilters", JSON.stringify(query.columnFilters ?? {}));
     params.set("textFilters", JSON.stringify(query.textFilters ?? {}));
     params.set("dateFilters", JSON.stringify(query.dateFilters ?? {}));
+    params.set("highlightFilters", JSON.stringify(query.highlightFilters ?? []));
   }
   return params;
 }
 
 export async function fetchCandidateMasterFilterSchema(): Promise<CandidateMasterSheetSchema> {
   const params = buildParams(
-    { page: 1, pageSize: 20, columnFilters: {}, textFilters: {}, dateFilters: {} },
+    { page: 1, pageSize: 20, columnFilters: {}, textFilters: {}, dateFilters: {}, highlightFilters: [] },
     { schema: true }
   );
   const res = await fetch(`/api/excel/candidate-master-sheet?${params.toString()}`, {

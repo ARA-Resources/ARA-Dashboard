@@ -25,13 +25,17 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { CandidateMasterSheetTable } from "@/components/dashboard/accenture/candidate/candidate-master-sheet-table";
+import { LateralMasterColumnFilter } from "@/components/dashboard/accenture/lateral/lateral-master-column-filter";
 import { MasterSheetPaginationBar } from "@/components/dashboard/accenture/master-sheet-pagination-bar";
 import {
+  CANDIDATE_HIGHLIGHT_FILTER_OPTIONS,
   DEFAULT_CANDIDATE_MASTER_PAGE_SIZE,
   CANDIDATE_MASTER_PAGE_SIZE_OPTIONS,
+  type CandidateHighlightFilterValue,
   type CandidateMasterDateFilter,
   type CandidateMasterPageSize,
 } from "@/services/excel/candidate-master-sheet";
+import type { LateralMasterFilterField } from "@/services/excel/lateral-master-sheet";
 import {
   fetchCandidateMasterFilterSchema,
   fetchCandidateMasterSheet,
@@ -50,6 +54,28 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { cn } from "@/lib/utils";
 
+/**
+ * "Highlights" isn't a real candidate_master column — it's a synthetic
+ * pseudo-column so the existing, already-proven MultiSelectHeaderFilter
+ * checkbox panel (lateral-master-column-filter.tsx) can be reused verbatim
+ * as a toolbar control instead of building a new filter widget. The widget
+ * only speaks in the display label strings it's given, so these lookups
+ * translate between that and the CandidateHighlightFilterValue codes the API
+ * actually wants.
+ */
+const HIGHLIGHT_LABEL_BY_VALUE = new Map<string, string>(
+  CANDIDATE_HIGHLIGHT_FILTER_OPTIONS.map((option) => [option.value, option.label])
+);
+const HIGHLIGHT_VALUE_BY_LABEL = new Map<string, CandidateHighlightFilterValue>(
+  CANDIDATE_HIGHLIGHT_FILTER_OPTIONS.map((option) => [option.label, option.value])
+);
+const HIGHLIGHT_FILTER_FIELD: LateralMasterFilterField = {
+  column: "Highlights",
+  control: "multi-select",
+  values: CANDIDATE_HIGHLIGHT_FILTER_OPTIONS.map((option) => option.label),
+  valueCount: CANDIDATE_HIGHLIGHT_FILTER_OPTIONS.length,
+};
+
 export function CandidateMasterSheetPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = React.useState(1);
@@ -61,6 +87,9 @@ export function CandidateMasterSheetPage() {
   const [dateFilters, setDateFilters] = React.useState<
     Record<string, CandidateMasterDateFilter>
   >({});
+  const [highlightFilters, setHighlightFilters] = React.useState<CandidateHighlightFilterValue[]>(
+    []
+  );
   const [refreshing, setRefreshing] = React.useState(false);
 
   const { isAtLeast } = useCurrentUser();
@@ -81,8 +110,9 @@ export function CandidateMasterSheetPage() {
       columnFilters,
       textFilters: debouncedTextFilters,
       dateFilters: debouncedDateFilters,
+      highlightFilters,
     }),
-    [page, pageSize, columnFilters, debouncedTextFilters, debouncedDateFilters]
+    [page, pageSize, columnFilters, debouncedTextFilters, debouncedDateFilters, highlightFilters]
   );
 
   const {
@@ -95,12 +125,13 @@ export function CandidateMasterSheetPage() {
 
   React.useEffect(() => {
     setPage(1);
-  }, [columnFilters, debouncedTextFilters, debouncedDateFilters, pageSize]);
+  }, [columnFilters, debouncedTextFilters, debouncedDateFilters, highlightFilters, pageSize]);
 
   const activeFilterCount =
     Object.values(columnFilters).filter((v) => v.length > 0).length +
     Object.values(textFilters).filter((v) => v.trim()).length +
-    Object.values(dateFilters).filter((v) => v.from || v.to).length;
+    Object.values(dateFilters).filter((v) => v.from || v.to).length +
+    (highlightFilters.length > 0 ? 1 : 0);
 
   const activeFilterChips: Array<{ key: string; label: string; remove: () => void }> = [];
   for (const [col, values] of Object.entries(columnFilters)) {
@@ -126,6 +157,15 @@ export function CandidateMasterSheetPage() {
       key: `date:${col}`,
       label: `${col}: ${range.from ?? "…"} → ${range.to ?? "…"}`,
       remove: () => onDateChange(col, {}),
+    });
+  }
+  if (highlightFilters.length > 0) {
+    const labels = highlightFilters.map((value) => HIGHLIGHT_LABEL_BY_VALUE.get(value) ?? value);
+    const more = labels.length > 2 ? ` +${labels.length - 2}` : "";
+    activeFilterChips.push({
+      key: "highlights",
+      label: `Highlights: ${labels.slice(0, 2).join(", ")}${more}`,
+      remove: () => setHighlightFilters([]),
     });
   }
 
@@ -203,10 +243,23 @@ export function CandidateMasterSheetPage() {
     });
   }
 
+  function toggleHighlightFilterLabel(label: string) {
+    const value = HIGHLIGHT_VALUE_BY_LABEL.get(label);
+    if (!value) return;
+    setHighlightFilters((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]
+    );
+  }
+
+  function clearHighlightFilters() {
+    setHighlightFilters([]);
+  }
+
   function clearAllFilters() {
     setColumnFilters({});
     setTextFilters({});
     setDateFilters({});
+    setHighlightFilters([]);
   }
 
   const errorMessage =
@@ -231,6 +284,21 @@ export function CandidateMasterSheetPage() {
         description="Candidate Master Sheet from PostgreSQL (candidate_master)."
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-2.5 h-8">
+              <span className="text-xs font-medium text-muted-foreground">Highlights</span>
+              <LateralMasterColumnFilter
+                field={HIGHLIGHT_FILTER_FIELD}
+                selectedValues={highlightFilters.map(
+                  (value) => HIGHLIGHT_LABEL_BY_VALUE.get(value) ?? value
+                )}
+                textValue=""
+                dateValue={{}}
+                onToggleValue={toggleHighlightFilterLabel}
+                onClearColumn={clearHighlightFilters}
+                onTextChange={() => {}}
+                onDateChange={() => {}}
+              />
+            </div>
             {canUploadOorwin ? (
               <DropdownMenu open={uploadOpen} onOpenChange={setUploadOpen}>
                 <DropdownMenuTrigger
@@ -385,7 +453,7 @@ export function CandidateMasterSheetPage() {
         <FadeIn>
           <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs">
             <span className="font-medium text-primary">
-              {activeFilterCount} column{activeFilterCount === 1 ? "" : "s"} filtered
+              {activeFilterCount} filter{activeFilterCount === 1 ? "" : "s"} applied
             </span>
             {activeFilterChips.map((chip) => (
               <span

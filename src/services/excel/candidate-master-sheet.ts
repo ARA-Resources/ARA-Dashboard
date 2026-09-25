@@ -30,6 +30,24 @@ export interface CandidateMasterDateFilter {
   to?: string;
 }
 
+/**
+ * C9 highlight/flag types a user can filter the table down to. "changed"
+ * covers any field changed in a CID's most recent sync (candidate_sync_changes);
+ * the rest mirror CandidateReviewFlagReason (candidate_review_flags).
+ */
+export const CANDIDATE_HIGHLIGHT_FILTER_OPTIONS = [
+  { value: "changed", label: "Recently changed" },
+  { value: "duplicate_name_mismatch", label: "Duplicate name" },
+  { value: "invalid_candidate_id", label: "Invalid CID" },
+  { value: "missing_job_requisition_id", label: "Missing JR ID" },
+  { value: "jr_id_conflict", label: "JR conflict" },
+  { value: "unclean_contact_number", label: "Unclean contact number" },
+  { value: "legacy_contact_number_unclean", label: "Unclean contact number (legacy)" },
+] as const;
+
+export type CandidateHighlightFilterValue =
+  (typeof CANDIDATE_HIGHLIGHT_FILTER_OPTIONS)[number]["value"];
+
 export interface CandidateMasterSheetQuery {
   page: number;
   pageSize: CandidateMasterPageSize;
