@@ -6,6 +6,7 @@ import {
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
+  History,
   Loader2,
   RefreshCw,
   Upload,
@@ -21,6 +22,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -43,8 +45,10 @@ import {
   candidateMasterSheetQueryKey,
   useCandidateMasterFilterSchema,
   useCandidateMasterSheet,
+  useCandidateSyncHistory,
   type CandidateMasterSheetClientQuery,
 } from "@/hooks/use-candidate-master-sheet";
+import type { CandidateSyncHistoryRow } from "@/services/persistence/read-candidate-sync-history";
 import {
   CANDIDATE_OORWIN_ACCEPTED_EXTENSIONS,
   isAcceptedCandidateOorwinFile,
@@ -76,6 +80,109 @@ const HIGHLIGHT_FILTER_FIELD: LateralMasterFilterField = {
   valueCount: CANDIDATE_HIGHLIGHT_FILTER_OPTIONS.length,
 };
 
+function formatSyncLabel(sync: CandidateSyncHistoryRow): string {
+  const date = new Date(sync.startedAt);
+  const dateLabel = Number.isNaN(date.getTime())
+    ? sync.startedAt
+    : date.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+  return sync.sourceFilename ? `${sync.sourceFilename} — ${dateLabel}` : dateLabel;
+}
+
+/**
+ * Single-select "which sync run" picker — a plain button list inside the
+ * dropdown, not the checkbox-based MultiSelectHeaderFilter (LateralMasterColumnFilter),
+ * since only one sync can be selected at a time.
+ */
+function SyncFilterMenu({
+  syncs,
+  selectedSyncId,
+  onSelect,
+  onClear,
+}: {
+  syncs: CandidateSyncHistoryRow[];
+  selectedSyncId: number | null;
+  onSelect: (syncId: number) => void;
+  onClear: () => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const selected = syncs.find((sync) => sync.id === selectedSyncId) ?? null;
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            type="button"
+            variant="outline"
+            className={cn(
+              "max-w-64 rounded-xl gap-2",
+              selectedSyncId != null && "border-primary/40 text-primary"
+            )}
+          />
+        }
+      >
+        <History className="size-4 shrink-0" />
+        <span className="truncate">
+          {selected ? `Sync: ${formatSyncLabel(selected)}` : "Filter by Sync"}
+        </span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80 p-0">
+        <DropdownMenuLabel className="px-3 py-2 text-xs">Filter by Sync Run</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <div className="max-h-72 space-y-0.5 overflow-y-auto p-2">
+          {syncs.length === 0 ? (
+            <p className="px-2 py-3 text-xs text-muted-foreground">No sync runs yet.</p>
+          ) : (
+            syncs.map((sync) => (
+              <button
+                key={sync.id}
+                type="button"
+                onClick={() => {
+                  onSelect(sync.id);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex w-full flex-col items-start gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-muted/50",
+                  sync.id === selectedSyncId && "bg-primary/10"
+                )}
+              >
+                <span className="w-full truncate text-xs font-medium">
+                  {formatSyncLabel(sync)}
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  {sync.counts.inserted} inserted · {sync.counts.updated} updated ·{" "}
+                  {sync.counts.reviewFlags} flagged
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+        {selectedSyncId != null ? (
+          <>
+            <DropdownMenuSeparator />
+            <div className="p-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 w-full rounded-lg text-xs"
+                onClick={onClear}
+              >
+                Clear
+              </Button>
+            </div>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function CandidateMasterSheetPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = React.useState(1);
@@ -90,7 +197,10 @@ export function CandidateMasterSheetPage() {
   const [highlightFilters, setHighlightFilters] = React.useState<CandidateHighlightFilterValue[]>(
     []
   );
+  const [syncFilter, setSyncFilter] = React.useState<number | null>(null);
   const [refreshing, setRefreshing] = React.useState(false);
+
+  const { data: syncHistory } = useCandidateSyncHistory();
 
   const { isAtLeast } = useCurrentUser();
   const canUploadOorwin = isAtLeast("editor");
@@ -111,8 +221,17 @@ export function CandidateMasterSheetPage() {
       textFilters: debouncedTextFilters,
       dateFilters: debouncedDateFilters,
       highlightFilters,
+      syncFilter,
     }),
-    [page, pageSize, columnFilters, debouncedTextFilters, debouncedDateFilters, highlightFilters]
+    [
+      page,
+      pageSize,
+      columnFilters,
+      debouncedTextFilters,
+      debouncedDateFilters,
+      highlightFilters,
+      syncFilter,
+    ]
   );
 
   const {
@@ -125,13 +244,21 @@ export function CandidateMasterSheetPage() {
 
   React.useEffect(() => {
     setPage(1);
-  }, [columnFilters, debouncedTextFilters, debouncedDateFilters, highlightFilters, pageSize]);
+  }, [
+    columnFilters,
+    debouncedTextFilters,
+    debouncedDateFilters,
+    highlightFilters,
+    syncFilter,
+    pageSize,
+  ]);
 
   const activeFilterCount =
     Object.values(columnFilters).filter((v) => v.length > 0).length +
     Object.values(textFilters).filter((v) => v.trim()).length +
     Object.values(dateFilters).filter((v) => v.from || v.to).length +
-    (highlightFilters.length > 0 ? 1 : 0);
+    (highlightFilters.length > 0 ? 1 : 0) +
+    (syncFilter != null ? 1 : 0);
 
   const activeFilterChips: Array<{ key: string; label: string; remove: () => void }> = [];
   for (const [col, values] of Object.entries(columnFilters)) {
@@ -166,6 +293,14 @@ export function CandidateMasterSheetPage() {
       key: "highlights",
       label: `Highlights: ${labels.slice(0, 2).join(", ")}${more}`,
       remove: () => setHighlightFilters([]),
+    });
+  }
+  if (syncFilter != null) {
+    const sync = syncHistory?.find((s) => s.id === syncFilter);
+    activeFilterChips.push({
+      key: "sync",
+      label: `Sync: ${sync ? formatSyncLabel(sync) : `#${syncFilter}`}`,
+      remove: () => setSyncFilter(null),
     });
   }
 
@@ -260,6 +395,7 @@ export function CandidateMasterSheetPage() {
     setTextFilters({});
     setDateFilters({});
     setHighlightFilters([]);
+    setSyncFilter(null);
   }
 
   const errorMessage =
@@ -299,6 +435,12 @@ export function CandidateMasterSheetPage() {
                 onDateChange={() => {}}
               />
             </div>
+            <SyncFilterMenu
+              syncs={syncHistory ?? []}
+              selectedSyncId={syncFilter}
+              onSelect={setSyncFilter}
+              onClear={() => setSyncFilter(null)}
+            />
             {canUploadOorwin ? (
               <DropdownMenu open={uploadOpen} onOpenChange={setUploadOpen}>
                 <DropdownMenuTrigger
@@ -413,6 +555,19 @@ export function CandidateMasterSheetPage() {
                   </p>
                   {oorwinResult.failureReason ? (
                     <p className="text-xs text-destructive/90">{oorwinResult.failureReason}</p>
+                  ) : null}
+                  {oorwinResult.syncId != null &&
+                  oorwinResult.counts.inserted + oorwinResult.counts.updated > 0 ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-1 h-7 rounded-lg text-xs"
+                      onClick={() => setSyncFilter(oorwinResult.syncId)}
+                    >
+                      View these {oorwinResult.counts.inserted + oorwinResult.counts.updated}{" "}
+                      candidates
+                    </Button>
                   ) : null}
                 </>
               ) : null}

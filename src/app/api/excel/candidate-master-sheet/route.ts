@@ -10,6 +10,7 @@ import {
   getCandidateMasterSheetSchema,
   queryCandidateMasterSheetPage,
 } from "@/services/persistence/candidate-master-sheet-postgres";
+import { listRecentCandidateSyncHistory } from "@/services/persistence/read-candidate-sync-history";
 
 export const runtime = "nodejs";
 
@@ -33,11 +34,17 @@ function parseJsonRecord<T>(raw: string | null, fallback: T): T {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const schemaOnly = searchParams.get("schema") === "1";
+  const syncHistoryOnly = searchParams.get("syncHistory") === "1";
 
   try {
     if (schemaOnly) {
       const schema = await getCandidateMasterSheetSchema();
       return NextResponse.json({ ok: true, schema });
+    }
+
+    if (syncHistoryOnly) {
+      const syncHistory = await listRecentCandidateSyncHistory();
+      return NextResponse.json({ ok: true, syncHistory });
     }
 
     const page = Math.max(1, Number(searchParams.get("page") || "1") || 1);
@@ -58,6 +65,9 @@ export async function GET(request: Request) {
       searchParams.get("highlightFilters"),
       []
     );
+    const syncFilterRaw = searchParams.get("syncFilter");
+    const syncFilter =
+      syncFilterRaw && Number.isFinite(Number(syncFilterRaw)) ? Number(syncFilterRaw) : null;
 
     const result = await queryCandidateMasterSheetPage({
       page,
@@ -66,6 +76,7 @@ export async function GET(request: Request) {
       textFilters,
       dateFilters,
       highlightFilters,
+      syncFilter,
     });
 
     return NextResponse.json({ ok: true, ...result });

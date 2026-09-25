@@ -10,6 +10,7 @@ import type {
   CandidateMasterSheetSchema,
   CandidateMasterSheetPageResult,
 } from "@/services/persistence/candidate-master-sheet-postgres";
+import type { CandidateSyncHistoryRow } from "@/services/persistence/read-candidate-sync-history";
 
 export interface CandidateMasterSheetClientQuery {
   page: number;
@@ -18,6 +19,7 @@ export interface CandidateMasterSheetClientQuery {
   textFilters: Record<string, string>;
   dateFilters: Record<string, CandidateMasterDateFilter>;
   highlightFilters: CandidateHighlightFilterValue[];
+  syncFilter: number | null;
 }
 
 export function candidateMasterSchemaQueryKey() {
@@ -42,13 +44,22 @@ function buildParams(
     params.set("textFilters", JSON.stringify(query.textFilters ?? {}));
     params.set("dateFilters", JSON.stringify(query.dateFilters ?? {}));
     params.set("highlightFilters", JSON.stringify(query.highlightFilters ?? []));
+    if (query.syncFilter != null) params.set("syncFilter", String(query.syncFilter));
   }
   return params;
 }
 
 export async function fetchCandidateMasterFilterSchema(): Promise<CandidateMasterSheetSchema> {
   const params = buildParams(
-    { page: 1, pageSize: 20, columnFilters: {}, textFilters: {}, dateFilters: {}, highlightFilters: [] },
+    {
+      page: 1,
+      pageSize: 20,
+      columnFilters: {},
+      textFilters: {},
+      dateFilters: {},
+      highlightFilters: [],
+      syncFilter: null,
+    },
     { schema: true }
   );
   const res = await fetch(`/api/excel/candidate-master-sheet?${params.toString()}`, {
@@ -81,6 +92,35 @@ export async function fetchCandidateMasterSheet(
     throw new Error(payload?.error ?? "Candidate Master Sheet could not be loaded.");
   }
   return payload;
+}
+
+export function candidateSyncHistoryQueryKey() {
+  return ["candidate-sync-history"] as const;
+}
+
+export async function fetchCandidateSyncHistory(): Promise<CandidateSyncHistoryRow[]> {
+  const res = await fetch(`/api/excel/candidate-master-sheet?syncHistory=1`, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const payload = (await res.json().catch(() => null)) as {
+    ok?: boolean;
+    error?: string;
+    syncHistory?: CandidateSyncHistoryRow[];
+  } | null;
+  if (!res.ok || !payload?.syncHistory) {
+    throw new Error(payload?.error ?? "Failed to load sync history.");
+  }
+  return payload.syncHistory;
+}
+
+/** Recent Oorwin sync runs, for the Master Sheet's "filter by sync" picker. */
+export function useCandidateSyncHistory() {
+  return useQuery({
+    queryKey: candidateSyncHistoryQueryKey(),
+    queryFn: () => fetchCandidateSyncHistory(),
+    staleTime: 30_000,
+  });
 }
 
 export function useCandidateMasterFilterSchema() {

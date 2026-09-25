@@ -1,7 +1,10 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { candidateMasterSchemaQueryKey } from "@/hooks/use-candidate-master-sheet";
+import {
+  candidateMasterSchemaQueryKey,
+  candidateSyncHistoryQueryKey,
+} from "@/hooks/use-candidate-master-sheet";
 
 export type CandidateSyncRunResultStatus = "success" | "partial" | "failed";
 
@@ -66,6 +69,7 @@ export function useCandidateOorwinSync() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: candidateMasterSchemaQueryKey() });
       void queryClient.invalidateQueries({ queryKey: ["candidate-master-sheet"] });
+      void queryClient.invalidateQueries({ queryKey: candidateSyncHistoryQueryKey() });
     },
   });
 }

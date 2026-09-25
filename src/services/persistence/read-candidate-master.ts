@@ -37,6 +37,7 @@ export interface CandidateMasterRow {
   email: string;
   client_spoc: string;
   last_touched_at: string | null;
+  inserted_sync_id: number | null;
 }
 
 function mapRow(row: Record<string, unknown>): CandidateMasterRow {
@@ -60,6 +61,7 @@ function mapRow(row: Record<string, unknown>): CandidateMasterRow {
     client_spoc: String(row.client_spoc ?? "-"),
     last_touched_at:
       row.last_touched_at == null ? null : new Date(row.last_touched_at as string).toISOString(),
+    inserted_sync_id: row.inserted_sync_id == null ? null : Number(row.inserted_sync_id),
   };
 }
 
@@ -106,7 +108,8 @@ export async function listCandidateMasterRows(
       submission_comments,
       email,
       client_spoc,
-      last_touched_at
+      last_touched_at,
+      inserted_sync_id
     FROM candidate_master
     ORDER BY last_touched_at DESC NULLS LAST, id ASC
   `;
@@ -146,7 +149,8 @@ export async function getCandidateMasterByCid(
       submission_comments,
       email,
       client_spoc,
-      last_touched_at
+      last_touched_at,
+      inserted_sync_id
     FROM candidate_master
     WHERE cid = ${trimmed}
   `;

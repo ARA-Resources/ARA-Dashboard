@@ -17,6 +17,7 @@ import {
   type CandidateChangedFieldsByCid,
   type CandidateReviewFlagRow,
 } from "@/services/persistence/read-candidate-highlights";
+import { getCandidateCidsTouchedBySync } from "@/services/persistence/read-candidate-sync-history";
 import {
   isCandidateRoleNameColumn,
   type CandidateFilterControl,
@@ -53,6 +54,8 @@ export const CANDIDATE_MASTER_SHEET_PG_NAME = "ATCI";
 
 export type CandidateMasterSheetPgRow = {
   id: string;
+  /** Not a display column — internal only, used by the "filter by sync" predicate below. */
+  insertedSyncId: number | null;
 } & {
   [K in CandidateMasterExcelHeader]: string;
 };
@@ -72,6 +75,8 @@ export interface CandidateMasterSheetQuery {
   textFilters: Record<string, string>;
   dateFilters: Record<string, CandidateMasterDateFilter>;
   highlightFilters?: CandidateHighlightFilterValue[];
+  /** candidate_sync_history.id — narrows to rows that sync inserted, updated, or flagged. */
+  syncFilter?: number | null;
 }
 
 /** One open per-field review flag, resolved to a display header (C9 highlighting). */
@@ -113,7 +118,10 @@ export interface CandidateMasterSheetPageResult {
 }
 
 function toSheetRow(row: CandidateMasterRow): CandidateMasterSheetPgRow {
-  const next = { id: String(row.id) } as CandidateMasterSheetPgRow;
+  const next = {
+    id: String(row.id),
+    insertedSyncId: row.inserted_sync_id,
+  } as CandidateMasterSheetPgRow;
   for (const mapping of CANDIDATE_MASTER_COLUMN_MAP) {
     const value = row[mapping.dbColumn as keyof CandidateMasterRow];
     next[mapping.excelHeader] = String(value ?? "-");
@@ -332,12 +340,14 @@ export function applyCandidateMasterSheetFilters(
   rows: CandidateMasterSheetPgRow[],
   query: Pick<
     CandidateMasterSheetQuery,
-    "columnFilters" | "textFilters" | "dateFilters" | "highlightFilters"
+    "columnFilters" | "textFilters" | "dateFilters" | "highlightFilters" | "syncFilter"
   >,
   highlightData?: {
     changedFields: CandidateChangedFieldsByCid;
     reviewFlags: CandidateReviewFlagRow[];
-  }
+  },
+  /** CIDs updated/flagged by `query.syncFilter` (see getCandidateCidsTouchedBySync) — inserts are checked directly via each row's own `insertedSyncId` instead. */
+  syncFilterCids?: Set<string> | null
 ): CandidateMasterSheetPgRow[] {
   const columnEntries = Object.entries(query.columnFilters).filter(([, v]) => v.length > 0);
   const textEntries = Object.entries(query.textFilters).filter(([, v]) => v.trim().length > 0);
@@ -345,12 +355,14 @@ export function applyCandidateMasterSheetFilters(
     ([, r]) => Boolean(r.from || r.to)
   );
   const highlightFilters = query.highlightFilters ?? [];
+  const syncFilter = query.syncFilter ?? null;
 
   if (
     columnEntries.length === 0 &&
     textEntries.length === 0 &&
     dateEntries.length === 0 &&
-    highlightFilters.length === 0
+    highlightFilters.length === 0 &&
+    syncFilter === null
   ) {
     return rows;
   }
@@ -399,6 +411,12 @@ export function applyCandidateMasterSheetFilters(
 
     if (highlightMatchCids && !highlightMatchCids.has(row["Candidate ID"])) return false;
 
+    if (syncFilter !== null) {
+      const insertedByThisSync = row.insertedSyncId === syncFilter;
+      const touchedByThisSync = syncFilterCids?.has(row["Candidate ID"]) ?? false;
+      if (!insertedByThisSync && !touchedByThisSync) return false;
+    }
+
     return true;
   });
 }
@@ -441,11 +459,19 @@ export async function queryCandidateMasterSheetPage(
   // predicate (needs full-table coverage, pre-pagination) and the page's
   // display highlight state (page-scoped, post-pagination) below — avoids
   // querying candidate_sync_changes/candidate_review_flags twice per request.
-  const [changedFields, reviewFlags] = await Promise.all([
+  const [changedFields, reviewFlags, syncFilterCids] = await Promise.all([
     getLatestCandidateChangedFields(sqlClient),
     getLatestCandidateReviewFlags(sqlClient),
+    query.syncFilter != null
+      ? getCandidateCidsTouchedBySync(query.syncFilter, sqlClient)
+      : Promise.resolve(null),
   ]);
-  const filtered = applyCandidateMasterSheetFilters(rows, query, { changedFields, reviewFlags });
+  const filtered = applyCandidateMasterSheetFilters(
+    rows,
+    query,
+    { changedFields, reviewFlags },
+    syncFilterCids
+  );
   const page = paginate(filtered, query.page, query.pageSize);
   const highlights = buildHighlightState(
     page.rows.map((row) => row["Candidate ID"]),

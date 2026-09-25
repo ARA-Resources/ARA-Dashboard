@@ -15,7 +15,8 @@
  *       processes normally (partial-batch quarantine, not a whole-batch
  *       reject).
  *  2. For every surviving CID: not in candidate_master → insert (Upload
- *     Date = today, never touched again). In candidate_master → run the
+ *     Date = today, inserted_sync_id = this sync, never touched again). In
+ *     candidate_master → run the
  *     unified auto-fetch resolver for the 4 lookup fields, diff all 14
  *     Oorwin-driven fields against the stored row, update only the changed
  *     ones, record each change in candidate_sync_changes, stamp
@@ -354,7 +355,7 @@ async function processSurvivorRow(
         cid, name, gender, contact_number, date_of_upload, submitter, customer,
         job_requisition_id, primary_skills, job_management_level, market,
         client_spoc, status, submitted_date, submission_comments, email,
-        last_touched_at
+        last_touched_at, inserted_sync_id
       ) VALUES (
         ${cid}, ${desired.values.name}, ${desired.values.gender}, ${desired.values.contact_number},
         ${today}, ${desired.values.submitter}, ${desired.values.customer},
@@ -364,7 +365,7 @@ async function processSurvivorRow(
         ${desired.conflictFields.has("market") ? "-" : desired.values.market},
         ${desired.conflictFields.has("client_spoc") ? "-" : desired.values.client_spoc},
         ${desired.values.status}, ${desired.values.submitted_date}, ${desired.values.submission_comments},
-        ${desired.values.email}, NOW()
+        ${desired.values.email}, NOW(), ${syncId}
       )
     `;
     return {
