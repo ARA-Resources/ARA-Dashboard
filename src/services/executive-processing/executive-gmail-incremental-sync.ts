@@ -216,6 +216,15 @@ export async function runExecutiveGmailIncrementalSync(
     setupGmailAddress: setup.gmailAddress ?? null,
   });
 
+  // Diagnostic only — logs the exact `q` string immediately before it's sent,
+  // for direct character-by-character comparison against a query already
+  // confirmed working in Gmail's own web search bar.
+  await appendLog({
+    at: new Date().toISOString(),
+    event: "executive_gmail_list_query",
+    query,
+  });
+
   const list = await gmail.users.messages.list({
     userId: "me",
     q: query,
