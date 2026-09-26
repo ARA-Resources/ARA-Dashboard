@@ -94,9 +94,30 @@ export function toGmailDateToken(isoDate: string): string {
   return `${year}/${month}/${day}`;
 }
 
-/** Gmail also accepts Unix epoch seconds with after:/before: for finer windows. */
-export function toGmailEpochSeconds(ms: number): number {
-  return Math.max(0, Math.floor(ms / 1000));
+/**
+ * Gmail's after:/before: date-format operators are interpreted as midnight
+ * Pacific time (PST/PDT), per Google's own Gmail API filtering guide — not
+ * epoch seconds' precise instant. Epoch seconds is a separately documented,
+ * valid alternative for after:/before:, and Lateral's own production
+ * incremental sync uses it successfully every day for recent (within ~24h)
+ * deltas — but an older, multi-day epoch-seconds `after:` value was found not
+ * to reliably match in testing, and it wasn't possible to fully confirm why
+ * (web-search-UI vs REST API parser differences were suspected but not
+ * proven). Rather than depend on epoch precision behaving consistently
+ * across both, this converts to the documented YYYY/MM/DD form instead — see
+ * `toGmailAfterDateToken` below, which is what every caller in this file
+ * should use for `after:`.
+ *
+ * The exact "is this new" decision never depended on this value's precision
+ * anyway — it's enforced downstream via the numeric receivedAtMs checkpoint
+ * compare (`isAfterExecutiveGmailCheckpoint` / `isAfterLateralGmailCheckpoint`).
+ * This query only needs to reliably include everything at or after `ms`; a
+ * wider net costs nothing since anything extra gets filtered out there.
+ */
+export function toGmailAfterDateToken(ms: number): string {
+  const utcDate = new Date(ms).toISOString().slice(0, 10); // YYYY-MM-DD in UTC
+  const safeDate = shiftCalendarDate(utcDate, -1); // one full day earlier — safety margin
+  return toGmailDateToken(safeDate);
 }
 
 export type ScanDateMode = "today" | "yesterday" | "custom";
@@ -135,16 +156,14 @@ export function fileTypeClauseForQuery(fileTypes?: DatasetFileType[]) {
 
 /**
  * Incremental inbox query: Excel emails received after last successful sync.
- * Uses Gmail epoch-second after: for sub-day precision.
  */
 export function buildAfterTimestampExcelQuery(options: {
   afterMs: number;
   fileTypes?: DatasetFileType[];
 }): string {
-  const afterSec = toGmailEpochSeconds(options.afterMs);
   return [
     "in:inbox",
-    `after:${afterSec}`,
+    `after:${toGmailAfterDateToken(options.afterMs)}`,
     fileTypeClause(options.fileTypes),
   ].join(" ");
 }

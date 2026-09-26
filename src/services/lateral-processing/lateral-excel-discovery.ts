@@ -5,7 +5,7 @@ import {
 } from "@/services/gmail/attachments";
 import {
   fileTypeClauseForQuery,
-  toGmailEpochSeconds,
+  toGmailAfterDateToken,
 } from "@/services/gmail/query";
 import type {
   DatasetFileType,
@@ -126,7 +126,7 @@ export function buildLateralExcelDiscoveryQuery(options: {
 
   const parts = [
     "in:inbox",
-    `after:${toGmailEpochSeconds(options.afterMs)}`,
+    `after:${toGmailAfterDateToken(options.afterMs)}`,
     fileTypeClauseForQuery(
       fileTypes.length > 0 ? fileTypes : [...DEFAULT_FILE_TYPES]
     ),

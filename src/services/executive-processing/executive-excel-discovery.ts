@@ -22,7 +22,7 @@ import {
 } from "@/services/gmail/attachments";
 import {
   fileTypeClauseForQuery,
-  toGmailEpochSeconds,
+  toGmailAfterDateToken,
 } from "@/services/gmail/query";
 import { isExecutiveDsAttachmentName } from "@/services/dataset/executive-dataset-mapping";
 import type {
@@ -145,7 +145,7 @@ export function buildExecutiveExcelDiscoveryQuery(options: {
 
   const parts = [
     "in:inbox",
-    `after:${toGmailEpochSeconds(options.afterMs)}`,
+    `after:${toGmailAfterDateToken(options.afterMs)}`,
     fileTypeClauseForQuery(
       fileTypes.length > 0 ? fileTypes : [...EXECUTIVE_EXCEL_EXTENSIONS]
     ),
