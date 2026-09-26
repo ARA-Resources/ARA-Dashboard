@@ -116,7 +116,20 @@ export function buildExecutiveKeywordSearchClause(
     .filter(Boolean);
 
   if (terms.length === 0) return null;
-  return `(${terms.join(" OR ")})`;
+
+  // Gmail's search parser returns zero results for an OR group that leads
+  // with a quoted multi-word phrase (e.g. ("ATCI Exec DS" OR Exec)) when
+  // combined with a filename: clause, even though the identical terms in
+  // the opposite order (Exec OR "ATCI Exec DS") match correctly — confirmed
+  // via repeated manual A/B testing in Gmail's own search bar. Bareword
+  // terms are stable-sorted before quoted phrases so this stays safe
+  // regardless of how keywords are configured/prioritized going forward.
+  const ordered = [
+    ...terms.filter((term) => !term.startsWith('"')),
+    ...terms.filter((term) => term.startsWith('"')),
+  ];
+
+  return `(${ordered.join(" OR ")})`;
 }
 
 /**
