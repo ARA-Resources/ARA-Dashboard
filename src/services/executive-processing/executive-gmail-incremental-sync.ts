@@ -210,6 +210,11 @@ export async function runExecutiveGmailIncrementalSync(
     checkpointMessageId: checkpointBefore.messageId,
     checkpointReceivedAtMs: checkpointBefore.receivedAtMs,
     keywordCount: gmailKeywords.length,
+    // Diagnostic only — the mismatch warning above is generated but never
+    // logged anywhere; surfacing both values here makes a connected-mailbox
+    // mismatch visible without needing to reproduce it live.
+    authEmail: auth.email ?? null,
+    setupGmailAddress: setup.gmailAddress ?? null,
   });
 
   const list = await gmail.users.messages.list({
@@ -220,6 +225,13 @@ export async function runExecutiveGmailIncrementalSync(
   const messageRefs = list.data.messages ?? [];
 
   const discoveries: ExecutiveDiscoveredEmail[] = [];
+  // Diagnostic-only counters (see executive_excel_discovery_complete below) —
+  // distinguish "Gmail's search found nothing" from "it found messages but
+  // none had a matching attachment" from "checkpoint excluded them", since
+  // discoveredCount alone can't tell these apart and none of the `continue`s
+  // below were previously logged.
+  let noAttachmentCount = 0;
+  let beforeCheckpointCount = 0;
   for (const ref of messageRefs) {
     if (!ref.id) continue;
     const full = await gmail.users.messages.get({
@@ -232,7 +244,10 @@ export async function runExecutiveGmailIncrementalSync(
       keywords: executive.keywords,
       fileTypes,
     });
-    if (!discovered) continue;
+    if (!discovered) {
+      noAttachmentCount += 1;
+      continue;
+    }
 
     const selected = discovered.selection.selected;
     if (
@@ -245,6 +260,7 @@ export async function runExecutiveGmailIncrementalSync(
         checkpointBefore
       )
     ) {
+      beforeCheckpointCount += 1;
       continue;
     }
 
@@ -524,6 +540,13 @@ export async function runExecutiveGmailIncrementalSync(
     discoveredCount: queue.length,
     checkpointMessageId: checkpointAfter.messageId,
     pendingCheckpointAdvances: pendingCheckpointAdvances.length,
+    // Diagnostic only: scannedMessages:0 -> Gmail's own search found nothing;
+    // scannedMessages>0 with noAttachmentCount>0 -> found messages but none
+    // matched the attachment/keyword rules; beforeCheckpointCount>0 -> the
+    // checkpoint excluded them (only possible once a real checkpoint exists).
+    scannedMessages: messageRefs.length,
+    noAttachmentCount,
+    beforeCheckpointCount,
   });
 
   return {
