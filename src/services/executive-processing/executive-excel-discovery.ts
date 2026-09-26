@@ -20,10 +20,7 @@ import {
   extractExcelAttachmentsFromMessage,
   type RawGmailAttachment,
 } from "@/services/gmail/attachments";
-import {
-  fileTypeClauseForQuery,
-  toGmailAfterDateToken,
-} from "@/services/gmail/query";
+import { toGmailAfterDateToken } from "@/services/gmail/query";
 import { isExecutiveDsAttachmentName } from "@/services/dataset/executive-dataset-mapping";
 import type {
   DatasetFileType,
@@ -134,21 +131,16 @@ export function buildExecutiveKeywordSearchClause(
 export function buildExecutiveExcelDiscoveryQuery(options: {
   afterMs: number;
   keywords: DatasetKeywordConfig[];
-  fileTypes?: DatasetFileType[];
 }): string {
-  const fileTypes =
-    options.fileTypes && options.fileTypes.length > 0
-      ? options.fileTypes.filter((type) =>
-          (EXECUTIVE_EXCEL_EXTENSIONS as readonly string[]).includes(type)
-        )
-      : [...EXECUTIVE_EXCEL_EXTENSIONS];
-
   const parts = [
     "in:inbox",
     `after:${toGmailAfterDateToken(options.afterMs)}`,
-    fileTypeClauseForQuery(
-      fileTypes.length > 0 ? fileTypes : [...EXECUTIVE_EXCEL_EXTENSIONS]
-    ),
+    // No separate extension clause: `filename:"ATCI Exec DS_"` alone already
+    // constrains to files matching Executive's confirmed naming convention,
+    // which are always .xlsx/.xlsm/.xls. Stacking a second `filename:` clause
+    // here (an extension OR-group) was found to make the real Gmail API
+    // return zero results even for genuinely matching messages — client-side
+    // `isExecutiveDsAttachmentName` still enforces the extension regardless.
     `filename:"ATCI Exec DS_"`,
   ];
 

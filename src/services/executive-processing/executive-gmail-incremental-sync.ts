@@ -187,7 +187,6 @@ export async function runExecutiveGmailIncrementalSync(
   const query = buildExecutiveExcelDiscoveryQuery({
     afterMs: queryAfterMs,
     keywords: executive.keywords,
-    fileTypes,
   });
 
   const { gmail, drive, auth } = await getAuthorizedGmailClient();
