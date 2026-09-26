@@ -8,10 +8,7 @@ import {
 import { readDatasetSetup } from "@/services/dataset/secure-store";
 import { validateExcelBuffer } from "@/services/dataset/validate-excel";
 import { getAuthorizedGmailClient } from "@/services/gmail/oauth";
-import {
-  getCalendarDateInTimezone,
-  getStartOfCalendarDayMs,
-} from "@/services/gmail/query";
+import { getStartOfCalendarDayMs } from "@/services/gmail/query";
 import {
   ExecutiveDriveUploadError,
   uploadExecutiveExcelToDrive,
@@ -32,6 +29,25 @@ import { DEFAULT_FILE_TYPES } from "@/types/dataset-setup";
 import type { ExecutiveGmailCheckpoint } from "@/services/executive-processing/executive-gmail-checkpoint-store";
 
 const MAX_MESSAGES = 100;
+
+/**
+ * Fallback search start when no Executive Gmail checkpoint exists yet — the
+ * date `executive_master` went live on Postgres (see [[executive-master-postgres]]).
+ * Anything before this is already covered by the one-time bulk import, so
+ * catch-up correctly starts here rather than reprocessing pre-cutover history.
+ *
+ * NEVER fall back to "start of today": with no checkpoint, that silently
+ * narrows every Gmail search to messages received on the day Run All happens
+ * to be clicked, making any older backlogged demand sheet permanently
+ * invisible to the query itself (this was the actual bug behind "Run All
+ * reports no new emails" even though older, unprocessed demand sheets exist).
+ *
+ * If `gmail_checkpoint` is ever intentionally cleared/reset in the future,
+ * this bootstrap date should be revisited — otherwise a future reset will
+ * silently re-scan from Sept 2026 again instead of the new reset point.
+ */
+export const EXECUTIVE_CHECKPOINT_BOOTSTRAP_MS =
+  getStartOfCalendarDayMs("2026-09-10");
 
 export interface ExecutiveIncrementalSyncItem {
   messageId: string;
@@ -154,12 +170,13 @@ export async function runExecutiveGmailIncrementalSync(
     .map((k) => String(k.value).trim());
 
   const afterMs =
-    checkpointBefore.receivedAtMs ??
-    getStartOfCalendarDayMs(getCalendarDateInTimezone());
+    checkpointBefore.receivedAtMs ?? EXECUTIVE_CHECKPOINT_BOOTSTRAP_MS;
 
   if (!checkpointBefore.messageId || checkpointBefore.receivedAtMs == null) {
     warnings.push(
-      `No Executive Gmail checkpoint yet — searching from start of today (${getCalendarDateInTimezone()}).`
+      "No Executive Gmail checkpoint yet — searching from the executive_master " +
+        "Postgres cutover date (2026-09-10), not just today, so any backlogged " +
+        "demand sheet is still found."
     );
   }
 

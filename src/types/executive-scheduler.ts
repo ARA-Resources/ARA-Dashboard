@@ -32,6 +32,13 @@ export interface ExecutiveRunLastSummary {
   demandSheetDateLabel: string;
   failureReason: string | null;
   noNewSource: boolean;
+  /**
+   * Attachment filenames of earlier pending demand sheets in this same batch
+   * that were superseded by the newest one before reconcile ran (full
+   * snapshot, not a delta — see `executive-job.ts`). `null`/empty when only
+   * one (or zero) demand sheets were pending this run.
+   */
+  supersededFiles: string[] | null;
   counts: {
     rowsImported: number;
     newCount: number;

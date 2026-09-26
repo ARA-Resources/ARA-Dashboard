@@ -104,6 +104,55 @@ function formatWhen(value: string | null | undefined, timeZone?: string) {
   }
 }
 
+/**
+ * DD/MM/YYYY , HH:MM:SS am/pm (12h, zero-padded) — same visible format as
+ * Lateral's `formatLastRunDateTime` (lateral-master-sheet-page.tsx), but
+ * computed via an explicit `timeZone` instead of local `Date` getters.
+ *
+ * Lateral's original uses plain `d.getDate()`/`d.getHours()`/etc., which
+ * resolve in the *process's* timezone — the prod container has no `TZ` set
+ * and runs in UTC, so Lateral's live banner already shows UTC wall-clock
+ * time mislabeled as IST. That's a pre-existing bug on Lateral's page, out
+ * of scope here (left untouched; a separate follow-up will fix it there).
+ * This copy uses the same `Intl.DateTimeFormat`+`formatToParts` technique
+ * already used for the same problem in `gmail/query.ts`'s
+ * `getStartOfCalendarDayMs`, so it shows correct wall-clock time in
+ * `timeZone` regardless of the container's system timezone.
+ */
+function formatLastRunDateTime(iso: string, timeZone: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const map: Record<string, string> = {};
+  for (const part of parts) {
+    if (part.type !== "literal") map[part.type] = part.value;
+  }
+  const dd = map.day;
+  const mm = map.month;
+  const yyyy = map.year;
+  let hours = Number(map.hour);
+  const minutes = map.minute;
+  const seconds = map.second;
+  const ampm = hours >= 12 ? "pm" : "am";
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  const hh = String(hours).padStart(2, "0");
+  return `${dd}/${mm}/${yyyy} , ${hh}:${minutes}:${seconds} ${ampm}`;
+}
+
+function formatLastRunTrigger(trigger: string): "manual" | "auto" {
+  return trigger === "scheduler" ? "auto" : "manual";
+}
+
 function ResultBadge({ result }: { result: string | null }) {
   if (!result) return <span>—</span>;
   const ok = result === "Success";
@@ -293,6 +342,7 @@ export function ExecutiveSchedulerPanel() {
   }
 
   const processing = status.processing;
+  const lastRunSummary = status.lastRunSummary ?? processing?.lastRunSummary ?? null;
   const displayStatus =
     processing?.status ??
     (status.statusLabel === "Disabled" ? "Paused" : status.statusLabel);
@@ -377,6 +427,57 @@ export function ExecutiveSchedulerPanel() {
         />
         <MetaRow label="Time zone" value={timezone} />
       </dl>
+
+      {lastRunSummary ? (
+        <div
+          className={cn(
+            "flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-lg border px-2.5 py-1 text-[11px] leading-snug text-muted-foreground",
+            lastRunSummary.result === "success"
+              ? "border-border/60 bg-muted/30"
+              : lastRunSummary.result === "partial"
+                ? "border-amber-500/25 bg-amber-500/5"
+                : "border-destructive/25 bg-destructive/5"
+          )}
+          role="status"
+          aria-label="Last Executive Run All status"
+        >
+          <span>
+            Last Run All:{" "}
+            <span
+              className={cn(
+                "font-medium",
+                lastRunSummary.result === "failed"
+                  ? "text-destructive"
+                  : "text-foreground/80"
+              )}
+            >
+              {lastRunSummary.result === "success"
+                ? "Success"
+                : lastRunSummary.result === "partial"
+                  ? "Partial"
+                  : "Failed"}
+            </span>
+            {" · "}
+            {formatLastRunDateTime(lastRunSummary.ranAt, timezone)}
+            {" · "}
+            {formatLastRunTrigger(lastRunSummary.trigger)}
+          </span>
+          <span className="opacity-80">{lastRunSummary.demandSheetDateLabel}</span>
+          {lastRunSummary.failureReason ? (
+            <span className="w-full text-[10px] text-destructive/90">
+              {lastRunSummary.failureReason.slice(0, 180)}
+            </span>
+          ) : null}
+          {lastRunSummary.supersededFiles &&
+          lastRunSummary.supersededFiles.length > 0 ? (
+            <span className="w-full text-[10px] text-amber-600 dark:text-amber-400">
+              Superseded {lastRunSummary.supersededFiles.length} demand sheet
+              {lastRunSummary.supersededFiles.length === 1 ? "" : "s"} before
+              reconcile: {lastRunSummary.supersededFiles.join(", ")}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       {status.lastRunMessage || processing?.lastRunMessage ? (
         <p className="text-xs text-muted-foreground">

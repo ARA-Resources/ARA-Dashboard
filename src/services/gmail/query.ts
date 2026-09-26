@@ -6,6 +6,11 @@ import type {
 import { DEFAULT_FILE_TYPES } from "@/types/dataset-setup";
 import type { DatasetSyncName } from "@/types/dataset-sync";
 
+// Checks process.env.TZ before the "Asia/Kolkata" fallback — if the container's
+// system TZ is ever set to something else, every calendar-day boundary built on
+// this constant (both Lateral's and Executive's checkpoint fallbacks included)
+// silently shifts away from the intended business timezone. Correct today only
+// because the deployed container has no TZ set.
 const DATASET_TZ =
   process.env.ARA_DATASET_TZ?.trim() ||
   process.env.TZ?.trim().replace(/^:/, "") ||

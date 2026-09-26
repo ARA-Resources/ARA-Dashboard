@@ -14,6 +14,7 @@
     "db:migrate-candidate-master-oorwin": "tsx scripts/migrate-candidate-master-to-oorwin-schema.ts",
     "db:upsert-executive-master": "tsx scripts/upsert-executive-master-from-excel.ts",
     "test:executive-master-postgres": "tsx scripts/verify-executive-master-postgres.ts",
+    "test:executive-checkpoint-bootstrap": "tsx scripts/verify-executive-checkpoint-bootstrap.ts",
     "test:candidate-auto-fetch": "tsx scripts/verify-candidate-auto-fetch.ts",
     "test:candidate-oorwin-parser": "tsx scripts/verify-candidate-oorwin-parser.ts",
     "test:candidate-sync-engine": "tsx scripts/verify-candidate-sync-engine.ts",

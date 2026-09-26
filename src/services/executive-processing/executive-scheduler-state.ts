@@ -126,6 +126,11 @@ function normalizeLastRunSummary(
     failureReason:
       typeof v.failureReason === "string" ? v.failureReason : null,
     noNewSource: Boolean(v.noNewSource),
+    supersededFiles:
+      Array.isArray(v.supersededFiles) &&
+      v.supersededFiles.every((f) => typeof f === "string")
+        ? (v.supersededFiles as string[])
+        : null,
     counts: countsRaw
       ? {
           rowsImported: Number(countsRaw.rowsImported) || 0,

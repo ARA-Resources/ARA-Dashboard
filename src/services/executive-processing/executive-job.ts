@@ -136,6 +136,7 @@ async function invokeExecutiveJobBody(
     demandSheetDateLabel: "No new Executive demand sheet on last run",
     failureReason: null,
     noNewSource: false,
+    supersededFiles: null,
     counts: null,
     postedRefresh: null,
     excelMirror: null,
@@ -214,6 +215,10 @@ async function invokeExecutiveJobBody(
   // Full-snapshot demand sheet: only the newest pending upload matters —
   // any earlier ones in this batch are superseded snapshots.
   const last = pending[pending.length - 1];
+  const supersededFiles =
+    pending.length > 1
+      ? pending.slice(0, -1).map((p) => p.attachmentFilename)
+      : null;
   if (!last.localWorkbookPath) {
     const failureReason =
       "Internal error: uploaded demand sheet has no local workbook path for reconcile.";
@@ -231,6 +236,7 @@ async function invokeExecutiveJobBody(
       excelMirrorOk: null,
       summary: baseSummary({
         sourceFilename: last.attachmentFilename,
+        supersededFiles,
         sender: last.sender ?? null,
         subject: last.subject ?? null,
         driveFileId: last.driveFileId,
@@ -264,6 +270,7 @@ async function invokeExecutiveJobBody(
       excelMirrorOk: null,
       summary: baseSummary({
         sourceFilename: last.attachmentFilename,
+        supersededFiles,
         sender: last.sender ?? null,
         subject: last.subject ?? null,
         driveFileId: last.driveFileId,
@@ -288,6 +295,7 @@ async function invokeExecutiveJobBody(
       excelMirrorOk: null,
       summary: baseSummary({
         sourceFilename: last.attachmentFilename,
+        supersededFiles,
         sender: last.sender ?? null,
         subject: last.subject ?? null,
         driveFileId: last.driveFileId,
@@ -382,6 +390,7 @@ async function invokeExecutiveJobBody(
       excelMirrorOk: excelMirrorResult.ok,
       summary: baseSummary({
         sourceFilename: last.attachmentFilename,
+        supersededFiles,
         sender: last.sender ?? null,
         subject: last.subject ?? null,
         driveFileId: last.driveFileId,
@@ -413,6 +422,7 @@ async function invokeExecutiveJobBody(
     summary: baseSummary({
       result: "success",
       sourceFilename: last.attachmentFilename,
+      supersededFiles,
       sender: last.sender ?? null,
       subject: last.subject ?? null,
       driveFileId: last.driveFileId,
