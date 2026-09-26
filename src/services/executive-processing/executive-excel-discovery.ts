@@ -135,13 +135,19 @@ export function buildExecutiveExcelDiscoveryQuery(options: {
   const parts = [
     "in:inbox",
     `after:${toGmailAfterDateToken(options.afterMs)}`,
-    // No separate extension clause: `filename:"ATCI Exec DS_"` alone already
+    // No separate extension clause: this filename hint alone already
     // constrains to files matching Executive's confirmed naming convention,
-    // which are always .xlsx/.xlsm/.xls. Stacking a second `filename:` clause
-    // here (an extension OR-group) was found to make the real Gmail API
-    // return zero results even for genuinely matching messages — client-side
+    // which are always .xlsx/.xlsm/.xls — client-side
     // `isExecutiveDsAttachmentName` still enforces the extension regardless.
-    `filename:"ATCI Exec DS_"`,
+    //
+    // Deliberately UNQUOTED — confirmed via live Gmail testing that
+    // filename:"ATCI Exec DS_" (quoted exact-phrase) returns zero results
+    // even for genuinely matching messages, while filename:ATCI Exec DS_
+    // (unquoted) correctly finds them. This was the actual root cause of
+    // "Run All" finding nothing, after the checkpoint-bootstrap, after:
+    // date-format, and redundant-extension-clause fixes all turned out to
+    // be necessary but not sufficient on their own.
+    `filename:ATCI Exec DS_`,
   ];
 
   const keywordClause = buildExecutiveKeywordSearchClause(options.keywords);
