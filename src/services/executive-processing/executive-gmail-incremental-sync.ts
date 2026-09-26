@@ -223,6 +223,22 @@ export async function runExecutiveGmailIncrementalSync(
   });
   const messageRefs = list.data.messages ?? [];
 
+  // Diagnostic only — every content-level query theory (checkpoint window,
+  // after: date format, redundant/quoted filename: clause, keyword OR-group
+  // composition) has been ruled out, yet scannedMessages still comes back 0
+  // for a query confirmed to match via Gmail's own web search UI. This logs
+  // what the raw API response itself carries, not just our derived count, in
+  // case it disagrees with messageRefs.length or surfaces something the
+  // client library otherwise swallows.
+  await appendLog({
+    at: new Date().toISOString(),
+    event: "executive_gmail_list_raw_response",
+    httpStatus: list.status,
+    resultSizeEstimate: list.data.resultSizeEstimate ?? null,
+    messagesArrayLength: messageRefs.length,
+    hasNextPageToken: Boolean(list.data.nextPageToken),
+  });
+
   const discoveries: ExecutiveDiscoveredEmail[] = [];
   // Diagnostic-only counters (see executive_excel_discovery_complete below) —
   // distinguish "Gmail's search found nothing" from "it found messages but
