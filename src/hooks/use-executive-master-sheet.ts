@@ -9,6 +9,7 @@ import type {
   ExecutiveMasterSheetSchema,
   ExecutiveMasterSheetPageResult,
 } from "@/services/persistence/executive-master-sheet-postgres";
+import type { ExecutiveSchedulerStatus } from "@/types/executive-scheduler";
 
 export interface ExecutiveMasterSheetClientQuery {
   page: number;
@@ -149,5 +150,36 @@ export function useExecutiveMasterSheet(query: ExecutiveMasterSheetClientQuery) 
     // down whatever dropdown the user has open. Same fix as Lateral's
     // useLateralMasterSheet; keep this in sync with it.
     placeholderData: keepPreviousData,
+  });
+}
+
+export function executiveSchedulerStatusQueryKey() {
+  return ["executive-scheduler-status"] as const;
+}
+
+/**
+ * Same endpoint the working `/dataset/executive` "Last Run All" banner
+ * already reads (`executive-scheduler-panel.tsx`) — reused here to power the
+ * equivalent banner on the Master Sheet page. No new backend logic.
+ */
+export async function fetchExecutiveSchedulerStatus(): Promise<ExecutiveSchedulerStatus> {
+  const res = await fetch("/api/dataset/executive/scheduler", {
+    method: "GET",
+    cache: "no-store",
+  });
+  const payload = (await res.json().catch(() => null)) as
+    | (ExecutiveSchedulerStatus & { error?: string })
+    | null;
+  if (!res.ok || !payload) {
+    throw new Error(payload?.error ?? "Failed to load Executive run status.");
+  }
+  return payload;
+}
+
+export function useExecutiveSchedulerStatus() {
+  return useQuery({
+    queryKey: executiveSchedulerStatusQueryKey(),
+    queryFn: fetchExecutiveSchedulerStatus,
+    staleTime: 30_000,
   });
 }

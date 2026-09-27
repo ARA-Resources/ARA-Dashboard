@@ -27,9 +27,52 @@ import {
   executiveMasterSheetQueryKey,
   useExecutiveMasterFilterSchema,
   useExecutiveMasterSheet,
+  useExecutiveSchedulerStatus,
   type ExecutiveMasterSheetClientQuery,
 } from "@/hooks/use-executive-master-sheet";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { cn } from "@/lib/utils";
+
+/**
+ * DD/MM/YYYY , HH:MM:SS am/pm (12h, zero-padded) via an explicit `timeZone` —
+ * copied verbatim from `executive-scheduler-panel.tsx`'s already-fixed
+ * version, not Lateral's (Lateral's `formatLastRunDateTime` uses local `Date`
+ * getters, which resolve in the container's UTC system time, not IST — a
+ * pre-existing bug on Lateral's page, out of scope here).
+ */
+function formatLastRunDateTime(iso: string, timeZone: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const map: Record<string, string> = {};
+  for (const part of parts) {
+    if (part.type !== "literal") map[part.type] = part.value;
+  }
+  const dd = map.day;
+  const mm = map.month;
+  const yyyy = map.year;
+  let hours = Number(map.hour);
+  const minutes = map.minute;
+  const seconds = map.second;
+  const ampm = hours >= 12 ? "pm" : "am";
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  const hh = String(hours).padStart(2, "0");
+  return `${dd}/${mm}/${yyyy} , ${hh}:${minutes}:${seconds} ${ampm}`;
+}
+
+function formatLastRunTrigger(trigger: string): "manual" | "auto" {
+  return trigger === "scheduler" ? "auto" : "manual";
+}
 
 /**
  * Filter params the page accepts on navigation (e.g. from the dashboard pivot's
@@ -119,6 +162,10 @@ export function ExecutiveMasterSheetPage() {
   } = useExecutiveMasterFilterSchema();
 
   const { data, isLoading, isFetching, error } = useExecutiveMasterSheet(query);
+
+  const { data: schedulerStatus } = useExecutiveSchedulerStatus();
+  const lastRunSummary = schedulerStatus?.lastRunSummary ?? null;
+  const runTimezone = schedulerStatus?.timezone ?? "Asia/Kolkata";
 
   React.useEffect(() => {
     setPage(1);
@@ -310,6 +357,59 @@ export function ExecutiveMasterSheetPage() {
           ) : null}
         </div>
       </FadeIn>
+
+      {lastRunSummary ? (
+        <FadeIn>
+          <div
+            className={cn(
+              "mb-3 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-lg border px-2.5 py-1 text-[11px] leading-snug text-muted-foreground",
+              lastRunSummary.result === "success"
+                ? "border-border/60 bg-muted/30"
+                : lastRunSummary.result === "partial"
+                  ? "border-amber-500/25 bg-amber-500/5"
+                  : "border-destructive/25 bg-destructive/5"
+            )}
+            role="status"
+            aria-label="Last Executive Run All status"
+          >
+            <span>
+              Last Run All:{" "}
+              <span
+                className={cn(
+                  "font-medium",
+                  lastRunSummary.result === "failed"
+                    ? "text-destructive"
+                    : "text-foreground/80"
+                )}
+              >
+                {lastRunSummary.result === "success"
+                  ? "Success"
+                  : lastRunSummary.result === "partial"
+                    ? "Partial"
+                    : "Failed"}
+              </span>
+              {" · "}
+              {formatLastRunDateTime(lastRunSummary.ranAt, runTimezone)}
+              {" · "}
+              {formatLastRunTrigger(lastRunSummary.trigger)}
+            </span>
+            <span className="opacity-80">{lastRunSummary.demandSheetDateLabel}</span>
+            {lastRunSummary.failureReason ? (
+              <span className="w-full text-[10px] text-destructive/90">
+                {lastRunSummary.failureReason.slice(0, 180)}
+              </span>
+            ) : null}
+            {lastRunSummary.supersededFiles &&
+            lastRunSummary.supersededFiles.length > 0 ? (
+              <span className="w-full text-[10px] text-amber-600 dark:text-amber-400">
+                Superseded {lastRunSummary.supersededFiles.length} demand sheet
+                {lastRunSummary.supersededFiles.length === 1 ? "" : "s"} before
+                reconcile: {lastRunSummary.supersededFiles.join(", ")}
+              </span>
+            ) : null}
+          </div>
+        </FadeIn>
+      ) : null}
 
       {activeFilterCount > 0 ? (
         <FadeIn>
