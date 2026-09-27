@@ -27,12 +27,15 @@ import {
   EXECUTIVE_POSTED_SHEET_TAB_NAME,
   resolveExecutivePostedSheetDriveFileId,
 } from "@/services/executive-processing/executive-posted-sheet-config";
+import {
+  shouldKeepExecutivePostedRow,
+  extractExecutivePostedJobRequisitionId,
+} from "@/services/executive-processing/executive-posted-sheet-cleaner";
 
 const execFileAsync = promisify(execFile);
 
 export interface ExecutivePostedSheetRow {
   jobRequisitionId: string;
-  demand: string;
 }
 
 export type ExecutivePostedSheetReadResult =
@@ -125,29 +128,15 @@ else:
   }
 }
 
-function normalizeHeaderKey(value: unknown): string {
-  return String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
-
-function findHeaderIndex(headers: string[], wanted: string): number {
-  let idx = headers.findIndex((h) => h === wanted);
-  if (idx >= 0) return idx;
-  idx = headers.findIndex((h) => h.toLowerCase() === wanted.toLowerCase());
-  if (idx >= 0) return idx;
-  const norm = normalizeHeaderKey(wanted);
-  return headers.findIndex((h) => normalizeHeaderKey(h) === norm);
-}
-
 /**
  * Read the configured Posted Sheet workbook's "Posted Sheet" tab.
- * Matches columns by header name (exact -> case-insensitive -> normalized),
- * same philosophy as every other confirmed mapping in this pipeline —
- * "Job Requisition ID" and "Demand" are expected to sit in columns B and C
- * per the confirmed layout, but matching by name tolerates a column being
- * reordered without silently reading the wrong data.
+ *
+ * Job Requisition ID is extracted from column A only, using the same
+ * VBA-decompiled logic as `executive-posted-sheet-cleaner.ts`
+ * (`shouldKeepExecutivePostedRow` / `extractExecutivePostedJobRequisitionId`):
+ * keep rows whose raw column-A text starts with "ATCI", then take the text
+ * before the first space. Column B is never read — it only reflects
+ * whatever cleanup a human last ran by hand, never the live source of truth.
  */
 export async function readExecutivePostedSheet(options?: {
   driveFileId?: string;
@@ -229,26 +218,13 @@ export async function readExecutivePostedSheet(options?: {
     const sheet = await readPostedSheetTab(localPath, sheetName);
     if (!sheet.ok) return { ok: false, reason: sheet.reason };
 
-    const jrIdx = findHeaderIndex(sheet.headers, "Job Requisition ID");
-    const demandIdx = findHeaderIndex(sheet.headers, "Demand");
-    if (jrIdx < 0 || demandIdx < 0) {
-      return {
-        ok: false,
-        reason: `Posted Sheet tab is missing required column(s): ${[
-          jrIdx < 0 ? "Job Requisition ID" : null,
-          demandIdx < 0 ? "Demand" : null,
-        ]
-          .filter(Boolean)
-          .join(", ")}.`,
-      };
-    }
-
     const rows: ExecutivePostedSheetRow[] = [];
     for (const row of sheet.dataRows) {
-      const jobRequisitionId = String(row[jrIdx] ?? "").trim();
-      const demand = String(row[demandIdx] ?? "").trim();
-      if (!jobRequisitionId && !demand) continue;
-      rows.push({ jobRequisitionId, demand });
+      const columnA = row[0] ?? "";
+      if (!shouldKeepExecutivePostedRow(columnA)) continue;
+      const jobRequisitionId = extractExecutivePostedJobRequisitionId(columnA);
+      if (!jobRequisitionId) continue;
+      rows.push({ jobRequisitionId });
     }
 
     if (rows.length === 0) {

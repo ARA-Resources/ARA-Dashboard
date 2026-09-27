@@ -3,24 +3,24 @@
  *
  * Safety rule (confirmed, same spirit as Lateral): if the Posted Sheet comes
  * back empty/unreadable for ANY reason (file not found, trashed, tab
- * missing, required columns missing, zero data rows, Drive connection
- * failure), this is treated as a likely error — `executive_master.posted`
- * is NOT touched for anyone. A partial/garbled read is never allowed to
- * mass-clear real "Yes" values to "-".
+ * missing, zero data rows, Drive connection failure), this is treated as a
+ * likely error — `executive_master.posted` is NOT touched for anyone. A
+ * partial/garbled read is never allowed to mass-clear real "Yes" values to "-".
+ *
+ * Posted (Yes/-) is match-based, same model as Lateral: a JR counts as
+ * posted if its Job Requisition ID (extracted from Posted Sheet column A —
+ * see `executive-posted-sheet-reader.ts`) is present at all, regardless of
+ * any literal Demand text in column C.
  *
  * On a successful read: full refresh every run — every JR currently in
  * executive_master gets `posted` re-derived from the Posted Sheet, never
- * just newly-added rows, matching the confirmed rule exactly.
+ * just newly-added rows.
  *
  * Never touches job_status, descriptive fields, created_at, or last_seen_at
  * — this module owns exactly one column.
  */
 import type { drive_v3 } from "googleapis";
 import { getDbClient } from "@/lib/persistence/db-client";
-import {
-  buildExecutivePostedDemandMap,
-  resolveExecutivePostedFromDemandMap,
-} from "@/services/executive-processing/executive-posted-demand-rule";
 import { readExecutivePostedSheet } from "@/services/executive-processing/executive-posted-sheet-reader";
 
 export interface ExecutivePostedRefreshCounts {
@@ -63,7 +63,9 @@ export async function refreshExecutivePostedFromSheet(options?: {
     };
   }
 
-  const demandMap = buildExecutivePostedDemandMap(sheetResult.rows);
+  const postedJrSet = new Set(
+    sheetResult.rows.map((row) => row.jobRequisitionId).filter(Boolean)
+  );
 
   const sql = getDbClient();
   const masterRows = await sql<{ job_requisition_id: string; posted: string | null }[]>`
@@ -75,10 +77,7 @@ export async function refreshExecutivePostedFromSheet(options?: {
   let changed = 0;
 
   for (const row of masterRows) {
-    const next = resolveExecutivePostedFromDemandMap(
-      row.job_requisition_id,
-      demandMap
-    );
+    const next = postedJrSet.has(row.job_requisition_id) ? "Yes" : "-";
     if (next !== (row.posted ?? "-")) changed += 1;
     if (next === "Yes") yesIds.push(row.job_requisition_id);
     else dashIds.push(row.job_requisition_id);

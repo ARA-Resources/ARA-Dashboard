@@ -1,6 +1,19 @@
 /**
  * Executive Posted Sheet -> executive_master.posted rule (Phase E6).
  *
+ * SUPERSEDED AGAIN, not deleted (same convention this module itself
+ * documented for its predecessor below). This module assumed column B
+ * ("Job Requisition ID") and column C ("Demand") were reliably pre-filled
+ * literal values — confirmed against the real sheet at the time this was
+ * written, but that assumption broke in production (columns B/C empty,
+ * only column A populated) and caused "Run All" to see zero usable Posted
+ * Sheet rows. The live pipeline (`executive-posted-refresh.ts`) now uses a
+ * match-based rule instead — same model as Lateral and as this module's own
+ * predecessor: a JR counts as posted if it's present at all (extracted from
+ * column A via `executive-posted-sheet-cleaner.ts`), ignoring column C
+ * entirely. Left in place for reference only; not imported anywhere live.
+ *
+ * --- Original doc, preserved for history ---
  * CORRECTED rule — deliberately NOT Lateral's "presence on the list = Yes"
  * rule (`executive-posted-rules.ts`, which this module supersedes for the
  * live pipeline; that file is left untouched, superseded not deleted, per

@@ -37,10 +37,6 @@ import {
   type ExecutiveMasterJobStatus,
 } from "../src/services/executive-processing/executive-job-status-rules";
 import { cleanExecutivePostedRows } from "../src/services/executive-processing/executive-posted-sheet-cleaner";
-import {
-  buildExecutivePostedDemandMap,
-  resolveExecutivePostedFromDemandMap,
-} from "../src/services/executive-processing/executive-posted-demand-rule";
 import { writeExecutiveMasterWorkbookUpdates } from "../src/services/executive-processing/executive-master-workbook-writer";
 import ExcelJS from "exceljs";
 
@@ -93,12 +89,22 @@ const BASE_DS_ROWS: unknown[][] = [
   // JR-WILL-CLOSE deliberately NOT present this run -> Master-only -> Closed
 ];
 
-// A real JR confirmed present in the actual Posted Sheet with Demand="Yes"
-// (from this session's own prior live investigation) -- seeded into the
-// throwaway table (untouched by Base DS/status logic) purely to prove the
-// "found + Yes -> Yes" branch of the posted decision against REAL data,
-// not just the "not found -> -" branch every synthetic JR will hit.
-const REAL_POSTED_YES_JR = "ATCI-5678248-S2059207";
+// A real JR confirmed present in BOTH the live Posted Sheet (column A) and
+// the live Master Sheet (as an actual row) as of 2026-09-27 -- seeded into
+// the throwaway table (untouched by Base DS/status logic) purely to prove
+// the "found -> Yes" branch of the posted decision against REAL data, not
+// just the "not found -> -" branch every synthetic JR will hit, and to prove
+// the Excel mirror write locates and updates a genuinely real Master Sheet
+// row (a synthetic JR-* id would never be found there).
+//
+// NOTE: this is live production data, not a fixture — Posted Sheet entries
+// churn as postings open/close. The prior value (ATCI-5678248-S2059207) went
+// stale when that posting dropped off the live Posted Sheet; if this one
+// goes stale too, re-pick a JR confirmed present in both tabs right now
+// (download the live workbook, intersect Posted Sheet column A against
+// Master Sheet column 1) rather than assuming any single hardcoded ID
+// stays valid indefinitely.
+const REAL_POSTED_YES_JR = "ATCI-5729860-S2066509";
 
 interface SeedRow {
   jobRequisitionId: string;
@@ -285,33 +291,27 @@ async function main() {
     }
     const cleanResult = cleanExecutivePostedRows(rawRows);
     console.log(`  Full scan: ${rawRows.length} non-empty raw rows -> ${cleanResult.kept.length} kept, ${cleanResult.removed.length} removed.`);
-
-    const demandValues = new Set(cleanResult.kept.map((r) => String(r.demand ?? "").trim()));
-    console.log(`  Distinct Demand values seen across the FULL sheet: ${JSON.stringify([...demandValues])}`);
-    const unexpectedDemand = [...demandValues].filter((v) => v !== "Yes" && v !== "No" && v !== "");
-    if (unexpectedDemand.length > 0) {
-      console.log(`  NOTE: unexpected Demand values found (not just Yes/No): ${JSON.stringify(unexpectedDemand)} — buildExecutivePostedDemandMap already safely excludes anything not exactly Yes/No.`);
-    } else {
-      console.log("  Confirmed: every kept row's Demand value across the FULL sheet is exactly Yes/No/blank — no malformed values found.");
-    }
-    const malformedCount = cleanResult.removed.length;
-    console.log(`  ${malformedCount} row(s) failed the "starts with ATCI" check across the full sheet (removed).\n`);
+    console.log(`  ${cleanResult.removed.length} row(s) failed the "starts with ATCI" check across the full sheet (removed).\n`);
 
     // ============================================================
     // I. Write posted decisions to Postgres (reusing the real pure logic
     // functions directly against the throwaway table — the production
     // executive-posted-refresh.ts intentionally hardcodes the real table
     // name and is not meant to be redirected).
+    //
+    // Match-based rule (same model as Lateral, and as executive-posted-refresh.ts):
+    // a JR counts as posted if its Job Requisition ID (extracted from column A)
+    // is present at all — column C's literal Demand text is not read.
     // ============================================================
-    const demandMap = buildExecutivePostedDemandMap(
-      cleanResult.kept.map((r) => ({ jobRequisitionId: r.jobRequisitionId, demand: r.demand }))
+    const postedJrSet = new Set(
+      cleanResult.kept.map((r) => r.jobRequisitionId).filter(Boolean)
     );
     const throwawayJrRows = await sql<{ job_requisition_id: string }[]>`
       SELECT job_requisition_id FROM ${sql(TEST_TABLE)}
     `;
     const postedDecisions = throwawayJrRows.map((r) => ({
       jobRequisitionId: r.job_requisition_id,
-      posted: resolveExecutivePostedFromDemandMap(r.job_requisition_id, demandMap),
+      posted: postedJrSet.has(r.job_requisition_id) ? "Yes" : "-",
     }));
     await sql.begin(async (tx) => {
       for (const d of postedDecisions) {
@@ -327,7 +327,7 @@ async function main() {
     assert(!!realJrPosted, `${REAL_POSTED_YES_JR} must be in the throwaway table`);
     assert(
       realJrPosted!.posted === "Yes",
-      `${REAL_POSTED_YES_JR} is confirmed present in the REAL Posted Sheet with Demand=Yes — expected posted="Yes", got "${realJrPosted!.posted}"`
+      `${REAL_POSTED_YES_JR} is confirmed present in the REAL Posted Sheet — expected posted="Yes", got "${realJrPosted!.posted}"`
     );
     console.log(`  Confirmed against REAL data: ${REAL_POSTED_YES_JR} correctly resolved posted="Yes".`);
     const syntheticJrPosted = postedDecisions.find((d) => d.jobRequisitionId === "JR-BRAND-NEW");
