@@ -73,7 +73,10 @@ export interface LateralSchedulerStatus extends LateralSchedulerConfig {
   /** Why cron is not armed (env-gate reason); null when armed. */
   notArmedReason: string | null;
   nextRunAt: string | null;
+  /** A job is executing right now (not merely "cron is armed"). */
   running: boolean;
+  /** Cron tasks are armed in this process (env gate on, enabled, not paused, valid schedule). */
+  cronArmed: boolean;
   cronExpression: string;
   cronExpressions: string[];
   timeLabel: string;

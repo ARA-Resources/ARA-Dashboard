@@ -76,6 +76,8 @@ type ExecutiveSchedulerRuntime = {
   tasks: Map<string, ScheduledTask>;
   bootstrapped: boolean;
   cronArmedAtMs: number;
+  /** Jobs currently executing in this process (cron tick or Run Now). */
+  runningJobs: number;
 };
 const runtimeGlobal = globalThis as typeof globalThis & {
   __araExecutiveScheduler?: ExecutiveSchedulerRuntime;
@@ -84,6 +86,7 @@ const rt = (runtimeGlobal.__araExecutiveScheduler ??= {
   tasks: new Map(),
   bootstrapped: false,
   cronArmedAtMs: 0,
+  runningJobs: 0,
 });
 
 function expressionsForConfig(config: ExecutiveSchedulerConfig): string[] {
@@ -143,7 +146,10 @@ export async function getExecutiveSchedulerStatus(): Promise<ExecutiveSchedulerS
     nextRunAt: armed
       ? estimateNextRunFromExpressions(cronExpressions, config.timezone)
       : null,
-    running: rt.tasks.size > 0 && armed,
+    // A job is executing right now — not merely "cron is armed" (that's
+    // `cronArmed`). The panel shows "Running…" and disables Run Now off this.
+    running: rt.runningJobs > 0,
+    cronArmed: rt.tasks.size > 0 && armed,
     cronExpression,
     cronExpressions,
     timeLabel: formatScheduleTimeLabel(config),
@@ -259,7 +265,16 @@ export async function runExecutiveJobAndPersist(
   deps?: InvokeExecutiveJobDeps
 ): Promise<ExecutiveJobOutcome> {
   console.info(`[executive-scheduler] Starting Executive job (${trigger})`);
-  const outcome = await invokeExecutiveJob(trigger, deps);
+  // Counter, not a boolean: a Run Now overlapping a cron tick gets "busy"
+  // from the advisory lock and decrements at once without clearing the
+  // running job's count. The lock stays the real mutual exclusion.
+  rt.runningJobs += 1;
+  let outcome: ExecutiveJobOutcome;
+  try {
+    outcome = await invokeExecutiveJob(trigger, deps);
+  } finally {
+    rt.runningJobs -= 1;
+  }
 
   if (outcome.status !== "busy") {
     await writeExecutiveSchedulerConfig({

@@ -350,6 +350,7 @@ export async function getLateralSchedulerStatus(): Promise<
       ? estimateNextRunFromExpressions(cronExpressions, config.timezone)
       : null,
     running: rt.running,
+    cronArmed: rt.tasks.size > 0 && armed,
     cronExpression,
     cronExpressions,
     timeLabel: formatScheduleTimeLabel(config),
