@@ -1,5 +1,6 @@
 ﻿import { NextResponse } from "next/server";
 import { authorizeRequest } from "@/lib/auth/dal";
+import type { ScheduleFrequency } from "@/types/dataset-schedule";
 import {
   ensureLateralSchedulerStarted,
   getLateralProcessingStatusView,
@@ -78,6 +79,19 @@ export async function POST(request: Request) {
 
     if (action === "update") {
       const status = await updateLateralScheduler({
+        frequency:
+          typeof body.frequency === "string" &&
+          ["hourly", "daily", "weekdays", "weekly", "custom"].includes(body.frequency)
+            ? (body.frequency as ScheduleFrequency)
+            : undefined,
+        dayOfWeek:
+          typeof body.dayOfWeek === "number" ? body.dayOfWeek : undefined,
+        customDays: Array.isArray(body.customDays)
+          ? (body.customDays as number[])
+          : undefined,
+        customTimes: Array.isArray(body.customTimes)
+          ? (body.customTimes as string[])
+          : undefined,
         syncTime: typeof body.syncTime === "string" ? body.syncTime : undefined,
         timezone: typeof body.timezone === "string" ? body.timezone : undefined,
         enabled:
