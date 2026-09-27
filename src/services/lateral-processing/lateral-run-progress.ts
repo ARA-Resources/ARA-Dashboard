@@ -48,7 +48,18 @@ export const LATERAL_RUN_GMAIL_STAGES = [
   { id: "drive_replace", label: "Applying source file replacement policy" },
 ] as const;
 
-let snapshot: LateralRunProgressSnapshot = idleSnapshot();
+/**
+ * Held on `globalThis` so every Next.js bundle in this process (the
+ * instrumentation bundle that owns the cron tick, and each API-route bundle
+ * the progress panel polls) sees the same snapshot. A plain module-level
+ * `let` would give each bundle its own copy.
+ */
+const progressGlobal = globalThis as typeof globalThis & {
+  __araLateralRunProgress?: { snapshot: LateralRunProgressSnapshot };
+};
+const progress = (progressGlobal.__araLateralRunProgress ??= {
+  snapshot: idleSnapshot(),
+});
 
 function idleSnapshot(): LateralRunProgressSnapshot {
   return {
@@ -79,7 +90,7 @@ function buildDefaultStages(): LateralRunStageProgress[] {
 }
 
 export function startLateralRunProgress(trigger: "manual" | "scheduler"): void {
-  snapshot = {
+  progress.snapshot = {
     active: true,
     trigger,
     startedAt: new Date().toISOString(),
@@ -98,7 +109,7 @@ export function finishLateralRunProgress(options?: {
 }): void {
   const finishedAt = new Date().toISOString();
   if (options?.failedStageId) {
-    snapshot.stages = snapshot.stages.map((s) => {
+    progress.snapshot.stages = progress.snapshot.stages.map((s) => {
       if (s.id === options.failedStageId) return { ...s, status: "failed" };
       if (s.status === "pending" || s.status === "active") {
         return options.skippedRemaining
@@ -109,17 +120,17 @@ export function finishLateralRunProgress(options?: {
     });
   }
   if (options?.skippedRemaining && !options.failedStageId) {
-    snapshot.stages = snapshot.stages.map((s) =>
+    progress.snapshot.stages = progress.snapshot.stages.map((s) =>
       s.status === "pending" || s.status === "active"
         ? { ...s, status: "skipped" as const }
         : s
     );
   }
   const completedLabel = options?.failedStageId
-    ? snapshot.currentStageLabel
+    ? progress.snapshot.currentStageLabel
     : "Completed";
-  snapshot = {
-    ...snapshot,
+  progress.snapshot = {
+    ...progress.snapshot,
     active: false,
     finishedAt,
     currentStageId: null,
@@ -132,16 +143,16 @@ export function updateLateralGmailProgress(
   status: Exclude<LateralRunStageStatus, "pending">,
   detail?: string
 ): void {
-  if (!snapshot.active) return;
+  if (!progress.snapshot.active) return;
   const label =
     LATERAL_RUN_GMAIL_STAGES.find((s) => s.id === stageId)?.label ?? stageId;
-  snapshot.stages = snapshot.stages.map((s) => {
+  progress.snapshot.stages = progress.snapshot.stages.map((s) => {
     if (s.id === stageId) return { ...s, status, detail };
     return s;
   });
   if (status === "active") {
-    snapshot.currentStageId = stageId;
-    snapshot.currentStageLabel = label;
+    progress.snapshot.currentStageId = stageId;
+    progress.snapshot.currentStageLabel = label;
   }
 }
 
@@ -150,20 +161,20 @@ export function updateLateralPipelineProgress(
   status: "active" | "ok" | "failed" | "skipped",
   detail?: string
 ): void {
-  if (!snapshot.active) return;
+  if (!progress.snapshot.active) return;
   const id = `pipeline_${step}`;
   const def = PIPELINE_STAGE_LABELS.find((s) => s.step === step);
   const label = def?.name ?? `Pipeline step ${step}`;
-  snapshot.stages = snapshot.stages.map((s) => {
+  progress.snapshot.stages = progress.snapshot.stages.map((s) => {
     if (s.id === id) return { ...s, status, detail };
     return s;
   });
   if (status === "active") {
-    snapshot.pipelineStep = step;
-    snapshot.currentStageId = id;
-    snapshot.currentStageLabel = label;
+    progress.snapshot.pipelineStep = step;
+    progress.snapshot.currentStageId = id;
+    progress.snapshot.currentStageLabel = label;
   } else if (status === "ok") {
-    snapshot.pipelineStep = step;
+    progress.snapshot.pipelineStep = step;
   }
 }
 
@@ -171,30 +182,30 @@ export function updateLateralHomeMetricsProgress(
   status: "active" | "ok" | "skipped" | "failed",
   detail?: string
 ): void {
-  if (!snapshot.active) return;
-  snapshot.stages = snapshot.stages.map((s) =>
+  if (!progress.snapshot.active) return;
+  progress.snapshot.stages = progress.snapshot.stages.map((s) =>
     s.id === "home_metrics" ? { ...s, status, detail } : s
   );
   if (status === "active") {
-    snapshot.currentStageId = "home_metrics";
-    snapshot.currentStageLabel = "Refresh Home metrics";
+    progress.snapshot.currentStageId = "home_metrics";
+    progress.snapshot.currentStageLabel = "Refresh Home metrics";
   }
 }
 
 export function markLateralRunIdleAfterNoNewSource(message: string): void {
-  if (!snapshot.active) return;
-  snapshot.stages = snapshot.stages.map((s) =>
+  if (!progress.snapshot.active) return;
+  progress.snapshot.stages = progress.snapshot.stages.map((s) =>
     s.id.startsWith("pipeline_") || s.id === "home_metrics"
       ? { ...s, status: "skipped", detail: message }
       : s
   );
-  snapshot.currentStageLabel = message;
+  progress.snapshot.currentStageLabel = message;
 }
 
 export function getLateralRunProgress(): LateralRunProgressSnapshot {
-  return { ...snapshot, stages: [...snapshot.stages] };
+  return { ...progress.snapshot, stages: [...progress.snapshot.stages] };
 }
 
 export function resetLateralRunProgress(): void {
-  snapshot = idleSnapshot();
+  progress.snapshot = idleSnapshot();
 }

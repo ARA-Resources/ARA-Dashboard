@@ -8,6 +8,33 @@ function trimEnv(name: string): string {
   return process.env[name]?.trim() ?? "";
 }
 
+const FLAG_ON = ["1", "true", "on", "yes"];
+const FLAG_OFF = ["0", "false", "off", "no"];
+
+/** "on" / "off" for a recognized flag value, null when unset or unrecognized. */
+function readFlag(name: string): "on" | "off" | null {
+  const raw = trimEnv(name).toLowerCase();
+  if (FLAG_ON.includes(raw)) return "on";
+  if (FLAG_OFF.includes(raw)) return "off";
+  return null;
+}
+
+/**
+ * Human-readable reason for a scheduler flag's effective state. Never prints
+ * the raw value (only its length) — a mis-pasted secret could land here, as
+ * a redaction placeholder once did in production.
+ */
+function describeFlag(name: string, fallbackText: string): string {
+  const flag = readFlag(name);
+  if (flag === "on") return `${name}=1`;
+  if (flag === "off") return `${name}=0`;
+  const raw = trimEnv(name);
+  if (raw) {
+    return `${name} has an unrecognized value (${raw.length} chars) — treated as ${fallbackText}; use 1 or 0`;
+  }
+  return `${name} unset — ${fallbackText}`;
+}
+
 /**
  * Whether cron auto-run may arm.
  * - ARA_DATASET_SCHEDULER=0/false/off → disabled
@@ -16,28 +43,17 @@ function trimEnv(name: string): string {
  * - absent in production → disabled (explicit 1 required)
  */
 export function isDatasetSchedulerAutoEnabled(): boolean {
-  const raw = trimEnv("ARA_DATASET_SCHEDULER").toLowerCase();
-  if (raw === "0" || raw === "false" || raw === "off" || raw === "no") {
-    return false;
-  }
-  if (raw === "1" || raw === "true" || raw === "on" || raw === "yes") {
-    return true;
-  }
+  const flag = readFlag("ARA_DATASET_SCHEDULER");
+  if (flag === "off") return false;
+  if (flag === "on") return true;
   return !isProductionEnv();
 }
 
 export function datasetSchedulerPolicyReason(): string {
-  const raw = trimEnv("ARA_DATASET_SCHEDULER");
-  if (raw === "0" || raw.toLowerCase() === "false" || raw.toLowerCase() === "off") {
-    return "ARA_DATASET_SCHEDULER=0";
-  }
-  if (raw === "1" || raw.toLowerCase() === "true" || raw.toLowerCase() === "on") {
-    return "ARA_DATASET_SCHEDULER=1";
-  }
-  if (isProductionEnv()) {
-    return "production default (ARA_DATASET_SCHEDULER unset)";
-  }
-  return "development default (ARA_DATASET_SCHEDULER unset)";
+  return describeFlag(
+    "ARA_DATASET_SCHEDULER",
+    isProductionEnv() ? "off (production default)" : "on (development default)"
+  );
 }
 
 /** Calendar minute in the scheduler timezone, e.g. 2026-08-18T09:00 */
@@ -108,22 +124,14 @@ export function logDatasetSchedulerPolicy(): void {
  * see migration 010) and not paused. Both gates must be explicitly opened.
  */
 export function isExecutiveDatasetSchedulerAutoEnabled(): boolean {
-  const raw = trimEnv("ARA_EXECUTIVE_SCHEDULER").toLowerCase();
-  if (raw === "1" || raw === "true" || raw === "on" || raw === "yes") {
-    return true;
-  }
-  return false;
+  return readFlag("ARA_EXECUTIVE_SCHEDULER") === "on";
 }
 
 export function executiveDatasetSchedulerPolicyReason(): string {
-  const raw = trimEnv("ARA_EXECUTIVE_SCHEDULER");
-  if (raw === "0" || raw.toLowerCase() === "false" || raw.toLowerCase() === "off") {
-    return "ARA_EXECUTIVE_SCHEDULER=0";
-  }
-  if (raw === "1" || raw.toLowerCase() === "true" || raw.toLowerCase() === "on") {
-    return "ARA_EXECUTIVE_SCHEDULER=1";
-  }
-  return "default (ARA_EXECUTIVE_SCHEDULER unset — Executive cron does not auto-arm until explicitly enabled)";
+  return describeFlag(
+    "ARA_EXECUTIVE_SCHEDULER",
+    "off (default — Executive cron does not auto-arm until explicitly enabled)"
+  );
 }
 
 export function logExecutiveSchedulerPolicy(): void {

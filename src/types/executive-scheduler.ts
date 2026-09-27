@@ -107,7 +107,13 @@ export interface ExecutiveJobOutcome {
 
 export interface ExecutiveSchedulerStatus extends ExecutiveSchedulerConfig {
   datasetName: "Executive";
-  statusLabel: "Active" | "Paused" | "Disabled";
+  /**
+   * "Not armed": enabled and not paused in the DB, but cron is not armed in
+   * this process (env gate off, or no valid schedule) — so it will not fire.
+   */
+  statusLabel: "Active" | "Paused" | "Disabled" | "Not armed";
+  /** Why cron is not armed (env-gate reason); null when armed. */
+  notArmedReason: string | null;
   nextRunAt: string | null;
   running: boolean;
   cronExpression: string;
@@ -140,7 +146,8 @@ export interface ExecutiveProcessingStatusView {
     timeLabel: string;
     timezone: string;
   };
-  status: "Active" | "Paused" | "Disabled";
+  status: "Active" | "Paused" | "Disabled" | "Not armed";
+  notArmedReason: string | null;
   lastSuccessfulSync: string | null;
   lastProcessedFile: string | null;
   lastProcessedEmail: string | null;

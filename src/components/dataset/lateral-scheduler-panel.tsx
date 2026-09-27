@@ -37,7 +37,9 @@ function StatusBadge({
         label === "Active" &&
           "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
         label === "Paused" &&
-          "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+          "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+        label === "Not armed" &&
+          "bg-rose-500/10 text-rose-700 dark:text-rose-300"
       )}
     >
       {label}
@@ -303,10 +305,18 @@ export function LateralSchedulerPanel({
         />
         <MetaRow
           label="Next Scheduled Run"
-          value={formatWhen(
-            processing?.nextScheduledRun ?? status.nextRunAt,
-            timezone
-          )}
+          value={
+            displayStatus === "Not armed"
+              ? `Not armed — ${
+                  processing?.notArmedReason ??
+                  status.notArmedReason ??
+                  "cron is not armed"
+                }`
+              : formatWhen(
+                  processing?.nextScheduledRun ?? status.nextRunAt,
+                  timezone
+                )
+          }
         />
         <MetaRow label="Time zone" value={timezone} />
       </dl>

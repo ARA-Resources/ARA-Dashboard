@@ -4,7 +4,6 @@ import * as React from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  CalendarClock,
   Clock,
   FileSearch,
   FolderOpen,
@@ -68,11 +67,6 @@ const GmailInboxPanel = dynamic(
     import("@/components/dataset/gmail-inbox-panel").then(
       (m) => m.GmailInboxPanel
     ),
-  { ssr: false }
-);
-const SchedulesPanel = dynamic(
-  () =>
-    import("@/components/dataset/schedules-panel").then((m) => m.SchedulesPanel),
   { ssr: false }
 );
 const LateralDatasetSetupWizard = dynamic(
@@ -251,8 +245,6 @@ type ManagerSectionId =
   | "configuration"
   | "drive-mapping"
   | "enterprise-ops"
-  | "schedules"
-  | "scheduler-controls"
   | "lateral-scheduler"
   | "gmail-connection"
   | "drive-connection"
@@ -264,8 +256,6 @@ const MANAGER_SECTION_IDS: ManagerSectionId[] = [
   "configuration",
   "drive-mapping",
   "enterprise-ops",
-  "schedules",
-  "scheduler-controls",
   "lateral-scheduler",
   "gmail-connection",
   "drive-connection",
@@ -308,7 +298,6 @@ export function DatasetManager() {
   const [scheduler, setScheduler] = React.useState<MultiSchedulerStatus | null>(
     null
   );
-  const [schedulerBusy, setSchedulerBusy] = React.useState(false);
   const [folderStats, setFolderStats] = React.useState<
     DatasetDriveFolderStats[]
   >([]);
@@ -1218,7 +1207,7 @@ export function DatasetManager() {
           <ManagerSection
             id="lateral-scheduler"
             title="Lateral processing"
-            description="Lateral connections, schedule, last sync result, and sync history. Run Now uses the same job as the daily cron."
+            description="Lateral connections, schedule, last sync result, and sync history. Run Now uses the same job as the scheduled cron. Schedules are configured per dataset — here for Lateral, and in the Executive panel for Executive."
             icon={Clock}
             open={openSections.has("lateral-scheduler")}
             onToggle={() => toggleSection("lateral-scheduler")}
@@ -1227,240 +1216,6 @@ export function DatasetManager() {
               key={schedulerRefreshKey}
               onEditSetup={() => setEditingLateralSetup(true)}
             />
-          </ManagerSection>
-        </FadeIn>
-
-        <FadeIn>
-          <ManagerSection
-            id="schedules"
-            title="Automation schedules"
-            description={`Unlimited schedules for Lateral, Executive, and Consulting · TZ ${scheduler?.timezone ?? "Asia/Kolkata"}`}
-            icon={CalendarClock}
-            open={openSections.has("schedules")}
-            onToggle={() => toggleSection("schedules")}
-            badge={
-              <Badge variant="secondary" className="rounded-md text-[10px]">
-                {scheduler?.scheduleCount ?? 0} schedule
-                {(scheduler?.scheduleCount ?? 0) === 1 ? "" : "s"}
-              </Badge>
-            }
-          >
-            <SchedulesPanel
-              embedded
-              scheduler={scheduler}
-              onSchedulerChange={setScheduler}
-              busy={schedulerBusy}
-            />
-          </ManagerSection>
-        </FadeIn>
-
-        <FadeIn>
-          <ManagerSection
-            id="scheduler-controls"
-            title="Scheduler controls"
-            description={
-              scheduler?.globalPaused
-                ? "All schedules are globally paused"
-                : `${scheduler?.activeCount ?? 0} active of ${scheduler?.scheduleCount ?? 0} schedule(s) · ${scheduler?.timezone ?? "Asia/Kolkata"}`
-            }
-            icon={Clock}
-            open={openSections.has("scheduler-controls")}
-            onToggle={() => toggleSection("scheduler-controls")}
-            badge={
-              <ConnectionStatusBadge
-                status={
-                  scheduler?.globalPaused
-                    ? "Pending setup"
-                    : scheduler?.enabled
-                      ? "Connected"
-                      : "Not Connected"
-                }
-              />
-            }
-          >
-            <div className="space-y-4">
-              <dl className="grid gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-3 sm:grid-cols-2">
-                <MetaRow
-                  label="Status"
-                  value={
-                    scheduler?.running
-                      ? "Running now"
-                      : scheduler?.enabled
-                        ? "Armed"
-                        : "Not armed"
-                  }
-                />
-                <MetaRow
-                  label="Active schedules"
-                  value={String(scheduler?.activeCount ?? 0)}
-                />
-                <MetaRow
-                  label="Next run"
-                  value={
-                    scheduler?.nextRunAt
-                      ? new Date(scheduler.nextRunAt).toLocaleString("en-IN")
-                      : "—"
-                  }
-                />
-                <MetaRow
-                  label="Last run"
-                  value={
-                    scheduler?.lastRunAt
-                      ? `${new Date(scheduler.lastRunAt).toLocaleString("en-IN")}${
-                          scheduler.lastRunStatus
-                            ? ` · ${scheduler.lastRunStatus}`
-                            : ""
-                        }`
-                      : "Not run yet"
-                  }
-                />
-              </dl>
-              {scheduler?.lastRunMessage ? (
-                <p className="text-sm text-muted-foreground">
-                  {scheduler.lastRunMessage}
-                </p>
-              ) : null}
-              {scheduler?.lastError ? (
-                <p className="text-sm text-destructive">{scheduler.lastError}</p>
-              ) : null}
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="rounded-xl gap-2"
-                  disabled={schedulerBusy}
-                  onClick={() => {
-                    void (async () => {
-                      setSchedulerBusy(true);
-                      try {
-                        const response = await fetch("/api/dataset/scheduler", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            action: scheduler?.globalPaused ? "resume" : "pause",
-                          }),
-                        });
-                        const payload = (await response.json()) as {
-                          scheduler?: MultiSchedulerStatus;
-                          error?: string;
-                        };
-                        if (!response.ok) {
-                          throw new Error(payload.error ?? "Action failed.");
-                        }
-                        setScheduler(payload.scheduler ?? null);
-                      } catch (error) {
-                        setLoadError(
-                          error instanceof Error
-                            ? error.message
-                            : "Failed to update scheduler."
-                        );
-                      } finally {
-                        setSchedulerBusy(false);
-                      }
-                    })();
-                  }}
-                >
-                  {scheduler?.globalPaused ? "Resume all" : "Pause all"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="rounded-xl gap-2"
-                  disabled={schedulerBusy}
-                  onClick={() => {
-                    void (async () => {
-                      setSchedulerBusy(true);
-                      try {
-                        const response = await fetch("/api/dataset/scheduler", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ action: "reload" }),
-                        });
-                        const payload = (await response.json()) as {
-                          scheduler?: MultiSchedulerStatus;
-                          error?: string;
-                        };
-                        if (!response.ok) {
-                          throw new Error(payload.error ?? "Reload failed.");
-                        }
-                        setScheduler(payload.scheduler ?? null);
-                      } catch (error) {
-                        setLoadError(
-                          error instanceof Error
-                            ? error.message
-                            : "Failed to reload scheduler."
-                        );
-                      } finally {
-                        setSchedulerBusy(false);
-                      }
-                    })();
-                  }}
-                >
-                  <RefreshCw className="size-4" />
-                  Reload schedules
-                </Button>
-                <Button
-                  type="button"
-                  className="rounded-xl gap-2"
-                  disabled={schedulerBusy || Boolean(scheduler?.running)}
-                  onClick={() => {
-                    void (async () => {
-                      setSchedulerBusy(true);
-                      try {
-                        const response = await fetch("/api/dataset/scheduler", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ action: "run_now" }),
-                        });
-                        const payload = (await response.json()) as {
-                          scheduler?: MultiSchedulerStatus;
-                          error?: string;
-                        };
-                        if (!response.ok) {
-                          throw new Error(payload.error ?? "Sync failed.");
-                        }
-                        setScheduler(payload.scheduler ?? null);
-                        const currentRes = await apiFetch("/api/dataset/current");
-                        const currentPayload = (await currentRes
-                          .json()
-                          .catch(() => null)) as {
-                          datasets?: Array<{
-                            datasetName: string;
-                            businessUnitId: string;
-                            fileName: string;
-                            filePath: string;
-                            updatedAt: string;
-                            size: number;
-                          }>;
-                        } | null;
-                        const nextCurrent: typeof currentByDataset = {};
-                        for (const item of currentPayload?.datasets ?? []) {
-                          nextCurrent[item.datasetName] = {
-                            fileName: item.fileName,
-                            filePath: item.filePath,
-                            updatedAt: item.updatedAt,
-                            size: item.size,
-                            businessUnitId: item.businessUnitId,
-                          };
-                        }
-                        setCurrentByDataset(nextCurrent);
-                      } catch (error) {
-                        setLoadError(
-                          error instanceof Error
-                            ? error.message
-                            : "Failed to run sync."
-                        );
-                      } finally {
-                        setSchedulerBusy(false);
-                      }
-                    })();
-                  }}
-                >
-                  <RefreshCw className="size-4" />
-                  Run sync now
-                </Button>
-              </div>
-            </div>
           </ManagerSection>
         </FadeIn>
 

@@ -214,74 +214,32 @@ export function buildCronFromSetup(setup: {
   });
 }
 
+/**
+ * Next fire time for one cron expression, as a real UTC instant (ISO).
+ *
+ * Uses node-cron's own matcher (the same `TimeMatcher` + `timezone` that
+ * actually fires armed tasks), so the displayed "Next Run" can't drift from
+ * the real firing moment and doesn't depend on the process's `TZ`. The
+ * previous hand-rolled version parsed a `toLocaleString` wall-clock back in
+ * the process TZ (UTC in prod), which labelled IST wall-clock as UTC and
+ * showed every Next Run 5h30m late.
+ *
+ * `getNextRuns` works on a never-started task; `destroy()` removes the
+ * throwaway task from node-cron's global registry again.
+ */
 export function estimateNextRun(
   cronExpression: string,
   timezone: string
 ): string | null {
+  let task: ScheduledTask | null = null;
   try {
-    const parts = cronExpression.split(/\s+/);
-    if (parts.length < 5) return null;
-
-    const [minPart, hourPart, , , dowPart] = parts;
-    const now = new Date(
-      new Date().toLocaleString("en-US", { timeZone: timezone })
-    );
-
-    if (minPart === "0" && hourPart === "*" && (!dowPart || dowPart === "*")) {
-      const next = new Date(now);
-      next.setMinutes(0, 0, 0);
-      next.setHours(next.getHours() + 1);
-      return next.toISOString();
-    }
-
-    const minute = Number(minPart);
-    const hour = Number(hourPart);
-    if (!Number.isFinite(minute) || !Number.isFinite(hour)) return null;
-
-    const candidate = new Date(now);
-    candidate.setSeconds(0, 0);
-    candidate.setHours(hour, minute, 0, 0);
-
-    const weekdaysOnly = dowPart === "1-5";
-    const singleDow =
-      dowPart && /^\d$/.test(dowPart) ? Number(dowPart) : null;
-    const multiDow =
-      dowPart && /^\d(,\d)+$/.test(dowPart)
-        ? dowPart.split(",").map(Number)
-        : null;
-
-    const advance = () => {
-      candidate.setDate(candidate.getDate() + 1);
-      if (weekdaysOnly) {
-        while (candidate.getDay() === 0 || candidate.getDay() === 6) {
-          candidate.setDate(candidate.getDate() + 1);
-        }
-      }
-      if (singleDow != null) {
-        while (candidate.getDay() !== singleDow) {
-          candidate.setDate(candidate.getDate() + 1);
-        }
-      }
-      if (multiDow) {
-        while (!multiDow.includes(candidate.getDay())) {
-          candidate.setDate(candidate.getDate() + 1);
-        }
-      }
-    };
-
-    if (candidate.getTime() <= now.getTime()) {
-      advance();
-    } else if (weekdaysOnly && (candidate.getDay() === 0 || candidate.getDay() === 6)) {
-      advance();
-    } else if (singleDow != null && candidate.getDay() !== singleDow) {
-      advance();
-    } else if (multiDow && !multiDow.includes(candidate.getDay())) {
-      advance();
-    }
-
-    return candidate.toISOString();
+    task = cron.createTask(cronExpression, () => undefined, { timezone });
+    const [next] = task.getNextRuns(1);
+    return next ? next.toISOString() : null;
   } catch {
     return null;
+  } finally {
+    void task?.destroy();
   }
 }
 
@@ -394,24 +352,18 @@ function toScheduleView(
   }
 
   const cronExpression = cronExpressions.join(" | ") || "invalid";
-  const armed =
-    schedule.enabled &&
-    !schedule.paused &&
-    !globalPaused &&
-    cronExpressions.length > 0;
 
+  // RETIRED: this legacy multi-dataset scheduler never arms cron (see
+  // `reloadDatasetScheduler`). Reporting a Next Run / "Active" for its rows
+  // showed a schedule that would never fire. Real schedules live in the
+  // Lateral (`lateral-scheduler.ts`) and Executive (`executive-scheduler.ts`)
+  // processing panels. Stored rows are kept untouched for reference.
   return {
     ...schedule,
     cronExpression,
     cronExpressions,
-    nextRunAt: armed
-      ? estimateNextRunFromExpressions(cronExpressions, getSchedulerTimezone())
-      : null,
-    statusLabel: !schedule.enabled
-      ? "Disabled"
-      : schedule.paused || globalPaused
-        ? "Paused"
-        : "Active",
+    nextRunAt: null,
+    statusLabel: "Disabled",
     timeLabel: formatScheduleTimeLabel(schedule),
     datasetsLabel: formatDatasetsLabel(schedule.datasetNames),
   };
@@ -475,7 +427,6 @@ export function getDatasetSchedulerStatus(): MultiSchedulerStatus {
 function getDatasetSchedulerStatusSync(
   schedules: DatasetAutomationSchedule[]
 ): MultiSchedulerStatus {
-  const envDisabled = !isDatasetSchedulerAutoEnabled();
   const views = schedules.map(toScheduleView);
   const activeCount = views.filter((item) => item.statusLabel === "Active").length;
   const nextCandidates = views
@@ -490,7 +441,8 @@ function getDatasetSchedulerStatusSync(
   const latest = lastRuns[0];
 
   return {
-    enabled: !envDisabled && activeCount > 0,
+    // Never armed (legacy scheduler is retired) — see toScheduleView.
+    enabled: false,
     paused: globalPaused || (schedules.length > 0 && activeCount === 0),
     globalPaused,
     running,

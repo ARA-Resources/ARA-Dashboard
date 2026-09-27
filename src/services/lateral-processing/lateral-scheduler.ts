@@ -49,10 +49,29 @@ const STORE_PATH = path.join(
   "lateral-scheduler.json"
 );
 
-const tasks = new Map<string, ScheduledTask>();
-let running = false;
-let bootstrapped = false;
-let cronArmedAtMs = 0;
+/**
+ * Runtime state lives on `globalThis`, not in module-level `let`s: Next.js
+ * loads this module once in the instrumentation bundle (which arms cron at
+ * boot) and again in each API-route bundle (Run Now, schedule edits). With
+ * per-bundle copies, a route would see `bootstrapped=false` and arm a second
+ * cron set, and `stopLateralTasks()` could only stop its own copy. One
+ * process-wide object means one live task set, one `running` guard.
+ */
+type LateralSchedulerRuntime = {
+  tasks: Map<string, ScheduledTask>;
+  running: boolean;
+  bootstrapped: boolean;
+  cronArmedAtMs: number;
+};
+const runtimeGlobal = globalThis as typeof globalThis & {
+  __araLateralScheduler?: LateralSchedulerRuntime;
+};
+const rt = (runtimeGlobal.__araLateralScheduler ??= {
+  tasks: new Map(),
+  running: false,
+  bootstrapped: false,
+  cronArmedAtMs: 0,
+});
 
 function validateTimezone(timezone: string): string {
   const next = timezone.trim() || DEFAULT_LATERAL_TIMEZONE;
@@ -259,10 +278,13 @@ function expressionsForConfig(config: LateralSchedulerConfig): string[] {
 }
 
 function stopLateralTasks() {
-  for (const task of tasks.values()) {
-    task.stop();
+  for (const task of rt.tasks.values()) {
+    // destroy (not stop) also removes the task from node-cron's global
+    // registry, so re-arming on every schedule edit doesn't accumulate
+    // stopped tasks.
+    void task.destroy();
   }
-  tasks.clear();
+  rt.tasks.clear();
 }
 
 export function stopLateralScheduler(): void {
@@ -314,11 +336,20 @@ export async function getLateralSchedulerStatus(): Promise<
       ? "Disabled"
       : config.paused
         ? "Paused"
-        : "Active",
+        : !armed
+          ? "Not armed"
+          : "Active",
+    notArmedReason: armed
+      ? null
+      : !isDatasetSchedulerAutoEnabled()
+        ? datasetSchedulerPolicyReason()
+        : cronExpressions.length === 0
+          ? "Invalid schedule"
+          : null,
     nextRunAt: armed
       ? estimateNextRunFromExpressions(cronExpressions, config.timezone)
       : null,
-    running,
+    running: rt.running,
     cronExpression,
     cronExpressions,
     timeLabel: formatScheduleTimeLabel(config),
@@ -365,14 +396,16 @@ async function armLateralCron(): Promise<LateralSchedulerStatus> {
     return getLateralSchedulerStatus();
   }
 
-  cronArmedAtMs = Date.now();
+  rt.cronArmedAtMs = Date.now();
   const timezone = config.timezone;
 
   expressions.forEach((expression, index) => {
     const task = cron.schedule(
       expression,
       () => {
-        void runLateralScheduledTick(timezone);
+        void runLateralScheduledTick(timezone).catch((error) => {
+          console.error("[lateral-scheduler] Scheduled tick failed", error);
+        });
       },
       {
         timezone,
@@ -381,7 +414,7 @@ async function armLateralCron(): Promise<LateralSchedulerStatus> {
         missedExecutionTolerance: 0,
       }
     );
-    tasks.set(`lateral::${index}`, task);
+    rt.tasks.set(`lateral::${index}`, task);
   });
 
   console.info(
@@ -397,7 +430,7 @@ async function armLateralCron(): Promise<LateralSchedulerStatus> {
 async function runLateralScheduledTick(timezone: string) {
   if (
     shouldSkipScheduledTickAfterArm({
-      armedAtMs: cronArmedAtMs,
+      armedAtMs: rt.cronArmedAtMs,
       nowMs: Date.now(),
       timezone,
     })
@@ -411,12 +444,25 @@ async function runLateralScheduledTick(timezone: string) {
   const config = await readLateralSchedulerConfig();
   if (!config.enabled || config.paused) return;
   if (!isDatasetSchedulerAutoEnabled()) return;
-  if (running) {
+  if (rt.running) {
     console.warn("[lateral-scheduler] Skipping overlapping run");
     appendSchedulerLog("overlap_skipped");
     return;
   }
-  await invokeLateralJob("scheduler");
+  try {
+    await invokeLateralJob("scheduler");
+  } catch (error) {
+    // invokeLateralJob throws (rather than returning) when the advisory lock
+    // is held elsewhere, and lets a crash in the job body propagate. Neither
+    // may escape a cron callback as an unhandled rejection.
+    const message = error instanceof Error ? error.message : String(error);
+    if (/already running|another instance/i.test(message)) {
+      console.info(`[lateral-scheduler] Scheduled tick skipped — ${message}`);
+      appendSchedulerLog("lock_busy_skipped", { message });
+      return;
+    }
+    await persistUnexpectedLateralJobCrash("scheduler", error);
+  }
 }
 
 /**
@@ -529,7 +575,7 @@ async function runAndPersistLateralJob(
     console.info(`[lateral-scheduler] ${outcome.message}`);
     return outcome;
   } finally {
-    running = false;
+    rt.running = false;
     await lock.release();
   }
 }
@@ -611,7 +657,7 @@ export async function invokeLateralJob(
   status: LateralSchedulerStatus;
   outcome: Awaited<ReturnType<typeof executeLateralDatasetJob>>;
 }> {
-  if (running) {
+  if (rt.running) {
     throw new Error("Lateral Dataset Sync is already running.");
   }
 
@@ -620,7 +666,7 @@ export async function invokeLateralJob(
     throw new Error(lock.message);
   }
 
-  running = true;
+  rt.running = true;
   const outcome = await runAndPersistLateralJob(trigger, lock);
   return {
     status: await getLateralSchedulerStatus(),
@@ -640,7 +686,7 @@ export async function invokeLateralJob(
 export async function startLateralJobAsync(
   trigger: "scheduler" | "manual"
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (running) {
+  if (rt.running) {
     return { ok: false, message: "Lateral Dataset Sync is already running." };
   }
 
@@ -649,7 +695,7 @@ export async function startLateralJobAsync(
     return { ok: false, message: lock.message };
   }
 
-  running = true;
+  rt.running = true;
   void runAndPersistLateralJob(trigger, lock).catch((error) => {
     // runAndPersistLateralJob's own finally already reset `running` and
     // released the lock even on this path — only the outcome persistence
@@ -668,7 +714,7 @@ export async function startLateralScheduler(): Promise<void> {
     console.info(
       `[lateral-scheduler] Scheduler bootstrap skipped in this process (${schedulerOwnershipReason()}).`
     );
-    bootstrapped = true;
+    rt.bootstrapped = true;
     return;
   }
 
@@ -679,7 +725,7 @@ export async function startLateralScheduler(): Promise<void> {
     appendSchedulerLog("auto_disabled", {
       reason: datasetSchedulerPolicyReason(),
     });
-    bootstrapped = true;
+    rt.bootstrapped = true;
     return;
   }
 
@@ -699,11 +745,11 @@ export async function startLateralScheduler(): Promise<void> {
   }
 
   await armLateralCron();
-  bootstrapped = true;
+  rt.bootstrapped = true;
 }
 
 export async function ensureLateralSchedulerStarted(): Promise<LateralSchedulerStatus> {
-  if (!bootstrapped) {
+  if (!rt.bootstrapped) {
     await startLateralScheduler();
   }
   return getLateralSchedulerStatus();
@@ -796,12 +842,8 @@ export async function getLateralProcessingStatusView(): Promise<LateralProcessin
       timeLabel: scheduler.timeLabel,
       timezone: scheduler.timezone,
     },
-    status:
-      scheduler.statusLabel === "Disabled"
-        ? "Disabled"
-        : scheduler.statusLabel === "Paused"
-          ? "Paused"
-          : "Active",
+    status: scheduler.statusLabel,
+    notArmedReason: scheduler.notArmedReason,
     lastSuccessfulSync:
       checkpoint.processedAt ||
       (scheduler.lastRunStatus === "success" ? scheduler.lastRunAt : null),

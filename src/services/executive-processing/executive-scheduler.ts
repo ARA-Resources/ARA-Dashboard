@@ -56,6 +56,9 @@ import type {
 } from "@/types/executive-scheduler";
 import {
   formatScheduleTimeLabel,
+  normalizeCustomDays,
+  normalizeCustomTimes,
+  normalizeHhMm,
   SCHEDULE_FREQUENCY_LABELS,
 } from "@/types/dataset-schedule";
 import type { ScheduleFrequency } from "@/types/dataset-schedule";
@@ -63,9 +66,25 @@ import { getSharedGoogleConnectionStatus } from "@/services/dataset/google-conne
 import { listExecutiveSyncHistory } from "@/services/executive-processing/executive-sync-history-store";
 import type { ExecutiveProcessingStatusView } from "@/types/executive-scheduler";
 
-const tasks = new Map<string, ScheduledTask>();
-let bootstrapped = false;
-let cronArmedAtMs = 0;
+/**
+ * Runtime state lives on `globalThis` for the same reason as
+ * `lateral-scheduler.ts`: the instrumentation bundle and each API-route
+ * bundle otherwise get their own copies, so a route could arm a duplicate
+ * cron set that the boot bundle's `stopExecutiveTasks()` can't see.
+ */
+type ExecutiveSchedulerRuntime = {
+  tasks: Map<string, ScheduledTask>;
+  bootstrapped: boolean;
+  cronArmedAtMs: number;
+};
+const runtimeGlobal = globalThis as typeof globalThis & {
+  __araExecutiveScheduler?: ExecutiveSchedulerRuntime;
+};
+const rt = (runtimeGlobal.__araExecutiveScheduler ??= {
+  tasks: new Map(),
+  bootstrapped: false,
+  cronArmedAtMs: 0,
+});
 
 function expressionsForConfig(config: ExecutiveSchedulerConfig): string[] {
   return buildCronExpressionsFromSchedule({
@@ -78,10 +97,11 @@ function expressionsForConfig(config: ExecutiveSchedulerConfig): string[] {
 }
 
 function stopExecutiveTasks() {
-  for (const task of tasks.values()) {
-    task.stop();
+  for (const task of rt.tasks.values()) {
+    // destroy (not stop) also removes the task from node-cron's registry.
+    void task.destroy();
   }
-  tasks.clear();
+  rt.tasks.clear();
 }
 
 export function stopExecutiveScheduler(): void {
@@ -110,11 +130,20 @@ export async function getExecutiveSchedulerStatus(): Promise<ExecutiveSchedulerS
       ? "Disabled"
       : config.paused
         ? "Paused"
-        : "Active",
+        : !armed
+          ? "Not armed"
+          : "Active",
+    notArmedReason: armed
+      ? null
+      : !isExecutiveDatasetSchedulerAutoEnabled()
+        ? executiveDatasetSchedulerPolicyReason()
+        : cronExpressions.length === 0
+          ? "Invalid schedule"
+          : null,
     nextRunAt: armed
       ? estimateNextRunFromExpressions(cronExpressions, config.timezone)
       : null,
-    running: tasks.size > 0 && armed,
+    running: rt.tasks.size > 0 && armed,
     cronExpression,
     cronExpressions,
     timeLabel: formatScheduleTimeLabel(config),
@@ -164,14 +193,16 @@ async function armExecutiveCron(): Promise<ExecutiveSchedulerStatus> {
     return getExecutiveSchedulerStatus();
   }
 
-  cronArmedAtMs = Date.now();
+  rt.cronArmedAtMs = Date.now();
   const timezone = config.timezone;
 
   expressions.forEach((expression, index) => {
     const task = cron.schedule(
       expression,
       () => {
-        void runExecutiveScheduledTick(timezone);
+        void runExecutiveScheduledTick(timezone).catch((error) => {
+          console.error("[executive-scheduler] Scheduled tick failed", error);
+        });
       },
       {
         timezone,
@@ -180,7 +211,7 @@ async function armExecutiveCron(): Promise<ExecutiveSchedulerStatus> {
         missedExecutionTolerance: 0,
       }
     );
-    tasks.set(`executive::${index}`, task);
+    rt.tasks.set(`executive::${index}`, task);
   });
 
   console.info(
@@ -192,7 +223,7 @@ async function armExecutiveCron(): Promise<ExecutiveSchedulerStatus> {
 async function runExecutiveScheduledTick(timezone: string) {
   if (
     shouldSkipScheduledTickAfterArm({
-      armedAtMs: cronArmedAtMs,
+      armedAtMs: rt.cronArmedAtMs,
       nowMs: Date.now(),
       timezone,
     })
@@ -206,7 +237,14 @@ async function runExecutiveScheduledTick(timezone: string) {
   if (!config.enabled || config.paused) return;
   if (!isExecutiveDatasetSchedulerAutoEnabled()) return;
 
-  await runExecutiveJobAndPersist("scheduler");
+  try {
+    // A held lock comes back as status "busy" (not a throw), but an
+    // unexpected job crash or a failed state write still throws — never let
+    // that escape a cron callback as an unhandled rejection.
+    await runExecutiveJobAndPersist("scheduler");
+  } catch (error) {
+    console.error("[executive-scheduler] Scheduled tick failed", error);
+  }
 }
 
 /**
@@ -286,7 +324,7 @@ export async function startExecutiveScheduler(): Promise<void> {
     console.info(
       `[executive-scheduler] Scheduler bootstrap skipped in this process (${schedulerOwnershipReason()}).`
     );
-    bootstrapped = true;
+    rt.bootstrapped = true;
     return;
   }
 
@@ -294,16 +332,16 @@ export async function startExecutiveScheduler(): Promise<void> {
     console.info(
       `[executive-scheduler] Automatic cron disabled (${executiveDatasetSchedulerPolicyReason()}). Manual invokeExecutiveJob("manual") is unchanged.`
     );
-    bootstrapped = true;
+    rt.bootstrapped = true;
     return;
   }
 
   await armExecutiveCron();
-  bootstrapped = true;
+  rt.bootstrapped = true;
 }
 
 export async function ensureExecutiveSchedulerStarted(): Promise<ExecutiveSchedulerStatus> {
-  if (!bootstrapped) {
+  if (!rt.bootstrapped) {
     await startExecutiveScheduler();
   }
   return getExecutiveSchedulerStatus();
@@ -335,12 +373,37 @@ export async function updateExecutiveScheduler(input: {
   // (postgres.js rejects `undefined` outright). Lateral's own
   // `updateLateralScheduler` has this same latent gap (untouched, not fixed
   // there — out of scope); Executive's own version avoids inheriting it.
+  //
+  // Times/days are normalized here because the Postgres write path stores
+  // them verbatim, and `buildCronExpressionsFromSchedule` silently turns an
+  // unparseable time into 07:00.
+  const isHhMm = (value: unknown) =>
+    typeof value === "string" && /^\d{1,2}:\d{2}$/.test(value.trim());
+  if (input.syncTime !== undefined && !isHhMm(input.syncTime)) {
+    throw new Error(`Invalid sync time "${input.syncTime}" — use HH:MM.`);
+  }
+  const badTime = input.customTimes?.find((time) => !isHhMm(time));
+  if (badTime !== undefined) {
+    throw new Error(`Invalid schedule time "${badTime}" — use HH:MM.`);
+  }
   const partial: Partial<ExecutiveSchedulerConfig> = {};
   if (input.frequency !== undefined) partial.frequency = input.frequency;
-  if (input.syncTime !== undefined) partial.syncTime = input.syncTime;
+  if (input.syncTime !== undefined) partial.syncTime = normalizeHhMm(input.syncTime);
   if (input.dayOfWeek !== undefined) partial.dayOfWeek = input.dayOfWeek;
-  if (input.customDays !== undefined) partial.customDays = input.customDays;
-  if (input.customTimes !== undefined) partial.customTimes = input.customTimes;
+  if (input.customDays !== undefined) {
+    partial.customDays = normalizeCustomDays(input.customDays);
+  }
+  if (input.customTimes !== undefined) {
+    partial.customTimes = normalizeCustomTimes(input.customTimes);
+  }
+  if (partial.frequency === "custom") {
+    if (partial.customDays !== undefined && partial.customDays.length === 0) {
+      throw new Error("Custom schedule needs at least one day selected.");
+    }
+    if (partial.customTimes !== undefined && partial.customTimes.length === 0) {
+      throw new Error("Custom schedule needs at least one valid time (HH:MM).");
+    }
+  }
   if (input.timezone !== undefined) partial.timezone = input.timezone;
   if (input.enabled !== undefined) partial.enabled = input.enabled;
   if (input.paused !== undefined) partial.paused = input.paused;
@@ -401,12 +464,8 @@ export async function getExecutiveProcessingStatusView(): Promise<ExecutiveProce
       timeLabel: scheduler.timeLabel,
       timezone: scheduler.timezone,
     },
-    status:
-      scheduler.statusLabel === "Disabled"
-        ? "Disabled"
-        : scheduler.statusLabel === "Paused"
-          ? "Paused"
-          : "Active",
+    status: scheduler.statusLabel,
+    notArmedReason: scheduler.notArmedReason,
     lastSuccessfulSync:
       checkpoint.processedAt ||
       (scheduler.lastRunStatus === "success" ? scheduler.lastRunAt : null),

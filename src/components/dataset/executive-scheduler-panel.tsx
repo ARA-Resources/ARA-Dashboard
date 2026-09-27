@@ -5,8 +5,10 @@ import {
   History,
   Pause,
   Play,
+  Plus,
   RefreshCw,
   Settings2,
+  Trash2,
   Zap,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +19,7 @@ import type {
   ExecutiveSchedulerStatus,
 } from "@/types/executive-scheduler";
 import type { ExecutiveSyncHistoryEntry } from "@/types/executive-sync-history";
+import { WEEKDAY_SHORT_LABELS } from "@/types/dataset-schedule";
 import { apiFetch } from "@/lib/api/client";
 
 type ExecutiveStatusPayload = ExecutiveSchedulerStatus & {
@@ -28,6 +31,7 @@ const FREQUENCY_OPTIONS = [
   { value: "daily", label: "Daily" },
   { value: "weekdays", label: "Weekdays" },
   { value: "weekly", label: "Weekly" },
+  { value: "custom", label: "Custom (days + times)" },
 ] as const;
 
 function StatusBadge({
@@ -46,7 +50,9 @@ function StatusBadge({
         label === "Active" &&
           "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
         label === "Paused" &&
-          "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+          "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+        label === "Not armed" &&
+          "bg-rose-500/10 text-rose-700 dark:text-rose-300"
       )}
     >
       {label}
@@ -202,6 +208,8 @@ export function ExecutiveSchedulerPanel() {
     frequency: string;
     syncTime: string;
     timezone: string;
+    customDays: number[];
+    customTimes: string[];
   } | null>(null);
 
   const refresh = React.useCallback(async () => {
@@ -319,16 +327,28 @@ export function ExecutiveSchedulerPanel() {
       frequency: status.frequency,
       syncTime: status.syncTime,
       timezone: status.timezone,
+      customDays: [...status.customDays],
+      customTimes:
+        status.customTimes.length > 0 ? [...status.customTimes] : [status.syncTime],
     });
     setEditingSchedule(true);
   }
 
   async function saveSchedule() {
     if (!scheduleForm) return;
+    const isCustom = scheduleForm.frequency === "custom";
     await runAction("update", {
       frequency: scheduleForm.frequency,
-      syncTime: scheduleForm.syncTime,
+      syncTime: isCustom
+        ? scheduleForm.customTimes[0] || scheduleForm.syncTime
+        : scheduleForm.syncTime,
       timezone: scheduleForm.timezone,
+      ...(isCustom
+        ? {
+            customDays: scheduleForm.customDays,
+            customTimes: scheduleForm.customTimes,
+          }
+        : {}),
     });
     setEditingSchedule(false);
   }
@@ -420,10 +440,18 @@ export function ExecutiveSchedulerPanel() {
         />
         <MetaRow
           label="Next Scheduled Run"
-          value={formatWhen(
-            processing?.nextScheduledRun ?? status.nextRunAt,
-            timezone
-          )}
+          value={
+            displayStatus === "Not armed"
+              ? `Not armed — ${
+                  processing?.notArmedReason ??
+                  status.notArmedReason ??
+                  "cron is not armed"
+                }`
+              : formatWhen(
+                  processing?.nextScheduledRun ?? status.nextRunAt,
+                  timezone
+                )
+          }
         />
         <MetaRow label="Time zone" value={timezone} />
       </dl>
@@ -572,6 +600,7 @@ export function ExecutiveSchedulerPanel() {
                 ))}
               </select>
             </label>
+            {scheduleForm.frequency !== "custom" ? (
             <label className="space-y-1 text-xs text-muted-foreground">
               Sync Time (HH:mm)
               <input
@@ -585,6 +614,7 @@ export function ExecutiveSchedulerPanel() {
                 }
               />
             </label>
+            ) : null}
             <label className="space-y-1 text-xs text-muted-foreground">
               Time zone (IANA)
               <input
@@ -599,6 +629,103 @@ export function ExecutiveSchedulerPanel() {
               />
             </label>
           </div>
+          {scheduleForm.frequency === "custom" ? (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Days</p>
+                <div className="flex flex-wrap gap-2">
+                  {WEEKDAY_SHORT_LABELS.map((label, day) => {
+                    const selected = scheduleForm.customDays.includes(day);
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() =>
+                          setScheduleForm((f) =>
+                            f
+                              ? {
+                                  ...f,
+                                  customDays: selected
+                                    ? f.customDays.filter((d) => d !== day)
+                                    : [...f.customDays, day].sort((a, b) => a - b),
+                                }
+                              : f
+                          )
+                        }
+                        className={cn(
+                          "min-w-12 rounded-lg border px-2.5 py-1.5 text-sm font-medium",
+                          selected
+                            ? "border-primary/50 bg-primary/10 text-primary"
+                            : "border-border bg-background text-muted-foreground"
+                        )}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">Times (HH:mm)</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="gap-1 rounded-lg"
+                    onClick={() =>
+                      setScheduleForm((f) =>
+                        f ? { ...f, customTimes: [...f.customTimes, "14:00"] } : f
+                      )
+                    }
+                  >
+                    <Plus className="size-3.5" />
+                    Add time
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  {scheduleForm.customTimes.map((time, index) => (
+                    <div key={index} className="flex max-w-xs items-center gap-2">
+                      <input
+                        type="time"
+                        className="block w-full rounded-lg border border-border/70 bg-background px-2 py-1.5 text-sm text-foreground"
+                        value={time}
+                        onChange={(e) =>
+                          setScheduleForm((f) => {
+                            if (!f) return f;
+                            const customTimes = [...f.customTimes];
+                            customTimes[index] = e.target.value;
+                            return { ...f, customTimes };
+                          })
+                        }
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="rounded-lg"
+                        disabled={scheduleForm.customTimes.length <= 1}
+                        onClick={() =>
+                          setScheduleForm((f) =>
+                            f
+                              ? {
+                                  ...f,
+                                  customTimes: f.customTimes.filter(
+                                    (_, i) => i !== index
+                                  ),
+                                }
+                              : f
+                          )
+                        }
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
           <div className="flex gap-2">
             <Button
               type="button"
