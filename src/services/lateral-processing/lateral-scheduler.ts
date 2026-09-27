@@ -775,16 +775,20 @@ export async function updateLateralScheduler(input: {
   enabled?: boolean;
   paused?: boolean;
 }): Promise<LateralSchedulerStatus> {
-  await writeLateralSchedulerConfig({
-    frequency: input.frequency,
-    syncTime: input.syncTime,
-    dayOfWeek: input.dayOfWeek,
-    customDays: input.customDays,
-    customTimes: input.customTimes,
-    timezone: input.timezone,
-    enabled: input.enabled,
-    paused: input.paused,
-  });
+  // Only forward keys the caller actually provided: the Postgres store merges
+  // `{...prior, ...partial}`, so an explicit `undefined` would overwrite a
+  // stored value and postgres.js rejects it ("Undefined values are not
+  // allowed"). Mirrors `updateExecutiveScheduler`.
+  const partial: Partial<LateralSchedulerConfig> = {};
+  if (input.frequency !== undefined) partial.frequency = input.frequency;
+  if (input.syncTime !== undefined) partial.syncTime = input.syncTime;
+  if (input.dayOfWeek !== undefined) partial.dayOfWeek = input.dayOfWeek;
+  if (input.customDays !== undefined) partial.customDays = input.customDays;
+  if (input.customTimes !== undefined) partial.customTimes = input.customTimes;
+  if (input.timezone !== undefined) partial.timezone = input.timezone;
+  if (input.enabled !== undefined) partial.enabled = input.enabled;
+  if (input.paused !== undefined) partial.paused = input.paused;
+  await writeLateralSchedulerConfig(partial);
   return armLateralCron();
 }
 
