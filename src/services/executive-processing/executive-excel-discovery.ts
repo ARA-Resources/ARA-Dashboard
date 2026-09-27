@@ -148,19 +148,18 @@ export function buildExecutiveExcelDiscoveryQuery(options: {
   const parts = [
     "in:inbox",
     `after:${toGmailAfterDateToken(options.afterMs)}`,
-    // No separate extension clause: this filename hint alone already
-    // constrains to files matching Executive's confirmed naming convention,
-    // which are always .xlsx/.xlsm/.xls — client-side
-    // `isExecutiveDsAttachmentName` still enforces the extension regardless.
-    //
-    // Deliberately UNQUOTED — confirmed via live Gmail testing that
-    // filename:"ATCI Exec DS_" (quoted exact-phrase) returns zero results
-    // even for genuinely matching messages, while filename:ATCI Exec DS_
-    // (unquoted) correctly finds them. This was the actual root cause of
-    // "Run All" finding nothing, after the checkpoint-bootstrap, after:
-    // date-format, and redundant-extension-clause fixes all turned out to
-    // be necessary but not sufficient on their own.
-    `filename:ATCI Exec DS_`,
+    // `filename:` was replaced with `has:attachment` after isolated,
+    // direct-API testing (bypassing this app's pipeline entirely) confirmed
+    // a genuine Gmail API-vs-web-UI discrepancy: `filename:ATCI Exec DS_`
+    // returns resultSizeEstimate 0 via messages.list() even for messages
+    // that genuinely have a matching attachment and are found instantly by
+    // the identical text typed into Gmail's own web search bar. `has:attachment`
+    // finds the same messages via the real API. The broader net this casts
+    // is intentional and safe: every attachment of every matched message
+    // still passes through isExcelFilename/matchesFileType (extension gate)
+    // and then isExecutiveDsAttachmentName (naming gate) in
+    // discoverExecutiveExcelInMessage before anything is selected or uploaded.
+    "has:attachment",
   ];
 
   const keywordClause = buildExecutiveKeywordSearchClause(options.keywords);
