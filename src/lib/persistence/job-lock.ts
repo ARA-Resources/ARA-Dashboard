@@ -28,7 +28,18 @@
  * Executive (Phase E1): `acquireExecutiveJobLock()` below is the same pattern
  * with its own advisory-lock key (EXECUTIVE_JOB_LOCK_KEY). The two locks are
  * independent — an Executive job running (or stuck) can never block a
- * Lateral job, and vice versa. No caller exists yet; wired up in Phase E4.
+ * Lateral job, and vice versa.
+ *
+ * Connection affinity: session-level advisory locks belong to ONE physical
+ * connection. The pooled entry points (`acquireLateralJobLock` /
+ * `acquireExecutiveJobLock`) therefore take the lock on a reserved connection
+ * (`sql.reserve()`) and unlock on that same connection. Going through the
+ * shared pool instead let the unlock land on a different connection ("you
+ * don't own a lock"), leaving the lock held on the original one — and since
+ * advisory locks are re-entrant per session, a second job whose acquire
+ * landed on that connection could run concurrently. The `...On(sql)`
+ * variants are for callers that already own a single connection (CLI
+ * scripts with `max: 1`).
  */
 
 import type postgres from "postgres";
@@ -59,6 +70,73 @@ const EXECUTIVE_JOB_LOCK_KEY = 7482910249; // stable, arbitrary — distinct fro
 
 type SqlClient = ReturnType<typeof postgres>;
 
+const LATERAL_BUSY_MESSAGE =
+  "Lateral job is already running on another instance. This request has been safely rejected.";
+const EXECUTIVE_BUSY_MESSAGE =
+  "Executive job is already running on another instance. This request has been safely rejected.";
+
+/**
+ * Acquire a session advisory lock on ONE reserved connection and keep it
+ * there until release, so acquire and unlock can never land on different
+ * pooled connections and no other query can re-enter the lock through a
+ * shared pooled session. A reserved connection is exempt from the pool's
+ * `idle_timeout` and is only retired for `max_lifetime` after release, so the
+ * lock can't vanish mid-job; if the process dies, the socket closes and
+ * Postgres drops the lock.
+ */
+async function acquireReservedAdvisoryLock(
+  key: number,
+  busyMessage: string,
+  acquiredMessage: string
+): Promise<JobLockResult> {
+  const reserved = await getDbClient().reserve();
+  let acquired = false;
+  try {
+    const rows = await reserved<{ acquired: boolean }[]>`
+      SELECT pg_try_advisory_lock(${key}) AS acquired
+    `;
+    acquired = rows[0]?.acquired === true;
+  } catch (error) {
+    reserved.release();
+    throw error;
+  }
+
+  if (!acquired) {
+    reserved.release();
+    return {
+      acquired: false,
+      message: busyMessage,
+      release: async () => {
+        /* nothing to release */
+      },
+    };
+  }
+
+  let released = false;
+  return {
+    acquired: true,
+    message: acquiredMessage,
+    release: async () => {
+      if (released) return;
+      released = true;
+      try {
+        const rows = await reserved<{ unlocked: boolean }[]>`
+          SELECT pg_advisory_unlock(${key}) AS unlocked
+        `;
+        if (rows[0]?.unlocked !== true) {
+          console.warn(`[job-lock] Advisory lock ${key} was not held at release.`);
+          // Never hand a connection that still holds locks back to the pool.
+          await reserved`SELECT pg_advisory_unlock_all()`;
+        }
+      } catch {
+        // The session is gone, and Postgres dropped the lock with it.
+      } finally {
+        reserved.release();
+      }
+    },
+  };
+}
+
 /**
  * Acquire the shared Lateral advisory lock on a specific postgres.js client.
  * Prefer this when the caller already owns the DB connection (CLI / sync jobs)
@@ -76,8 +154,7 @@ export async function acquireLateralJobLockOn(
   if (!acquired) {
     return {
       acquired: false,
-      message:
-        "Lateral job is already running on another instance. This request has been safely rejected.",
+      message: LATERAL_BUSY_MESSAGE,
       release: async () => {
         /* nothing to release */
       },
@@ -109,15 +186,18 @@ export async function acquireLateralJobLock(): Promise<JobLockResult> {
     };
   }
 
-  return acquireLateralJobLockOn(getDbClient());
+  return acquireReservedAdvisoryLock(
+    LATERAL_JOB_LOCK_KEY,
+    LATERAL_BUSY_MESSAGE,
+    "Lateral job lock acquired"
+  );
 }
 
 /**
  * Acquire the shared Executive advisory lock on a specific postgres.js client.
  * Mirrors `acquireLateralJobLockOn` exactly, using EXECUTIVE_JOB_LOCK_KEY.
- * Phase E1: no caller exists yet — the Executive job orchestrator (Phase E4)
- * will call `acquireExecutiveJobLock()` the same way `invokeLateralJob` calls
- * `acquireLateralJobLock()`.
+ * Only for callers that already own a single connection; app code uses
+ * `acquireExecutiveJobLock()` (reserved connection).
  */
 export async function acquireExecutiveJobLockOn(
   sql: SqlClient
@@ -131,8 +211,7 @@ export async function acquireExecutiveJobLockOn(
   if (!acquired) {
     return {
       acquired: false,
-      message:
-        "Executive job is already running on another instance. This request has been safely rejected.",
+      message: EXECUTIVE_BUSY_MESSAGE,
       release: async () => {
         /* nothing to release */
       },
@@ -163,5 +242,9 @@ export async function acquireExecutiveJobLock(): Promise<JobLockResult> {
     };
   }
 
-  return acquireExecutiveJobLockOn(getDbClient());
+  return acquireReservedAdvisoryLock(
+    EXECUTIVE_JOB_LOCK_KEY,
+    EXECUTIVE_BUSY_MESSAGE,
+    "Executive job lock acquired"
+  );
 }

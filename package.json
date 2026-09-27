@@ -16,6 +16,7 @@
     "test:executive-master-postgres": "tsx scripts/verify-executive-master-postgres.ts",
     "test:executive-checkpoint-bootstrap": "tsx scripts/verify-executive-checkpoint-bootstrap.ts",
     "test:scheduler-next-run": "tsx scripts/verify-scheduler-next-run.ts",
+    "test:job-lock-reserved": "tsx scripts/verify-job-lock-reserved.ts",
     "test:candidate-auto-fetch": "tsx scripts/verify-candidate-auto-fetch.ts",
     "test:candidate-oorwin-parser": "tsx scripts/verify-candidate-oorwin-parser.ts",
     "test:candidate-sync-engine": "tsx scripts/verify-candidate-sync-engine.ts",
