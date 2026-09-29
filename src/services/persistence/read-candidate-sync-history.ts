@@ -38,7 +38,15 @@ export interface CandidateSyncHistoryRow {
   };
 }
 
-/** Most recent syncs first, for a "filter by sync" picker. Excludes the one-time legacy migration row (no real "rows this sync touched" concept for it — it seeded the whole table). */
+/**
+ * Most recent syncs first, for a "filter by sync" picker. Excludes the
+ * one-time legacy migration row (no real "rows this sync touched" concept
+ * for it — it seeded the whole table) and, since migration 021, every
+ * manual Add/Modify history row too — the picker is capped at `limit`
+ * (default 25) and is meant for "which Upload run", not for wading through
+ * individual manual edits; a manual edit's who/what is already visible in
+ * the per-candidate history popup (getCandidateChangeHistory).
+ */
 export async function listRecentCandidateSyncHistory(
   limit = 25,
   sqlClient?: SqlClient
@@ -66,6 +74,7 @@ export async function listRecentCandidateSyncHistory(
       quarantined_count, review_flag_count
     FROM candidate_sync_history
     WHERE source_filename IS DISTINCT FROM 'legacy-schema-migration-oorwin'
+      AND (source_filename IS NULL OR source_filename NOT LIKE 'manual-%')
     ORDER BY started_at DESC
     LIMIT ${limit}
   `;

@@ -49,6 +49,15 @@ export interface CandidateAutoFetchValues {
 export interface CandidateAutoFetchResult {
   values: CandidateAutoFetchValues;
   conflicts: CandidateAutoFetchConflict[];
+  /**
+   * Migration 021 (manual Add/Modify Scan action): whether the JR ID was
+   * found at all in each table, independent of whether any individual
+   * field ended up usable from it. Purely additive — the Oorwin sync engine
+   * (candidate-sync-engine.ts) ignores this field entirely; it exists so
+   * the Scan UI can tell the user "Found in Lateral / Executive / both /
+   * not found" instead of just silently filling fields.
+   */
+  sources: { lateral: boolean; executive: boolean };
 }
 
 /** Oorwin's own per-field fallback values, used only when neither table has a usable value. */
@@ -137,5 +146,9 @@ export async function resolveCandidateAutoFetchFields(
     ),
   };
 
-  return { values, conflicts };
+  return {
+    values,
+    conflicts,
+    sources: { lateral: lateralRow != null, executive: executiveRow != null },
+  };
 }

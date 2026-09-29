@@ -27,6 +27,13 @@
  * "skip this item and continue" resilience, an unexpected per-row error
  * here stops the rest of the sheet rather than skipping just that row;
  * flagging this as a possible future hardening, not implemented now.
+ *
+ * Migration 021: every `candidate_sync_history` row this module creates is
+ * stamped `kind = 'oorwin_upload'` — the signal the "Recently changed"
+ * window (getCandidateRecentChangeWindowSyncIds, read-candidate-highlights.ts)
+ * anchors to ("the latest real Upload, plus any manual edit since it").
+ * Manual Add/Modify (candidate-manual-edit.ts) stamp their own history rows
+ * `kind = 'manual_add'` / `'manual_modify'` instead.
  */
 import { getDbClient } from "@/lib/persistence/db-client";
 import type { SqlClient } from "@/services/persistence/read-candidate-master";
@@ -93,8 +100,8 @@ export async function invokeCandidateSync(
   if (!parsed.ok) {
     const [historyRow] = await sql<{ id: number }[]>`
       INSERT INTO candidate_sync_history
-        (started_at, finished_at, result, source_filename, triggered_by, failure_reason)
-      VALUES (${startedAt}, NOW(), 'failed', ${filename}, ${triggeredBy}, ${parsed.message})
+        (started_at, finished_at, result, source_filename, triggered_by, failure_reason, kind)
+      VALUES (${startedAt}, NOW(), 'failed', ${filename}, ${triggeredBy}, ${parsed.message}, 'oorwin_upload')
       RETURNING id
     `;
     return {
@@ -114,8 +121,8 @@ export async function invokeCandidateSync(
 
   const [historyRow] = await sql<{ id: number }[]>`
     INSERT INTO candidate_sync_history
-      (started_at, result, source_filename, triggered_by, rows_in_sheet)
-    VALUES (${startedAt}, 'success', ${filename}, ${triggeredBy}, ${parsed.rows.length})
+      (started_at, result, source_filename, triggered_by, rows_in_sheet, kind)
+    VALUES (${startedAt}, 'success', ${filename}, ${triggeredBy}, ${parsed.rows.length}, 'oorwin_upload')
     RETURNING id
   `;
   const syncId = Number(historyRow.id);

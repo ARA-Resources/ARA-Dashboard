@@ -9,7 +9,10 @@ import {
   Download,
   History,
   Loader2,
+  Pencil,
+  Plus,
   RefreshCw,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -59,6 +62,9 @@ import {
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { cn } from "@/lib/utils";
+import { CandidateRowFormModal } from "@/components/dashboard/accenture/candidate/candidate-row-form-modal";
+import { CandidateDeleteConfirmModal } from "@/components/dashboard/accenture/candidate/candidate-delete-confirm-modal";
+import type { CandidateMasterSheetPgRow } from "@/services/persistence/candidate-master-sheet-postgres";
 
 /**
  * "Highlights" isn't a real candidate_master column — it's a synthetic
@@ -208,11 +214,28 @@ export function CandidateMasterSheetPage() {
 
   const { isAtLeast } = useCurrentUser();
   const canUploadOorwin = isAtLeast("editor");
+  const canModifyCandidate = isAtLeast("viewer");
+  const canDeleteCandidate = isAtLeast("admin");
+  // The checkbox column only needs to exist if at least one of Modify/Delete is available to this user.
+  const selectionUiEnabled = canModifyCandidate || canDeleteCandidate;
   const oorwinSync = useCandidateOorwinSync();
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [uploadInputKey, setUploadInputKey] = React.useState(0);
   const [selectedOorwinFile, setSelectedOorwinFile] = React.useState<File | null>(null);
   const [oorwinFileError, setOorwinFileError] = React.useState<string | null>(null);
+
+  // Migration 021 — Add/Modify/Delete. One shared selection (radio-style:
+  // at most one row, driving both Modify and Delete) so there is never an
+  // ambiguity about which real database row a Modify/Delete acts on — CID
+  // alone can't be that key, since 205 CIDs are already duplicated.
+  const [selectedRow, setSelectedRow] = React.useState<CandidateMasterSheetPgRow | null>(null);
+  const [addModalOpen, setAddModalOpen] = React.useState(false);
+  const [modifyModalOpen, setModifyModalOpen] = React.useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = React.useState(false);
+  const [manualActionBanner, setManualActionBanner] = React.useState<{
+    tone: "success";
+    message: string;
+  } | null>(null);
 
   const debouncedTextFilters = useDebouncedValue(textFilters, 450);
   const debouncedDateFilters = useDebouncedValue(dateFilters, 450);
@@ -249,6 +272,21 @@ export function CandidateMasterSheetPage() {
   React.useEffect(() => {
     setPage(1);
   }, [
+    columnFilters,
+    debouncedTextFilters,
+    debouncedDateFilters,
+    highlightFilters,
+    syncFilter,
+    pageSize,
+  ]);
+
+  // Selection never survives a page/filter change — the selected row might
+  // not even be on screen any more, and Modify/Delete should only ever act
+  // on a row the user can currently see.
+  React.useEffect(() => {
+    setSelectedRow(null);
+  }, [
+    page,
     columnFilters,
     debouncedTextFilters,
     debouncedDateFilters,
@@ -460,6 +498,41 @@ export function CandidateMasterSheetPage() {
               onSelect={setSyncFilter}
               onClear={() => setSyncFilter(null)}
             />
+            {canModifyCandidate ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-xl gap-2"
+                onClick={() => setAddModalOpen(true)}
+              >
+                <Plus className="size-4" />
+                Add
+              </Button>
+            ) : null}
+            {canModifyCandidate ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-xl gap-2"
+                disabled={!selectedRow}
+                onClick={() => setModifyModalOpen(true)}
+              >
+                <Pencil className="size-4" />
+                Modify
+              </Button>
+            ) : null}
+            {canDeleteCandidate ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-xl gap-2"
+                disabled={!selectedRow}
+                onClick={() => setDeleteModalOpen(true)}
+              >
+                <Trash2 className="size-4" />
+                Delete
+              </Button>
+            ) : null}
             {canUploadOorwin ? (
               <DropdownMenu open={uploadOpen} onOpenChange={setUploadOpen}>
                 <DropdownMenuTrigger
@@ -539,6 +612,26 @@ export function CandidateMasterSheetPage() {
           </div>
         }
       />
+
+      {manualActionBanner ? (
+        <FadeIn>
+          <div
+            className="mb-3 flex items-start gap-2 rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm text-foreground"
+            role="status"
+          >
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+            <p className="min-w-0 flex-1">{manualActionBanner.message}</p>
+            <button
+              type="button"
+              onClick={() => setManualActionBanner(null)}
+              aria-label="Dismiss"
+              className="-mr-0.5 -mt-0.5 shrink-0 rounded-sm p-0.5 hover:bg-foreground/10"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        </FadeIn>
+      ) : null}
 
       {oorwinBannerTone ? (
         <FadeIn>
@@ -679,7 +772,7 @@ export function CandidateMasterSheetPage() {
             <div>
               <p className="text-sm font-semibold text-foreground">Master Sheet</p>
               <p className="text-xs text-muted-foreground">
-                14 columns stored in candidate_master. Click the filter icon in a
+                16 columns stored in candidate_master. Click the filter icon in a
                 column header to filter.
               </p>
             </div>
@@ -719,10 +812,50 @@ export function CandidateMasterSheetPage() {
               onTextChange={onTextChange}
               onDateChange={onDateChange}
               highlights={data?.highlights}
+              selectedRowId={selectionUiEnabled ? (selectedRow ? Number(selectedRow.id) : null) : undefined}
+              onSelectRow={selectionUiEnabled ? setSelectedRow : undefined}
             />
           </CardContent>
         </Card>
       </FadeIn>
+
+      <CandidateRowFormModal
+        open={addModalOpen}
+        mode="add"
+        row={null}
+        onOpenChange={setAddModalOpen}
+        onSaved={(summary) => {
+          setManualActionBanner({
+            tone: "success",
+            message: `Added ${summary.cid} — ${summary.name}.`,
+          });
+        }}
+      />
+      <CandidateRowFormModal
+        open={modifyModalOpen}
+        mode="modify"
+        row={selectedRow}
+        onOpenChange={setModifyModalOpen}
+        onSaved={(summary) => {
+          setManualActionBanner({
+            tone: "success",
+            message: `Updated ${summary.cid} — ${summary.name}.`,
+          });
+          setSelectedRow(null);
+        }}
+      />
+      <CandidateDeleteConfirmModal
+        open={deleteModalOpen}
+        row={selectedRow}
+        onOpenChange={setDeleteModalOpen}
+        onDeleted={(row) => {
+          setManualActionBanner({
+            tone: "success",
+            message: `Deleted ${row["Candidate ID"]} — ${row.Name}. Recoverable for 30 days.`,
+          });
+          setSelectedRow(null);
+        }}
+      />
     </PageTransition>
   );
 }

@@ -9,6 +9,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DEFAULT_CANDIDATE_MASTER_PAGE_SIZE,
   CANDIDATE_MASTER_PAGE_SIZE_OPTIONS,
@@ -58,6 +59,14 @@ interface CandidateMasterSheetTableProps {
   onDateChange?: (column: string, range: CandidateMasterDateFilter) => void;
   /** C9 highlighting: changed-cell / duplicate-row / conflict-flag state for the current page's rows. */
   highlights?: CandidateMasterSheetHighlights;
+  /**
+   * Migration 021 — Modify/Delete row selection. Radio-style: selecting a
+   * row replaces any prior selection, and the checkbox column is only
+   * rendered when both props are provided (so a caller that doesn't wire
+   * selection gets the exact same table it always did).
+   */
+  selectedRowId?: number | null;
+  onSelectRow?: (row: CandidateMasterSheetPgRow | null) => void;
 }
 
 function RoleNameCell({
@@ -143,7 +152,10 @@ export function CandidateMasterSheetTable({
   onTextChange,
   onDateChange,
   highlights,
+  selectedRowId,
+  onSelectRow,
 }: CandidateMasterSheetTableProps) {
+  const selectionEnabled = onSelectRow != null;
   const {
     bodyScrollRef,
     tableRef,
@@ -346,6 +358,9 @@ export function CandidateMasterSheetTable({
               <table ref={tableRef} className="w-full caption-bottom text-sm">
                 <TableHeader className="sticky top-0 z-10">
                   <TableRow className="bg-muted hover:bg-muted">
+                    {selectionEnabled ? (
+                      <TableHead className="h-11 w-10 whitespace-nowrap px-3 text-xs font-semibold tracking-wide text-primary uppercase" />
+                    ) : null}
                     <TableHead className="h-11 w-16 whitespace-nowrap px-3 text-xs font-semibold tracking-wide text-primary uppercase">
                       Sr. No.
                     </TableHead>
@@ -406,15 +421,29 @@ export function CandidateMasterSheetTable({
                         duplicateFlagReasons.length > 0
                           ? duplicateFlagReasons.map((r) => duplicateFlagMessages[r]).join(" ")
                           : undefined;
+                      const rowId = Number(row.id);
+                      const isSelected = selectionEnabled && selectedRowId === rowId;
                       return (
                         <TableRow
                           key={String(row.id)}
                           className={cn(
                             "hover:bg-accent/40",
-                            isDuplicateFlagged && "bg-rose-500/5 hover:bg-rose-500/10"
+                            isDuplicateFlagged && "bg-rose-500/5 hover:bg-rose-500/10",
+                            isSelected && "bg-primary/5 hover:bg-primary/10"
                           )}
                           title={duplicateFlagTitle}
                         >
+                          {selectionEnabled ? (
+                            <TableCell className="px-3 py-3">
+                              <Checkbox
+                                checked={isSelected}
+                                aria-label={`Select ${cid || "row"} for Modify/Delete`}
+                                onCheckedChange={() =>
+                                  onSelectRow?.(isSelected ? null : row)
+                                }
+                              />
+                            </TableCell>
+                          ) : null}
                           <TableCell className="px-3 py-3 text-sm tabular-nums text-muted-foreground">
                             {srNo}
                           </TableCell>
@@ -484,7 +513,7 @@ export function CandidateMasterSheetTable({
                   ) : (
                     <TableRow>
                       <TableCell
-                        colSpan={Math.max(headers.length + 1, 1)}
+                        colSpan={Math.max(headers.length + 1 + (selectionEnabled ? 1 : 0), 1)}
                         className="h-28 text-center text-muted-foreground"
                       >
                         No Master Sheet rows match the current filters.

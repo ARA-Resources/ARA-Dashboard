@@ -78,6 +78,23 @@ export async function registerNodeInstrumentation() {
   } catch (error) {
     console.error("[instrumentation] Executive scheduler failed to start", error);
   }
+
+  try {
+    const { getSchedulerOwner } = await import("@/lib/config/scheduler-owner");
+    if (getSchedulerOwner() === "worker") {
+      console.info(
+        "[instrumentation] Candidate purge scheduler not started (ARA_SCHEDULER_OWNER=worker; Worker process owns cron)."
+      );
+    } else {
+      const { startCandidatePurgeScheduler } = await import(
+        "@/services/candidate-processing/candidate-purge-scheduler"
+      );
+      await startCandidatePurgeScheduler();
+      console.info("[instrumentation] Candidate purge scheduler bootstrap complete.");
+    }
+  } catch (error) {
+    console.error("[instrumentation] Candidate purge scheduler failed to start", error);
+  }
 }
 
 function installShutdownHandlers() {
@@ -96,6 +113,12 @@ function installShutdownHandlers() {
       (mod) => {
         mod.stopExecutiveScheduler();
         console.info("[instrumentation] Executive scheduler stopped.");
+      }
+    );
+    void import("@/services/candidate-processing/candidate-purge-scheduler").then(
+      (mod) => {
+        mod.stopCandidatePurgeScheduler();
+        console.info("[instrumentation] Candidate purge scheduler stopped.");
       }
     );
   };

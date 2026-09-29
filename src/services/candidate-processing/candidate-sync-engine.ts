@@ -49,6 +49,19 @@
  *     updated normally — JR ID isn't part of the matching key, so unlike
  *     invalid_candidate_id this doesn't block the row (same flag-only
  *     philosophy as unclean_contact_number; migration 018).
+ *  8. A surviving CID that already matches MORE THAN ONE live
+ *     `candidate_master` row (migration 021 — up to then this threw and
+ *     failed the whole sync run partway through; 205 CIDs are already
+ *     duplicated in prod after the 2026-09-29 refresh) is narrowed by
+ *     `(cid, job_requisition_id)`: exactly one live row shares both → that's
+ *     the update target, matched and updated by its `id` (not `WHERE cid=`,
+ *     which would otherwise fan out to every row sharing the CID). Still
+ *     ambiguous after narrowing (0 or 2+ matches) → the row is quarantined,
+ *     same mechanism as duplicate_name_mismatch/invalid_candidate_id
+ *     (excluded from candidate_master entirely this run, reason
+ *     'duplicate_cid' — reusing the reason the Candidate Master refresh
+ *     script already writes for this exact "same CID, more than one row"
+ *     condition, migration 020). The rest of the sheet keeps processing.
  *
  * A row whose CID is blank is skipped entirely (can never be matched by
  * name, no old or new equivalent) — counted separately in the summary
@@ -79,7 +92,7 @@
  * full history preserved."
  */
 import {
-  getCandidateMasterByCid,
+  getCandidateMasterRowsByCid,
   type CandidateMasterRow,
   type SqlClient,
 } from "@/services/persistence/read-candidate-master";
@@ -108,7 +121,7 @@ const DIFFABLE_FIELDS = [
 
 type DiffableField = (typeof DIFFABLE_FIELDS)[number];
 
-export type CandidateSyncRowAction = "inserted" | "updated" | "unchanged";
+export type CandidateSyncRowAction = "inserted" | "updated" | "unchanged" | "quarantined";
 
 export interface CandidateSyncRowOutcome {
   cid: string;
@@ -127,7 +140,7 @@ export interface CandidateSyncSummary {
   outcomes: CandidateSyncRowOutcome[];
 }
 
-function coerceBlank(value: string): string {
+export function coerceBlank(value: string): string {
   const trimmed = value.trim();
   return trimmed === "" ? "-" : trimmed;
 }
@@ -138,9 +151,9 @@ function isBlankCid(cid: string): boolean {
 }
 
 /** Migration 018: a valid CID is "C" followed by one or more digits — nothing else. */
-const CID_FORMAT_REGEX = /^C[0-9]+$/;
+export const CID_FORMAT_REGEX = /^C[0-9]+$/;
 
-function isValidCidFormat(cid: string): boolean {
+export function isValidCidFormat(cid: string): boolean {
   return CID_FORMAT_REGEX.test(cid.trim());
 }
 
@@ -148,7 +161,7 @@ function normalizeNameForMatch(name: string): string {
   return name.trim().toLowerCase();
 }
 
-function todayAsDdMmYyyy(): string {
+export function todayAsDdMmYyyy(): string {
   const now = new Date();
   const d = String(now.getUTCDate()).padStart(2, "0");
   const m = String(now.getUTCMonth() + 1).padStart(2, "0");
@@ -242,7 +255,12 @@ async function buildDesiredFields(
       market: row.market,
       clientSpoc: row.clientSpoc,
     },
-    sqlClient
+    // resolveCandidateAutoFetchFields's own SqlClient (read-lateral-master.ts,
+    // out of scope for this feature to widen) is the plain, unwidened
+    // Sql<{}> — this engine never opens a transaction (each row commits
+    // independently, by design; see this file's top comment), so `sqlClient`
+    // here is always the real top-level client at runtime, never a `tx`.
+    sqlClient as Parameters<typeof resolveCandidateAutoFetchFields>[2]
   );
 
   const conflictFields = new Set<DiffableField>();
@@ -282,14 +300,22 @@ async function buildDesiredFields(
   return { values, conflictFields, reviewConflicts, uncleanContactNumberRaw, missingJobRequisitionId };
 }
 
-type CandidateReviewFlagReason =
+/**
+ * Mirrors the CHECK constraint on candidate_review_flags.reason (migration
+ * 020) minus 'legacy_contact_number_unclean'/'unclear_gender', which only
+ * the one-off refresh script writes. Exported: candidate-manual-edit.ts
+ * (Add/Modify) reuses this type and both write helpers below rather than
+ * re-implementing them.
+ */
+export type CandidateReviewFlagReason =
+  | "duplicate_cid"
   | "duplicate_name_mismatch"
   | "invalid_candidate_id"
   | "jr_id_conflict"
   | "missing_job_requisition_id"
   | "unclean_contact_number";
 
-async function writeReviewFlag(
+export async function writeReviewFlag(
   sqlClient: SqlClient,
   syncId: number,
   cid: string,
@@ -304,17 +330,25 @@ async function writeReviewFlag(
   `;
 }
 
-async function writeChange(
+/**
+ * `candidateMasterId` (migration 021) records the exact row a change
+ * belongs to, not just its CID — needed because CID alone is no longer
+ * unique (205 CIDs are duplicated in prod). Optional and defaulted to
+ * `null` so pre-migration-021 callers still compile; every call site in
+ * this file (and in candidate-manual-edit.ts) passes the row's real id.
+ */
+export async function writeChange(
   sqlClient: SqlClient,
   syncId: number,
   cid: string,
   field: string,
   oldValue: string | null,
-  newValue: string | null
+  newValue: string | null,
+  candidateMasterId: number | null = null
 ): Promise<void> {
   await sqlClient`
-    INSERT INTO candidate_sync_changes (sync_id, cid, field_name, old_value, new_value)
-    VALUES (${syncId}, ${cid}, ${field}, ${oldValue}, ${newValue})
+    INSERT INTO candidate_sync_changes (sync_id, cid, field_name, old_value, new_value, candidate_master_id)
+    VALUES (${syncId}, ${cid}, ${field}, ${oldValue}, ${newValue}, ${candidateMasterId})
   `;
 }
 
@@ -346,7 +380,35 @@ async function processSurvivorRow(
     reviewFlagsWritten += 1;
   }
 
-  const existing = await getCandidateMasterByCid(cid, sqlClient);
+  const liveRows = await getCandidateMasterRowsByCid(cid, sqlClient);
+  let existing: CandidateMasterRow | null =
+    liveRows.length === 1 ? liveRows[0] : null;
+
+  if (liveRows.length > 1) {
+    // Ambiguous CID (migration 021): narrow to the live row(s) that also
+    // share this sheet row's Job Requisition ID. desired.values.job_requisition_id
+    // is already coerceBlank()'d ("-" for blank), so an exact string compare
+    // is safe and matches how job_requisition_id is stored/compared elsewhere.
+    const jrMatches = liveRows.filter(
+      (r) => r.job_requisition_id === desired.values.job_requisition_id
+    );
+    if (jrMatches.length === 1) {
+      existing = jrMatches[0];
+    } else {
+      await writeReviewFlag(sqlClient, syncId, cid, "duplicate_cid", {
+        sheetRowNumber: row.sheetRowNumber,
+        reason: "cid matches multiple live candidate_master rows and job_requisition_id did not narrow to exactly one",
+        jobRequisitionId: desired.values.job_requisition_id,
+        liveRowIds: liveRows.map((r) => r.id),
+        jrMatchedRowIds: jrMatches.map((r) => r.id),
+      });
+      reviewFlagsWritten += 1;
+      return {
+        outcome: { cid, action: "quarantined", changedFields: [] },
+        reviewFlagsWritten,
+      };
+    }
+  }
 
   if (!existing) {
     const today = todayAsDdMmYyyy();
@@ -388,7 +450,7 @@ async function processSurvivorRow(
 
   for (const field of changedFields) {
     const oldValue = existing[field as keyof CandidateMasterRow] as string;
-    await writeChange(sqlClient, syncId, cid, field, oldValue, desired.values[field]);
+    await writeChange(sqlClient, syncId, cid, field, oldValue, desired.values[field], existing.id);
   }
 
   // Every column is set unconditionally rather than building a dynamic
@@ -412,7 +474,7 @@ async function processSurvivorRow(
       submission_comments = ${desired.conflictFields.has("submission_comments") ? existing.submission_comments : desired.values.submission_comments},
       email = ${desired.conflictFields.has("email") ? existing.email : desired.values.email},
       last_touched_at = NOW()
-    WHERE cid = ${cid}
+    WHERE id = ${existing.id}
   `;
 
   return {
@@ -456,6 +518,10 @@ export async function runCandidateSync(
   let insertedCount = 0;
   let updatedCount = 0;
   let unchangedCount = 0;
+  // Rows quarantined mid-processSurvivorRow (migration 021 — an ambiguous
+  // CID that job_requisition_id couldn't narrow to one live row), distinct
+  // from the pre-processing dedupe.quarantined/invalidCid groups below.
+  let ambiguousCidQuarantinedCount = 0;
 
   for (const survivor of dedupe.survivors) {
     const { outcome, reviewFlagsWritten } = await processSurvivorRow(sql, syncId, survivor.row);
@@ -463,11 +529,14 @@ export async function runCandidateSync(
     reviewFlagCount += reviewFlagsWritten;
     if (outcome.action === "inserted") insertedCount += 1;
     else if (outcome.action === "updated") updatedCount += 1;
-    else unchangedCount += 1;
+    else if (outcome.action === "unchanged") unchangedCount += 1;
+    else ambiguousCidQuarantinedCount += 1;
   }
 
   const quarantinedCount =
-    dedupe.quarantined.reduce((n, g) => n + g.members.length, 0) + dedupe.invalidCid.length;
+    dedupe.quarantined.reduce((n, g) => n + g.members.length, 0) +
+    dedupe.invalidCid.length +
+    ambiguousCidQuarantinedCount;
 
   return {
     rowsInSheet: parsedRows.length,

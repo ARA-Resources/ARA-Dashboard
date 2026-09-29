@@ -145,3 +145,38 @@ export function logExecutiveSchedulerPolicy(): void {
     `[config] Automatic Executive scheduler is not armed (${executiveDatasetSchedulerPolicyReason()}). Manual operator Run All is unchanged.`
   );
 }
+
+/**
+ * Automatic Candidate Master Sheet hard-delete purge scheduler (migration
+ * 021). Same "off unless explicitly enabled" policy as Executive's, for the
+ * same reason: a brand-new, unproven-in-production job, and this one is
+ * destructive (permanently removes rows past their 30-day soft-delete
+ * window) — the operator turns it on deliberately, after verifying a soft
+ * delete behaves as expected in production, not the moment this code ships.
+ *
+ * - ARA_CANDIDATE_PURGE_SCHEDULER=0/false/off → disabled
+ * - ARA_CANDIDATE_PURGE_SCHEDULER=1/true/on → enabled
+ * - absent (dev or production) → disabled
+ */
+export function isCandidatePurgeSchedulerAutoEnabled(): boolean {
+  return readFlag("ARA_CANDIDATE_PURGE_SCHEDULER") === "on";
+}
+
+export function candidatePurgeSchedulerPolicyReason(): string {
+  return describeFlag(
+    "ARA_CANDIDATE_PURGE_SCHEDULER",
+    "off (default — the hard-delete purge does not auto-arm until explicitly enabled)"
+  );
+}
+
+export function logCandidatePurgeSchedulerPolicy(): void {
+  if (isCandidatePurgeSchedulerAutoEnabled()) {
+    console.info(
+      `[config] Automatic Candidate purge scheduler allowed (${candidatePurgeSchedulerPolicyReason()}).`
+    );
+    return;
+  }
+  console.info(
+    `[config] Automatic Candidate purge scheduler is not armed (${candidatePurgeSchedulerPolicyReason()}). Soft-deleted rows stay hidden but are not hard-deleted until this is enabled.`
+  );
+}

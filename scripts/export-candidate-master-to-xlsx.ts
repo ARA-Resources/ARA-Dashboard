@@ -63,9 +63,11 @@ async function main() {
     const dbColumns = CANDIDATE_MASTER_COLUMN_MAP.map((m) => m.dbColumn);
     const selectList = dbColumns.join(", ");
 
-    console.log(`Reading candidate_master (ORDER BY id) ...`);
+    console.log(`Reading candidate_master (live rows, ORDER BY id) ...`);
+    // Migration 021: exclude soft-deleted rows, same as every other read
+    // path (read-candidate-master.ts).
     const rows = await sql.unsafe(
-      `SELECT ${selectList} FROM candidate_master ORDER BY id`
+      `SELECT ${selectList} FROM candidate_master WHERE deleted_at IS NULL ORDER BY id`
     );
     console.log(`Read ${rows.length} row(s) from candidate_master.`);
 

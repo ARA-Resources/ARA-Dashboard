@@ -121,9 +121,12 @@ async function main() {
     `;
 
     // -- Sync 1 history row --
+    // kind = 'oorwin_upload' (migration 021): matches what the real
+    // candidate-sync-job.ts orchestrator now stamps on every live Upload —
+    // this is what the "Recently changed" window anchors to.
     const [historyRow1] = await sql<{ id: number }[]>`
-      INSERT INTO candidate_sync_history (started_at, result, source_filename)
-      VALUES (NOW(), 'success', 'verify-candidate-highlights-sync-1')
+      INSERT INTO candidate_sync_history (started_at, result, source_filename, kind)
+      VALUES (NOW(), 'success', 'verify-candidate-highlights-sync-1', 'oorwin_upload')
       RETURNING id
     `;
     const syncId1 = historyRow1.id;
@@ -326,8 +329,8 @@ async function main() {
 
     // -- Sync 2: change a DIFFERENT field, re-fire the SAME JR conflict --
     const [historyRow2] = await sql<{ id: number }[]>`
-      INSERT INTO candidate_sync_history (started_at, result, source_filename)
-      VALUES (NOW(), 'success', 'verify-candidate-highlights-sync-2')
+      INSERT INTO candidate_sync_history (started_at, result, source_filename, kind)
+      VALUES (NOW(), 'success', 'verify-candidate-highlights-sync-2', 'oorwin_upload')
       RETURNING id
     `;
     const syncId2 = historyRow2.id;

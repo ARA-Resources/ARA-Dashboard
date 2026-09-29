@@ -53,6 +53,9 @@ Express layer (`backend/`, dormant / not deployed) mirrors all of the above.
 | `GET /api/home/widgets` | viewer |
 | `GET /api/excel/**` (all: business-unit data, filters, skills, master sheets, exports, p-dashboard) | viewer |
 | `GET /api/dataset/lateral/p-roles` | viewer (Demands → Lateral openings feed) |
+| `POST /api/excel/candidate-master-sheet/rows` (manual Add) | viewer — migration 021, deliberate: the one viewer write surface in the app |
+| `PATCH /api/excel/candidate-master-sheet/rows/{id}` (manual Modify) | viewer — migration 021 |
+| `DELETE /api/excel/candidate-master-sheet/rows/{id}` (soft delete) | admin — migration 021 |
 | `GET/POST /api/dataset/configuration` | editor |
 | `GET/DELETE /api/dataset/connections` | editor |
 | `GET /api/dataset/current` | editor |

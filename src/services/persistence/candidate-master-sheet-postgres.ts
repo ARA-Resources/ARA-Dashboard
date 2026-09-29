@@ -12,6 +12,8 @@ import {
   type CandidateMasterSheetDbColumn,
 } from "@/services/persistence/candidate-master-sheet-columns";
 import {
+  getCandidateCidsInsertedInWindow,
+  getCandidateRecentChangeWindowSyncIds,
   getLatestCandidateChangedFields,
   getLatestCandidateReviewFlags,
   type CandidateChangedFieldsByCid,
@@ -136,6 +138,32 @@ async function loadRows(
   return rows.map(toSheetRow);
 }
 
+/**
+ * Live CIDs (of LIVE, non-soft-deleted rows) currently appearing on more
+ * than one row — migration 021 (D2): the "Duplicate CID" highlight is
+ * derived from the table's actual current state, computed from the same
+ * `rows` array `loadRows` already returned, rather than from a stored
+ * `candidate_review_flags` reason. A stored flag is written once and never
+ * cleared, so it goes stale the moment a duplicate is resolved by a Delete,
+ * or a new one is created by an Add — a live computation can't go stale.
+ * (The Oorwin sync engine still writes a `duplicate_cid` review flag when it
+ * quarantines an ambiguous-CID row — that stays as an audit record, it's
+ * just no longer what drives this specific highlight.)
+ */
+function computeLiveDuplicateCids(rows: CandidateMasterSheetPgRow[]): Set<string> {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const cid = row["Candidate ID"];
+    if (!cid || cid === "-") continue;
+    counts.set(cid, (counts.get(cid) ?? 0) + 1);
+  }
+  const duplicates = new Set<string>();
+  for (const [cid, count] of counts) {
+    if (count > 1) duplicates.add(cid);
+  }
+  return duplicates;
+}
+
 /** Resolves a per-field review flag's field to a display header. See candidate-sync-engine.ts for exact `detail` shapes per reason. */
 function fieldFlagHeader(flag: CandidateReviewFlagRow): CandidateMasterExcelHeader | null {
   if (flag.reason === "unclean_contact_number" || flag.reason === "legacy_contact_number_unclean") {
@@ -164,7 +192,8 @@ function fieldFlagHeader(flag: CandidateReviewFlagRow): CandidateMasterExcelHead
 function buildHighlightState(
   cidsOnPage: string[],
   changedFields: CandidateChangedFieldsByCid,
-  reviewFlags: CandidateReviewFlagRow[]
+  reviewFlags: CandidateReviewFlagRow[],
+  liveDuplicateCids: Set<string>
 ): CandidateMasterSheetHighlights {
   const cidSet = new Set(cidsOnPage);
 
@@ -184,21 +213,31 @@ function buildHighlightState(
     if (headers.length > 0) changedCellsByCid[cid] = headers;
   }
 
+  // duplicate_cid is intentionally NOT read from reviewFlags here — see
+  // computeLiveDuplicateCids's doc comment (migration 021, D2).
   const duplicateFlagCids: Record<string, ("duplicate_name_mismatch" | "invalid_candidate_id" | "duplicate_cid")[]> = {};
   const fieldFlagsByCid: Record<string, CandidateFieldFlag[]> = {};
   for (const flag of reviewFlags) {
     if (!cidSet.has(flag.cid)) continue;
-    if (flag.reason === "duplicate_name_mismatch" || flag.reason === "invalid_candidate_id" || flag.reason === "duplicate_cid") {
+    if (flag.reason === "duplicate_name_mismatch" || flag.reason === "invalid_candidate_id") {
       const list = duplicateFlagCids[flag.cid] ?? [];
       if (!list.includes(flag.reason)) list.push(flag.reason);
       duplicateFlagCids[flag.cid] = list;
       continue;
     }
+    if (flag.reason === "duplicate_cid") continue; // audit-only now; the live highlight below is authoritative
     const header = fieldFlagHeader(flag);
     if (!header) continue;
     const list = fieldFlagsByCid[flag.cid] ?? [];
     list.push({ header, reason: flag.reason, detail: flag.detail });
     fieldFlagsByCid[flag.cid] = list;
+  }
+
+  for (const cid of cidsOnPage) {
+    if (!liveDuplicateCids.has(cid)) continue;
+    const list = duplicateFlagCids[cid] ?? [];
+    if (!list.includes("duplicate_cid")) list.push("duplicate_cid");
+    duplicateFlagCids[cid] = list;
   }
 
   return {
@@ -348,8 +387,11 @@ export function applyCandidateMasterSheetFilters(
     "columnFilters" | "textFilters" | "dateFilters" | "highlightFilters" | "syncFilter"
   >,
   highlightData?: {
+    /** Already enriched with inserted-in-window CIDs by the caller — see queryCandidateMasterSheetPage. */
     changedFields: CandidateChangedFieldsByCid;
     reviewFlags: CandidateReviewFlagRow[];
+    /** Live CIDs currently duplicated (migration 021, D2) — see computeLiveDuplicateCids. */
+    liveDuplicateCids: Set<string>;
   },
   /** CIDs updated/flagged by `query.syncFilter` (see getCandidateCidsTouchedBySync) — inserts are checked directly via each row's own `insertedSyncId` instead. */
   syncFilterCids?: Set<string> | null
@@ -379,7 +421,18 @@ export function applyCandidateMasterSheetFilters(
     if (highlightFilters.includes("changed")) {
       for (const cid of highlightData.changedFields.keys()) highlightMatchCids.add(cid);
     }
-    const reasonFilters = new Set(highlightFilters.filter((value) => value !== "changed"));
+    if (highlightFilters.includes("duplicate_cid")) {
+      for (const cid of highlightData.liveDuplicateCids) highlightMatchCids.add(cid);
+    }
+    // Explicit generic: TS's inferred-predicate narrowing on the .filter()
+    // below would otherwise narrow this Set's element type to exclude
+    // "duplicate_cid" (since it's filtered out) — fine at runtime (a flag
+    // with that reason just never matches, exactly as intended, handled
+    // separately above), but it makes `.has(flag.reason)` below reject the
+    // full CandidateReviewFlagReason union as a type error.
+    const reasonFilters = new Set<CandidateHighlightFilterValue>(
+      highlightFilters.filter((value) => value !== "changed" && value !== "duplicate_cid")
+    );
     if (reasonFilters.size > 0) {
       for (const flag of highlightData.reviewFlags) {
         if (reasonFilters.has(flag.reason)) highlightMatchCids.add(flag.cid);
@@ -441,6 +494,39 @@ function paginate<T>(rows: T[], page: number, pageSize: number) {
   };
 }
 
+/**
+ * Fetches and assembles everything `queryCandidateMasterSheetPage` and
+ * `exportCandidateMasterSheetRows` both need from the highlight tables, in
+ * one place so the two stay in sync. `changedFields` comes back already
+ * enriched with any CID inserted within the "Recently changed" window that
+ * has no candidate_sync_changes rows of its own (an Oorwin insert — see
+ * getCandidateCidsInsertedInWindow's doc comment) by marking every
+ * displayed column "changed" for that CID, so a brand-new row shows fully
+ * highlighted rather than not at all.
+ */
+async function loadCandidateHighlightData(
+  rows: CandidateMasterSheetPgRow[],
+  sqlClient?: SqlClient
+): Promise<{
+  changedFields: CandidateChangedFieldsByCid;
+  reviewFlags: CandidateReviewFlagRow[];
+  liveDuplicateCids: Set<string>;
+}> {
+  const windowSyncIds = await getCandidateRecentChangeWindowSyncIds(sqlClient);
+  const [changedFields, insertedCids, reviewFlags] = await Promise.all([
+    getLatestCandidateChangedFields(windowSyncIds, sqlClient),
+    getCandidateCidsInsertedInWindow(windowSyncIds, sqlClient),
+    getLatestCandidateReviewFlags(sqlClient),
+  ]);
+  for (const cid of insertedCids) {
+    if (!changedFields.has(cid)) {
+      changedFields.set(cid, new Set(CANDIDATE_MASTER_COLUMN_MAP.map((m) => m.dbColumn)));
+    }
+  }
+  const liveDuplicateCids = computeLiveDuplicateCids(rows);
+  return { changedFields, reviewFlags, liveDuplicateCids };
+}
+
 export async function getCandidateMasterSheetSchema(
   sqlClient?: SqlClient
 ): Promise<CandidateMasterSheetSchema> {
@@ -459,14 +545,12 @@ export async function queryCandidateMasterSheetPage(
   sqlClient?: SqlClient
 ): Promise<CandidateMasterSheetPageResult> {
   const rows = await loadRows(sqlClient);
-  // Fetched once, full-table (both queries are already unfiltered — see
-  // read-candidate-highlights.ts), and shared between the highlight-filter
+  // Fetched once, full-table, and shared between the highlight-filter
   // predicate (needs full-table coverage, pre-pagination) and the page's
   // display highlight state (page-scoped, post-pagination) below — avoids
-  // querying candidate_sync_changes/candidate_review_flags twice per request.
-  const [changedFields, reviewFlags, syncFilterCids] = await Promise.all([
-    getLatestCandidateChangedFields(sqlClient),
-    getLatestCandidateReviewFlags(sqlClient),
+  // querying the highlight tables twice per request.
+  const [{ changedFields, reviewFlags, liveDuplicateCids }, syncFilterCids] = await Promise.all([
+    loadCandidateHighlightData(rows, sqlClient),
     query.syncFilter != null
       ? getCandidateCidsTouchedBySync(query.syncFilter, sqlClient)
       : Promise.resolve(null),
@@ -474,14 +558,15 @@ export async function queryCandidateMasterSheetPage(
   const filtered = applyCandidateMasterSheetFilters(
     rows,
     query,
-    { changedFields, reviewFlags },
+    { changedFields, reviewFlags, liveDuplicateCids },
     syncFilterCids
   );
   const page = paginate(filtered, query.page, query.pageSize);
   const highlights = buildHighlightState(
     page.rows.map((row) => row["Candidate ID"]),
     changedFields,
-    reviewFlags
+    reviewFlags,
+    liveDuplicateCids
   );
 
   return {
@@ -516,9 +601,8 @@ export async function exportCandidateMasterSheetRows(
   sheetName: string;
 }> {
   const rows = await loadRows(sqlClient);
-  const [changedFields, reviewFlags, syncFilterCids] = await Promise.all([
-    getLatestCandidateChangedFields(sqlClient),
-    getLatestCandidateReviewFlags(sqlClient),
+  const [{ changedFields, reviewFlags, liveDuplicateCids }, syncFilterCids] = await Promise.all([
+    loadCandidateHighlightData(rows, sqlClient),
     query.syncFilter != null
       ? getCandidateCidsTouchedBySync(query.syncFilter, sqlClient)
       : Promise.resolve(null),
@@ -526,7 +610,7 @@ export async function exportCandidateMasterSheetRows(
   const filtered = applyCandidateMasterSheetFilters(
     rows,
     query,
-    { changedFields, reviewFlags },
+    { changedFields, reviewFlags, liveDuplicateCids },
     syncFilterCids
   );
 

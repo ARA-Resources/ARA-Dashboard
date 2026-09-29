@@ -64,6 +64,19 @@ export async function suite(db: Db): Promise<Suite> {
     ["/api/dataset/gmail/messages", "GET", "editor"],
     ["/api/dataset/lateral/scheduler", "GET", "editor"],
     ["/api/cron/lateral", "POST", "editor"],
+    // Candidate Master Sheet manual Add/Modify/Delete (migration 021) —
+    // deliberate: the only viewer write surface in the app. See access.ts's
+    // CANDIDATE_ROWS_PATH / CANDIDATE_ROW_ID_PATH comment.
+    ["/api/excel/candidate-master-sheet/rows", "GET", "viewer"],
+    ["/api/excel/candidate-master-sheet/rows", "POST", "viewer"],
+    ["/api/excel/candidate-master-sheet/rows/123", "PATCH", "viewer"],
+    ["/api/excel/candidate-master-sheet/rows/123", "DELETE", "admin"],
+    ["/api/excel/candidate-master-sheet/jr-lookup", "GET", "viewer"],
+    // Nothing else under /api/excel/* gains write access — a non-numeric id
+    // and any other verb both fall through to the generic API write rule.
+    ["/api/excel/candidate-master-sheet/rows/abc", "PATCH", "editor"],
+    ["/api/excel/candidate-master-sheet", "POST", "editor"],
+    ["/api/excel/candidate-master-sheet/rows/123", "PUT", "editor"],
     // super_admin
     ["/api/admin/users", "GET", "super_admin"],
     ["/api/admin/users/abc-123/role", "PATCH", "super_admin"],
@@ -127,6 +140,24 @@ export async function suite(db: Db): Promise<Suite> {
       pathname: "/api/admin/users",
       method: "GET",
       allowed: ["super_admin"],
+    },
+    {
+      label: "Candidate manual Add (POST /api/excel/candidate-master-sheet/rows)",
+      pathname: "/api/excel/candidate-master-sheet/rows",
+      method: "POST",
+      allowed: ROLES, // viewer and above — the deliberate exception
+    },
+    {
+      label: "Candidate manual Modify (PATCH .../rows/123)",
+      pathname: "/api/excel/candidate-master-sheet/rows/123",
+      method: "PATCH",
+      allowed: ROLES, // viewer and above
+    },
+    {
+      label: "Candidate manual Delete (DELETE .../rows/123)",
+      pathname: "/api/excel/candidate-master-sheet/rows/123",
+      method: "DELETE",
+      allowed: ["admin", "super_admin"],
     },
   ];
 

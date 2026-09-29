@@ -68,12 +68,22 @@ const LATERAL_JOB_LOCK_KEY = 7482910234; // stable, arbitrary prime-like number
  */
 const EXECUTIVE_JOB_LOCK_KEY = 7482910249; // stable, arbitrary — distinct from Lateral's
 
+/**
+ * Stable advisory lock key for the Candidate Master Sheet hard-delete purge
+ * job (migration 021). Its own distinct constant, same reasoning as
+ * Executive's — a stuck/slow purge run can never block or be blocked by
+ * Lateral or Executive.
+ */
+const CANDIDATE_PURGE_JOB_LOCK_KEY = 7482910263; // stable, arbitrary — distinct from the above
+
 type SqlClient = ReturnType<typeof postgres>;
 
 const LATERAL_BUSY_MESSAGE =
   "Lateral job is already running on another instance. This request has been safely rejected.";
 const EXECUTIVE_BUSY_MESSAGE =
   "Executive job is already running on another instance. This request has been safely rejected.";
+const CANDIDATE_PURGE_BUSY_MESSAGE =
+  "Candidate purge job is already running on another instance. This request has been safely rejected.";
 
 /**
  * Acquire a session advisory lock on ONE reserved connection and keep it
@@ -246,5 +256,27 @@ export async function acquireExecutiveJobLock(): Promise<JobLockResult> {
     EXECUTIVE_JOB_LOCK_KEY,
     EXECUTIVE_BUSY_MESSAGE,
     "Executive job lock acquired"
+  );
+}
+
+/**
+ * Acquire the Candidate Master Sheet hard-delete purge job's advisory lock
+ * (migration 021). Mirrors `acquireExecutiveJobLock` exactly.
+ */
+export async function acquireCandidatePurgeJobLock(): Promise<JobLockResult> {
+  if (!isPostgresMode()) {
+    return {
+      acquired: true,
+      message: "file-mode: no distributed lock required",
+      release: async () => {
+        /* no-op */
+      },
+    };
+  }
+
+  return acquireReservedAdvisoryLock(
+    CANDIDATE_PURGE_JOB_LOCK_KEY,
+    CANDIDATE_PURGE_BUSY_MESSAGE,
+    "Candidate purge job lock acquired"
   );
 }

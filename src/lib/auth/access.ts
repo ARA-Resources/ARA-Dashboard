@@ -23,6 +23,17 @@ const OPERATOR_LEGACY_GET_PATHS = new Set<string>([
 /** User-management endpoints. Built in Phase 3 — pre-authorized here. */
 const SUPER_ADMIN_API_PREFIXES = ["/api/admin/users", "/api/admin/invites"];
 
+/**
+ * Candidate Master Sheet manual row edits (migration 021). Add = POST the
+ * collection; Modify/Delete = PATCH/DELETE one row by its
+ * candidate_master.id. Exact path + verb only — nothing else under
+ * /api/excel/* gains write access, and Upload (a different endpoint,
+ * /api/dataset/candidate/oorwin-sync) is untouched, still editor via the
+ * existing /api/dataset/* rule below.
+ */
+const CANDIDATE_ROWS_PATH = "/api/excel/candidate-master-sheet/rows";
+const CANDIDATE_ROW_ID_PATH = /^\/api\/excel\/candidate-master-sheet\/rows\/\d+$/;
+
 function normalizePath(pathname: string): string {
   if (!pathname) return "/";
   if (pathname.length > 1 && pathname.endsWith("/")) {
@@ -69,11 +80,19 @@ export function requiredAccess(pathname: string, method: string): AccessLevel {
   if (path.startsWith("/api/excel/") && isRead) return "viewer";
   // P-Roles openings feed powers the Demands → Lateral dashboard (read-only).
   if (path === "/api/dataset/lateral/p-roles" && isRead) return "viewer";
+  // Candidate Master Sheet manual Add/Modify (migration 021) — deliberate:
+  // the only viewer write surface in the app. Delete is admin, below.
+  if (path === CANDIDATE_ROWS_PATH && verb === "POST") return "viewer";
+  if (CANDIDATE_ROW_ID_PATH.test(path) && verb === "PATCH") return "viewer";
 
   /* ---------------- super_admin (Phase 3 user management) ---------------- */
   if (SUPER_ADMIN_API_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`))) {
     return "super_admin";
   }
+
+  /* ---------------- admin ---------------- */
+  // Candidate Master Sheet soft delete (migration 021).
+  if (CANDIDATE_ROW_ID_PATH.test(path) && verb === "DELETE") return "admin";
 
   /* ---------------- editor (all remaining Dataset surface) ---------------- */
   if (OPERATOR_LEGACY_GET_PATHS.has(path)) return "editor";

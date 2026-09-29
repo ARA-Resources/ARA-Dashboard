@@ -12,11 +12,33 @@
  * directly by standalone tsx scripts (verify-lateral-master-read-layer.ts
  * etc.) and by the Oorwin sync engine, neither of which run inside Next's
  * bundler where "server-only" resolves.
+ *
+ * Migration 021 (Candidate Master manual Add/Modify/Delete): every function
+ * here is soft-delete aware — `deleted_at IS NULL` on every SELECT — so a
+ * soft-deleted row is invisible to the on-screen table, the Oorwin sync
+ * engine's CID matching, and every other consumer of this module without
+ * each of them having to remember to filter it out themselves.
  */
 import { getDbClient } from "@/lib/persistence/db-client";
 import type postgres from "postgres";
 
-export type SqlClient = ReturnType<typeof postgres>;
+/**
+ * Migration 021: widened from the plain `ReturnType<typeof postgres>` every
+ * other read-*.ts module in this codebase uses, specifically so this
+ * module's query functions can be called with EITHER the top-level client
+ * OR a `tx` handle from inside `sql.begin(async (tx) => ...)` (postgres.js
+ * types these as two structurally different interfaces —
+ * `postgres.TransactionSql` is missing the top-level-only members like
+ * `.begin`/`.end`, so it doesn't satisfy `postgres.Sql` on its own).
+ * candidate-manual-edit.ts's Add/Modify both run inside one transaction and
+ * need to read the row they're editing mid-transaction.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- matches postgres.js's own default generic `{}`, kept identical to ReturnType<typeof postgres> so getDbClient() unifies without a cast.
+export type SqlClient = postgres.Sql<{}> | postgres.TransactionSql<{}>;
+
+// The SELECT column list is spelled out per-query below (not shared via
+// sql.unsafe) to match the rest of this file's existing convention — every
+// query in this module already repeats its own literal column list.
 
 export interface CandidateMasterRow {
   id: number;
@@ -38,6 +60,8 @@ export interface CandidateMasterRow {
   client_spoc: string;
   last_touched_at: string | null;
   inserted_sync_id: number | null;
+  deleted_at: string | null;
+  deleted_by: string | null;
 }
 
 function mapRow(row: Record<string, unknown>): CandidateMasterRow {
@@ -62,28 +86,38 @@ function mapRow(row: Record<string, unknown>): CandidateMasterRow {
     last_touched_at:
       row.last_touched_at == null ? null : new Date(row.last_touched_at as string).toISOString(),
     inserted_sync_id: row.inserted_sync_id == null ? null : Number(row.inserted_sync_id),
+    deleted_at:
+      row.deleted_at == null ? null : new Date(row.deleted_at as string).toISOString(),
+    deleted_by: row.deleted_by == null ? null : String(row.deleted_by),
   };
 }
 
-/** Total rows in `candidate_master`. */
+/** Total LIVE (non-soft-deleted) rows in `candidate_master`. */
 export async function countCandidateMasterRows(
   sqlClient?: SqlClient
 ): Promise<number> {
   const sql = sqlClient ?? getDbClient();
   const rows = await sql<{ c: string }[]>`
-    SELECT COUNT(*)::text AS c FROM candidate_master
+    SELECT COUNT(*)::text AS c FROM candidate_master WHERE deleted_at IS NULL
   `;
   return Number(rows[0]?.c ?? 0);
 }
 
 /**
- * All `candidate_master` rows, most recently synced/updated first — C11 of
- * the Oorwin sync plan: `last_touched_at DESC NULLS LAST` (set only by a
- * live sync's insert/update, per migration 015) surfaces just-synced
- * candidates at the top without a manual sort change; rows never touched by
- * a live sync (every pre-Oorwin legacy row, and any untouched real row)
- * keep their original import order via the `id ASC` tiebreaker. Display
- * order only — no physical reordering, same pattern used elsewhere.
+ * All LIVE `candidate_master` rows, most recently synced/updated first — C11
+ * of the Oorwin sync plan: `last_touched_at DESC NULLS LAST` (set by a live
+ * sync's insert/update per migration 015, and by a manual Add/Modify per
+ * migration 021) surfaces just-touched candidates at the top without a
+ * manual sort change; rows never touched keep their original import order
+ * via the `id ASC` tiebreaker. Display order only — no physical reordering,
+ * same pattern used elsewhere.
+ *
+ * This is the single read every screen path goes through (the table, total/
+ * pagination counts, filter-dropdown values, Highlights filter, Filter by
+ * Sync, and the filtered export all call `loadRows` in
+ * candidate-master-sheet-postgres.ts, which calls this) — so the
+ * `deleted_at IS NULL` filter here alone keeps a soft-deleted row out of
+ * every one of them.
  */
 export async function listCandidateMasterRows(
   sqlClient?: SqlClient
@@ -109,26 +143,26 @@ export async function listCandidateMasterRows(
       email,
       client_spoc,
       last_touched_at,
-      inserted_sync_id
+      inserted_sync_id,
+      deleted_at,
+      deleted_by
     FROM candidate_master
+    WHERE deleted_at IS NULL
     ORDER BY last_touched_at DESC NULLS LAST, id ASC
   `;
   return dataRows.map(mapRow);
 }
 
 /**
- * Single-row lookup by Candidate ID (case-sensitive exact match — CID
- * values are opaque IDs, not free text). Returns null if not found, or if
- * more than one row matches (should be impossible after the one-time
- * legacy migration's dedupe pass collapsed same-name duplicates and
- * quarantined mismatched ones — a defensive check, not an expected path).
+ * Single-row lookup by the real database id (migration 021 — used by
+ * Modify/Delete, which select a row by checkbox, not by CID, precisely
+ * because CID is not unique). LIVE rows only — a soft-deleted row looks the
+ * same as a nonexistent one to every caller.
  */
-export async function getCandidateMasterByCid(
-  cid: string,
+export async function getCandidateMasterById(
+  id: number,
   sqlClient?: SqlClient
 ): Promise<CandidateMasterRow | null> {
-  const trimmed = String(cid ?? "").trim();
-  if (!trimmed || trimmed === "-") return null;
   const sql = sqlClient ?? getDbClient();
   const dataRows = await sql<Record<string, unknown>[]>`
     SELECT
@@ -150,14 +184,75 @@ export async function getCandidateMasterByCid(
       email,
       client_spoc,
       last_touched_at,
-      inserted_sync_id
+      inserted_sync_id,
+      deleted_at,
+      deleted_by
     FROM candidate_master
-    WHERE cid = ${trimmed}
+    WHERE id = ${id} AND deleted_at IS NULL
   `;
-  if (dataRows.length > 1) {
-    throw new Error(
-      `[read-candidate-master] Multiple rows found for cid="${trimmed}" (expected at most one after legacy dedupe).`
-    );
-  }
   return dataRows[0] ? mapRow(dataRows[0]) : null;
+}
+
+/**
+ * Every LIVE row sharing one Candidate ID, oldest first. Migration 021: with
+ * 205 CIDs already duplicated in prod, "at most one row per CID" is no
+ * longer a safe assumption anywhere — this is the plural, non-throwing
+ * replacement callers (the Oorwin sync engine, the manual Add duplicate
+ * check) should use instead of assuming/asserting uniqueness.
+ */
+export async function getCandidateMasterRowsByCid(
+  cid: string,
+  sqlClient?: SqlClient
+): Promise<CandidateMasterRow[]> {
+  const trimmed = String(cid ?? "").trim();
+  if (!trimmed || trimmed === "-") return [];
+  const sql = sqlClient ?? getDbClient();
+  const dataRows = await sql<Record<string, unknown>[]>`
+    SELECT
+      id,
+      cid,
+      name,
+      gender,
+      contact_number,
+      date_of_upload,
+      submitter,
+      customer,
+      job_requisition_id,
+      primary_skills,
+      job_management_level,
+      market,
+      submitted_date,
+      status,
+      submission_comments,
+      email,
+      client_spoc,
+      last_touched_at,
+      inserted_sync_id,
+      deleted_at,
+      deleted_by
+    FROM candidate_master
+    WHERE cid = ${trimmed} AND deleted_at IS NULL
+    ORDER BY id ASC
+  `;
+  return dataRows.map(mapRow);
+}
+
+/**
+ * Single-row lookup by Candidate ID (case-sensitive exact match — CID
+ * values are opaque IDs, not free text). LIVE rows only.
+ *
+ * Returns `null` both when no live row matches AND when more than one live
+ * row matches (ambiguous) — migration 021 intentionally replaced the old
+ * "throw on 2+ matches" behavior (which took down an entire Oorwin sync run
+ * partway through, see candidate-sync-engine.ts) with a non-throwing
+ * signal; a caller that needs to actually resolve the ambiguous case (the
+ * sync engine's CID+JR-ID narrowing) uses `getCandidateMasterRowsByCid`
+ * instead of this function.
+ */
+export async function getCandidateMasterByCid(
+  cid: string,
+  sqlClient?: SqlClient
+): Promise<CandidateMasterRow | null> {
+  const rows = await getCandidateMasterRowsByCid(cid, sqlClient);
+  return rows.length === 1 ? rows[0] : null;
 }
