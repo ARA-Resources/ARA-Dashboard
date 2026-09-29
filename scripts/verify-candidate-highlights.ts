@@ -270,7 +270,7 @@ async function main() {
     check(
       results,
       "Sync 1: C90000104 is in duplicateFlagCids with reason=duplicate_name_mismatch (row-level highlight)",
-      h1.duplicateFlagCids["C90000104"] === "duplicate_name_mismatch"
+      (h1.duplicateFlagCids["C90000104"] ?? []).includes("duplicate_name_mismatch")
     );
     check(
       results,
@@ -306,7 +306,7 @@ async function main() {
     check(
       results,
       "Sync 1: retroactively-flagged pre-existing row (9000000097) shows in duplicateFlagCids with reason=invalid_candidate_id",
-      h1.duplicateFlagCids["9000000097"] === "invalid_candidate_id"
+      (h1.duplicateFlagCids["9000000097"] ?? []).includes("invalid_candidate_id")
     );
 
     // -- Missing Job Requisition ID: still inserted, with a field flag on 'Job Requisition ID' --

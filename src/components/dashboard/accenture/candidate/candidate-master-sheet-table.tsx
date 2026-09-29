@@ -390,10 +390,22 @@ export function CandidateMasterSheetTable({
                     rows.map((row, rowIndex) => {
                       const srNo = (page - 1) * pageSize + rowIndex + 1;
                       const cid = row["Candidate ID"];
-                      const duplicateFlagReason = cid ? duplicateFlagReasonByCid.get(cid) : undefined;
-                      const isDuplicateFlagged = Boolean(duplicateFlagReason);
+                      const duplicateFlagReasons = cid ? (duplicateFlagReasonByCid.get(cid) ?? []) : [];
+                      const isDuplicateFlagged = duplicateFlagReasons.length > 0;
                       const changedHeaders = cid ? highlights?.changedCellsByCid[cid] : undefined;
                       const fieldFlags = cid ? highlights?.fieldFlagsByCid[cid] : undefined;
+                      const duplicateFlagMessages: Record<string, string> = {
+                        invalid_candidate_id:
+                          "This Candidate ID doesn't match the expected format (\"C\" + digits) — needs manual review.",
+                        duplicate_name_mismatch:
+                          "This Candidate ID appeared more than once in the most recent sync with mismatched names — needs manual review.",
+                        duplicate_cid:
+                          "This Candidate ID appears on more than one row — needs manual review.",
+                      };
+                      const duplicateFlagTitle =
+                        duplicateFlagReasons.length > 0
+                          ? duplicateFlagReasons.map((r) => duplicateFlagMessages[r]).join(" ")
+                          : undefined;
                       return (
                         <TableRow
                           key={String(row.id)}
@@ -401,13 +413,7 @@ export function CandidateMasterSheetTable({
                             "hover:bg-accent/40",
                             isDuplicateFlagged && "bg-rose-500/5 hover:bg-rose-500/10"
                           )}
-                          title={
-                            duplicateFlagReason === "invalid_candidate_id"
-                              ? "This Candidate ID doesn't match the expected format (\"C\" + digits) — needs manual review."
-                              : duplicateFlagReason === "duplicate_name_mismatch"
-                                ? "This Candidate ID appeared more than once in the most recent sync with mismatched names — needs manual review."
-                                : undefined
-                          }
+                          title={duplicateFlagTitle}
                         >
                           <TableCell className="px-3 py-3 text-sm tabular-nums text-muted-foreground">
                             {srNo}

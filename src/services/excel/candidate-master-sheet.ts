@@ -38,11 +38,13 @@ export interface CandidateMasterDateFilter {
 export const CANDIDATE_HIGHLIGHT_FILTER_OPTIONS = [
   { value: "changed", label: "Recently changed" },
   { value: "duplicate_name_mismatch", label: "Duplicate name" },
+  { value: "duplicate_cid", label: "Duplicate CID" },
   { value: "invalid_candidate_id", label: "Invalid CID" },
   { value: "missing_job_requisition_id", label: "Missing JR ID" },
   { value: "jr_id_conflict", label: "JR conflict" },
   { value: "unclean_contact_number", label: "Unclean contact number" },
   { value: "legacy_contact_number_unclean", label: "Unclean contact number (legacy)" },
+  { value: "unclear_gender", label: "Unclear gender" },
 ] as const;
 
 export type CandidateHighlightFilterValue =

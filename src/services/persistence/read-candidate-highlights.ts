@@ -31,14 +31,16 @@ import {
 
 export type SqlClient = ReturnType<typeof postgres>;
 
-/** Mirrors the CHECK constraint on candidate_review_flags.reason (migration 018). */
+/** Mirrors the CHECK constraint on candidate_review_flags.reason (migration 020). */
 export type CandidateReviewFlagReason =
+  | "duplicate_cid"
   | "duplicate_name_mismatch"
   | "invalid_candidate_id"
   | "jr_id_conflict"
   | "legacy_contact_number_unclean"
   | "missing_job_requisition_id"
-  | "unclean_contact_number";
+  | "unclean_contact_number"
+  | "unclear_gender";
 
 /** CID -> set of DB column names changed in the most recent sync that touched that CID. */
 export type CandidateChangedFieldsByCid = Map<string, Set<string>>;

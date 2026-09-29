@@ -98,8 +98,8 @@ export interface CandidateFieldFlag {
 export interface CandidateMasterSheetHighlights {
   /** CID -> display headers changed in the most recent sync that touched that CID. */
   changedCellsByCid: Record<string, CandidateMasterExcelHeader[]>;
-  /** CID -> open row-level flag reason (duplicate_name_mismatch / invalid_candidate_id). */
-  duplicateFlagCids: Record<string, "duplicate_name_mismatch" | "invalid_candidate_id">;
+  /** CID -> every open row-level flag reason (duplicate_name_mismatch / invalid_candidate_id / duplicate_cid) — an array, not a single value, since one CID can carry more than one of these simultaneously (e.g. a duplicate_cid group whose names also mismatch). */
+  duplicateFlagCids: Record<string, ("duplicate_name_mismatch" | "invalid_candidate_id" | "duplicate_cid")[]>;
   /** CID -> open per-field flags (jr_id_conflict / unclean_contact_number / legacy_contact_number_unclean / missing_job_requisition_id). */
   fieldFlagsByCid: Record<string, CandidateFieldFlag[]>;
 }
@@ -141,6 +141,9 @@ function fieldFlagHeader(flag: CandidateReviewFlagRow): CandidateMasterExcelHead
   if (flag.reason === "unclean_contact_number" || flag.reason === "legacy_contact_number_unclean") {
     return "Contact Number";
   }
+  if (flag.reason === "unclear_gender") {
+    return "Gender";
+  }
   if (flag.reason === "missing_job_requisition_id") {
     return excelHeaderForCandidateDbColumn("job_requisition_id");
   }
@@ -153,7 +156,7 @@ function fieldFlagHeader(flag: CandidateReviewFlagRow): CandidateMasterExcelHead
       return null;
     }
   }
-  // duplicate_name_mismatch / invalid_candidate_id are row-level flags, not per-field ones.
+  // duplicate_name_mismatch / invalid_candidate_id / duplicate_cid are row-level flags, not per-field ones.
   return null;
 }
 
@@ -181,12 +184,14 @@ function buildHighlightState(
     if (headers.length > 0) changedCellsByCid[cid] = headers;
   }
 
-  const duplicateFlagCids: Record<string, "duplicate_name_mismatch" | "invalid_candidate_id"> = {};
+  const duplicateFlagCids: Record<string, ("duplicate_name_mismatch" | "invalid_candidate_id" | "duplicate_cid")[]> = {};
   const fieldFlagsByCid: Record<string, CandidateFieldFlag[]> = {};
   for (const flag of reviewFlags) {
     if (!cidSet.has(flag.cid)) continue;
-    if (flag.reason === "duplicate_name_mismatch" || flag.reason === "invalid_candidate_id") {
-      duplicateFlagCids[flag.cid] = flag.reason;
+    if (flag.reason === "duplicate_name_mismatch" || flag.reason === "invalid_candidate_id" || flag.reason === "duplicate_cid") {
+      const list = duplicateFlagCids[flag.cid] ?? [];
+      if (!list.includes(flag.reason)) list.push(flag.reason);
+      duplicateFlagCids[flag.cid] = list;
       continue;
     }
     const header = fieldFlagHeader(flag);
