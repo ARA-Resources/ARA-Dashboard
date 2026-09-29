@@ -24,6 +24,7 @@ import {
   getCandidateMasterById,
   getCandidateMasterRowsByCid,
   listCandidateMasterRows,
+  type CandidateMasterRow,
 } from "../src/services/persistence/read-candidate-master";
 import {
   getCandidateRecentChangeWindowSyncIds,
@@ -72,6 +73,38 @@ function sheetRow(partial: Partial<CandidateOorwinParsedRow> & { cid: string }):
   };
 }
 
+/**
+ * Mirrors candidate-row-form-modal.tsx's `rowToValues` — the client's own
+ * snapshot of a loaded row, where a stored "-" (blank) renders as "" in the
+ * form. This is what the client actually sends back as `original` on Modify,
+ * NOT the raw "-"-shaped DB row the rest of this script's other snapshots use.
+ */
+function clientShapedSnapshot(row: CandidateMasterRow): CandidateManualFieldValues {
+  const raw: Record<string, string> = {
+    cid: row.cid,
+    date_of_upload: row.date_of_upload,
+    name: row.name,
+    email: row.email,
+    contact_number: row.contact_number,
+    submitter: row.submitter,
+    customer: row.customer,
+    job_requisition_id: row.job_requisition_id,
+    primary_skills: row.primary_skills,
+    job_management_level: row.job_management_level,
+    market: row.market,
+    client_spoc: row.client_spoc,
+    status: row.status,
+    submitted_date: row.submitted_date,
+    submission_comments: row.submission_comments,
+    gender: row.gender,
+  };
+  const out: Record<string, string> = {};
+  for (const [field, value] of Object.entries(raw)) {
+    out[field] = value === "-" ? "" : value;
+  }
+  return out as CandidateManualFieldValues;
+}
+
 function fullValues(overrides: Partial<CandidateManualFieldValues> & { cid: string; name: string }): Record<string, string> {
   return {
     date_of_upload: "",
@@ -95,7 +128,7 @@ function fullValues(overrides: Partial<CandidateManualFieldValues> & { cid: stri
 async function main() {
   const results: TestResult[] = [];
   const sql = getDbClient();
-  const testCids = [CID(1), CID(2), CID(3), CID(4), CID(5), CID(6), CID(7)];
+  const testCids = [CID(1), CID(2), CID(3), CID(4), CID(5), CID(6), CID(7), CID(8)];
   const testJrs = [
     JR("DEFAULT"),
     JR("A"),
@@ -315,6 +348,162 @@ async function main() {
       sql
     );
     check(results, "Modify: stale original -> status 'stale'", staleOutcome.status === "stale");
+
+    // ===== 5b. Stale-edit guard: blank-normalization (the reported bug) =====
+    // Insert a row with several blank fields — confirms (separately from
+    // section 1's non-blank fields) that Add stores blanks as "-", not "".
+    const blankRowResult = await insertCandidateManualRow(
+      {
+        cid: testCids[7],
+        name: "Blank Normalize Row",
+        email: "-",
+        contact_number: "-",
+        date_of_upload: "01/01/2026",
+        submitter: "-",
+        customer: "-",
+        job_requisition_id: "-",
+        primary_skills: "-",
+        job_management_level: "-",
+        market: "-",
+        client_spoc: "-",
+        status: "Old Status",
+        submitted_date: "-",
+        submission_comments: "-",
+        gender: "-",
+      },
+      null,
+      "verify-script@example.com"
+    );
+    check(
+      results,
+      "Add: blank fields stored as '-', not ''",
+      blankRowResult.row.email === "-" &&
+        blankRowResult.row.contact_number === "-" &&
+        blankRowResult.row.submitter === "-" &&
+        blankRowResult.row.customer === "-" &&
+        blankRowResult.row.job_requisition_id === "-" &&
+        blankRowResult.row.primary_skills === "-" &&
+        blankRowResult.row.job_management_level === "-" &&
+        blankRowResult.row.market === "-" &&
+        blankRowResult.row.client_spoc === "-" &&
+        blankRowResult.row.submitted_date === "-" &&
+        blankRowResult.row.submission_comments === "-" &&
+        blankRowResult.row.gender === "-"
+    );
+
+    // The client's own snapshot of the freshly-loaded row (blanks as "") —
+    // exactly what the modal sends back as `original`, unchanged.
+    const blankClientOriginal = clientShapedSnapshot(blankRowResult.row);
+
+    // (i) Unchanged blanks + one real field change -> must succeed, write
+    // exactly one change row, and leave every still-blank field as "-".
+    const blankChangedForm = { ...blankClientOriginal, status: "New Status" };
+    const validatedBlankModify = validateCandidateManualInput(blankChangedForm);
+    if (!validatedBlankModify.ok) throw new Error(`unexpected validation failure: ${validatedBlankModify.error}`);
+    const changeRowsBeforeBlankModify = await sql<{ id: number }[]>`
+      SELECT id FROM candidate_sync_changes WHERE candidate_master_id = ${blankRowResult.row.id}
+    `;
+    const blankModifyOutcome = await updateCandidateManualRow(
+      blankRowResult.row.id,
+      validatedBlankModify.values,
+      validatedBlankModify.uncleanContactNumberRaw,
+      blankClientOriginal,
+      "verify-script@example.com",
+      sql
+    );
+    check(
+      results,
+      "Modify: client-shaped blank original (unchanged) + one real change -> status 'ok', not 'stale'",
+      blankModifyOutcome.status === "ok",
+      blankModifyOutcome.status
+    );
+    if (blankModifyOutcome.status === "ok") {
+      check(
+        results,
+        "Modify: changedFields is exactly ['status'] (blank fields did not register as changed)",
+        blankModifyOutcome.result.changedFields.length === 1 &&
+          blankModifyOutcome.result.changedFields[0] === "status"
+      );
+    }
+    const changeRowsAfterBlankModify = await sql<{ id: number }[]>`
+      SELECT id FROM candidate_sync_changes WHERE candidate_master_id = ${blankRowResult.row.id}
+    `;
+    check(
+      results,
+      "Modify: exactly ONE new change row written for the blank-normalization modify",
+      changeRowsAfterBlankModify.length === changeRowsBeforeBlankModify.length + 1
+    );
+    const afterBlankModifyRow = await getCandidateMasterById(blankRowResult.row.id, sql);
+    check(
+      results,
+      "Modify: untouched blank fields stay '-' after the update (not overwritten with '')",
+      afterBlankModifyRow?.status === "New Status" &&
+        afterBlankModifyRow?.email === "-" &&
+        afterBlankModifyRow?.contact_number === "-" &&
+        afterBlankModifyRow?.submitter === "-" &&
+        afterBlankModifyRow?.customer === "-" &&
+        afterBlankModifyRow?.job_requisition_id === "-" &&
+        afterBlankModifyRow?.primary_skills === "-" &&
+        afterBlankModifyRow?.job_management_level === "-" &&
+        afterBlankModifyRow?.market === "-" &&
+        afterBlankModifyRow?.client_spoc === "-" &&
+        afterBlankModifyRow?.submitted_date === "-" &&
+        afterBlankModifyRow?.submission_comments === "-" &&
+        afterBlankModifyRow?.gender === "-"
+    );
+    if (!afterBlankModifyRow) throw new Error("afterBlankModifyRow vanished");
+
+    // (ii) Re-submitting the SAME client-shaped snapshot (post-update, no
+    // real edit) -> 400 'no_change', and writes no new change row.
+    const blankClientOriginal2 = clientShapedSnapshot(afterBlankModifyRow);
+    const validatedNoop = validateCandidateManualInput(blankClientOriginal2);
+    if (!validatedNoop.ok) throw new Error(`unexpected validation failure: ${validatedNoop.error}`);
+    const changeRowsBeforeNoop = await sql<{ id: number }[]>`
+      SELECT id FROM candidate_sync_changes WHERE candidate_master_id = ${blankRowResult.row.id}
+    `;
+    const blankNoopOutcome = await updateCandidateManualRow(
+      blankRowResult.row.id,
+      validatedNoop.values,
+      validatedNoop.uncleanContactNumberRaw,
+      blankClientOriginal2,
+      "verify-script@example.com",
+      sql
+    );
+    check(
+      results,
+      "Modify: client-shaped blank original, no real change -> status 'no_change' (route returns 400)",
+      blankNoopOutcome.status === "no_change",
+      blankNoopOutcome.status
+    );
+    const changeRowsAfterNoop = await sql<{ id: number }[]>`
+      SELECT id FROM candidate_sync_changes WHERE candidate_master_id = ${blankRowResult.row.id}
+    `;
+    check(
+      results,
+      "Modify: no-change attempt writes no new change rows",
+      changeRowsAfterNoop.length === changeRowsBeforeNoop.length
+    );
+
+    // (iii) A GENUINE concurrent change must still 409 — the fix must not
+    // swallow real staleness. Use the stale (pre-update) client snapshot as
+    // `original` against the row's actual current (post-update) state.
+    const staleBlankForm = { ...blankClientOriginal, status: "Should Not Apply Either" };
+    const validatedStaleBlank = validateCandidateManualInput(staleBlankForm);
+    if (!validatedStaleBlank.ok) throw new Error(`unexpected validation failure: ${validatedStaleBlank.error}`);
+    const genuineStaleOutcome = await updateCandidateManualRow(
+      blankRowResult.row.id,
+      validatedStaleBlank.values,
+      validatedStaleBlank.uncleanContactNumberRaw,
+      blankClientOriginal, // stale: real current status is now "New Status", not "Old Status"
+      "verify-script@example.com",
+      sql
+    );
+    check(
+      results,
+      "Modify: a genuine concurrent change is still caught as 'stale' (fix doesn't mask real conflicts)",
+      genuineStaleOutcome.status === "stale",
+      genuineStaleOutcome.status
+    );
 
     // ===== 6. No-op modify =====
     const currentForNoop = await getCandidateMasterById(addResult.row.id, sql);

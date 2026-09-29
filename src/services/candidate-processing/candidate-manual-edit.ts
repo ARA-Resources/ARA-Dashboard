@@ -317,8 +317,17 @@ export async function updateCandidateManualRow(
   if (!current) return { status: "not_found" };
 
   if (original) {
+    // `original` is the client's raw form snapshot, where blank fields are
+    // "" (candidate-row-form-modal.tsx's rowToValues renders stored "-" as
+    // ""); `current` is always "-" for a blank stored field. Compare through
+    // coerceBlank on both sides so that representation difference alone
+    // never trips this guard — only an ACTUAL value change should.
     for (const field of CANDIDATE_MASTER_SHEET_DB_COLUMNS) {
-      if (original[field] !== (current as unknown as Record<string, string>)[field]) {
+      const originalNormalized = coerceBlank(String(original[field] ?? ""));
+      const currentNormalized = coerceBlank(
+        String((current as unknown as Record<string, string>)[field] ?? "")
+      );
+      if (originalNormalized !== currentNormalized) {
         return { status: "stale", current };
       }
     }
