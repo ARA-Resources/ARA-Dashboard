@@ -236,7 +236,7 @@ export function ExecutiveMasterSheetPage() {
     setDownloading(true);
     setDownloadError(null);
     try {
-      await downloadExecutiveMasterSheetXlsx();
+      await downloadExecutiveMasterSheetXlsx(query);
     } catch (err) {
       setDownloadError(
         err instanceof Error

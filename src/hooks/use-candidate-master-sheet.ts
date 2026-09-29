@@ -94,6 +94,38 @@ export async function fetchCandidateMasterSheet(
   return payload;
 }
 
+/**
+ * Download Master Sheet as .xlsx, respecting the same filters (including
+ * Highlights and Filter by Sync) currently applied to the on-screen table.
+ */
+export async function downloadCandidateMasterSheetXlsx(
+  query: CandidateMasterSheetClientQuery
+): Promise<void> {
+  const params = buildParams(query);
+  const res = await fetch(`/api/excel/candidate-master-sheet/export?${params.toString()}`, {
+    method: "GET",
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? "Failed to download Candidate Master Sheet Excel.");
+  }
+
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = /filename="([^"]+)"/i.exec(disposition);
+  const fileName = match?.[1] ?? "Candidate-Master-Sheet.xlsx";
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function candidateSyncHistoryQueryKey() {
   return ["candidate-sync-history"] as const;
 }

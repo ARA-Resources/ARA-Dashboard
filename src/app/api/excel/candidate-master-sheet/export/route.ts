@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { buildMasterSheetXlsxBuffer } from "@/services/excel/build-master-sheet-xlsx";
-import { exportExecutiveMasterSheetRows } from "@/services/persistence/executive-master-sheet-postgres";
-import type { ExecutiveMasterDateFilter } from "@/services/excel/executive-master-sheet";
+import { exportCandidateMasterSheetRows } from "@/services/persistence/candidate-master-sheet-postgres";
+import type {
+  CandidateHighlightFilterValue,
+  CandidateMasterDateFilter,
+} from "@/services/excel/candidate-master-sheet";
 
 export const runtime = "nodejs";
 
@@ -14,15 +17,27 @@ function parseJsonRecord<T>(raw: string | null, fallback: T): T {
   }
 }
 
-function hasActiveFilters(query: {
+function buildFileName(query: {
   columnFilters: Record<string, string[]>;
   textFilters: Record<string, string>;
-  dateFilters: Record<string, ExecutiveMasterDateFilter>;
-}): boolean {
+  dateFilters: Record<string, CandidateMasterDateFilter>;
+  highlightFilters: CandidateHighlightFilterValue[];
+  syncFilter: number | null;
+}): string {
+  const stamp = new Date().toISOString().slice(0, 10);
   const hasColumn = Object.values(query.columnFilters).some((v) => v.length > 0);
   const hasText = Object.values(query.textFilters).some((v) => v.trim().length > 0);
   const hasDate = Object.values(query.dateFilters).some((r) => Boolean(r.from || r.to));
-  return hasColumn || hasText || hasDate;
+  const hasSync = query.syncFilter != null;
+  const hasOtherFilters = hasColumn || hasText || hasDate || hasSync;
+
+  if (!hasOtherFilters && query.highlightFilters.length === 1) {
+    return `Candidate-Master-Sheet-${stamp}-${query.highlightFilters[0]}.xlsx`;
+  }
+  if (hasOtherFilters || query.highlightFilters.length > 0) {
+    return `Candidate-Master-Sheet-${stamp}-filtered.xlsx`;
+  }
+  return `Candidate-Master-Sheet-${stamp}.xlsx`;
 }
 
 export async function GET(request: Request) {
@@ -35,24 +50,28 @@ export async function GET(request: Request) {
     searchParams.get("textFilters"),
     {}
   );
-  const dateFilters = parseJsonRecord<Record<string, ExecutiveMasterDateFilter>>(
+  const dateFilters = parseJsonRecord<Record<string, CandidateMasterDateFilter>>(
     searchParams.get("dateFilters"),
     {}
   );
-  const query = { columnFilters, textFilters, dateFilters };
+  const highlightFilters = parseJsonRecord<CandidateHighlightFilterValue[]>(
+    searchParams.get("highlightFilters"),
+    []
+  );
+  const syncFilterRaw = searchParams.get("syncFilter");
+  const syncFilter =
+    syncFilterRaw && Number.isFinite(Number(syncFilterRaw)) ? Number(syncFilterRaw) : null;
+  const query = { columnFilters, textFilters, dateFilters, highlightFilters, syncFilter };
 
   try {
-    const exported = await exportExecutiveMasterSheetRows(undefined, undefined, query);
+    const exported = await exportCandidateMasterSheetRows(query);
     const buffer = await buildMasterSheetXlsxBuffer({
       sheetName: exported.sheetName,
       headers: exported.headers,
       rows: exported.rows,
     });
 
-    const stamp = new Date().toISOString().slice(0, 10);
-    const fileName = `Executive-Master-Sheet-${stamp}${
-      hasActiveFilters(query) ? "-filtered" : ""
-    }.xlsx`;
+    const fileName = buildFileName(query);
 
     return new NextResponse(new Uint8Array(buffer), {
       status: 200,
@@ -68,8 +87,8 @@ export async function GET(request: Request) {
     const message =
       error instanceof Error
         ? error.message
-        : "Failed to export Executive Master Sheet.";
-    console.error("[api/excel/executive-master-sheet/export]", message);
+        : "Failed to export Candidate Master Sheet.";
+    console.error("[api/excel/candidate-master-sheet/export]", message);
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

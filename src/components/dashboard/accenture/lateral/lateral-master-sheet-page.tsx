@@ -236,7 +236,7 @@ export function LateralMasterSheetPage() {
     setDownloading(true);
     setDownloadError(null);
     try {
-      await downloadLateralMasterSheetXlsx();
+      await downloadLateralMasterSheetXlsx(query);
     } catch (err) {
       setDownloadError(
         err instanceof Error

@@ -97,14 +97,17 @@ export async function fetchExecutiveMasterSheet(
   return payload;
 }
 
-export async function downloadExecutiveMasterSheetXlsx(options?: {
-  refresh?: boolean;
-}): Promise<void> {
-  const params = new URLSearchParams();
-  if (options?.refresh) params.set("refresh", "1");
-  const qs = params.toString();
+/**
+ * Download Master Sheet as .xlsx, respecting the same filters currently
+ * applied to the on-screen table.
+ */
+export async function downloadExecutiveMasterSheetXlsx(
+  query: ExecutiveMasterSheetClientQuery,
+  options?: { refresh?: boolean }
+): Promise<void> {
+  const params = buildParams(query, { refresh: options?.refresh });
   const res = await fetch(
-    `/api/excel/executive-master-sheet/export${qs ? `?${qs}` : ""}`,
+    `/api/excel/executive-master-sheet/export?${params.toString()}`,
     { method: "GET", cache: "no-store" }
   );
   if (!res.ok) {

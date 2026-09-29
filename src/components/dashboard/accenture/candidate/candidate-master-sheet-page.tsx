@@ -6,6 +6,7 @@ import {
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
+  Download,
   History,
   Loader2,
   RefreshCw,
@@ -39,6 +40,7 @@ import {
 } from "@/services/excel/candidate-master-sheet";
 import type { LateralMasterFilterField } from "@/services/excel/lateral-master-sheet";
 import {
+  downloadCandidateMasterSheetXlsx,
   fetchCandidateMasterFilterSchema,
   fetchCandidateMasterSheet,
   candidateMasterSchemaQueryKey,
@@ -199,6 +201,8 @@ export function CandidateMasterSheetPage() {
   );
   const [syncFilter, setSyncFilter] = React.useState<number | null>(null);
   const [refreshing, setRefreshing] = React.useState(false);
+  const [downloading, setDownloading] = React.useState(false);
+  const [downloadError, setDownloadError] = React.useState<string | null>(null);
 
   const { data: syncHistory } = useCandidateSyncHistory();
 
@@ -316,6 +320,20 @@ export function CandidateMasterSheetPage() {
     }
   }
 
+  async function handleDownloadExcel() {
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      await downloadCandidateMasterSheetXlsx(query);
+    } catch (err) {
+      setDownloadError(
+        err instanceof Error ? err.message : "Failed to download Candidate Master Sheet Excel."
+      );
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   function handleOorwinFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
     if (file && !isAcceptedCandidateOorwinFile(file.name)) {
@@ -399,11 +417,12 @@ export function CandidateMasterSheetPage() {
   }
 
   const errorMessage =
-    error instanceof Error
+    downloadError ||
+    (error instanceof Error
       ? error.message
       : schemaError instanceof Error
         ? schemaError.message
-        : null;
+        : null);
 
   const oorwinError = oorwinSync.error instanceof Error ? oorwinSync.error.message : null;
   const oorwinResult = oorwinSync.data ?? null;
@@ -489,6 +508,20 @@ export function CandidateMasterSheetPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-xl gap-2"
+              onClick={() => void handleDownloadExcel()}
+              disabled={downloading || schemaLoading}
+            >
+              {downloading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}
+              {downloading ? "Downloading…" : "Download"}
+            </Button>
             <Button
               type="button"
               variant="outline"

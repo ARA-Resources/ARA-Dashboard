@@ -418,20 +418,26 @@ export async function queryExecutiveMasterSheetPage(
 }
 
 /**
- * Full, unfiltered table for export — mirrors Lateral's export policy
- * (ignore active UI filters, return everything).
+ * Table for export, respecting the same columnFilters/textFilters/dateFilters
+ * the on-screen table applies (via applyExecutiveMasterSheetFilters) — an
+ * omitted/empty `query` returns the full table, same as before filtered
+ * export existed.
  */
 export async function exportExecutiveMasterSheetRows(
   sqlClient?: SqlClient,
-  options?: { forceRefresh?: boolean }
+  options?: { forceRefresh?: boolean },
+  query?: Pick<ExecutiveMasterSheetQuery, "columnFilters" | "textFilters" | "dateFilters">
 ): Promise<{
   rows: ExecutiveMasterSheetPgRow[];
   headers: string[];
   sheetName: string;
 }> {
   const rows = await loadRows(sqlClient, options);
+  const filtered = query
+    ? applyExecutiveMasterSheetFilters(rows, query)
+    : rows;
   return {
-    rows,
+    rows: filtered,
     headers: [...EXECUTIVE_MASTER_EXCEL_HEADERS],
     sheetName: EXECUTIVE_MASTER_SHEET_PG_NAME,
   };

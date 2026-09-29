@@ -497,3 +497,42 @@ export async function queryCandidateMasterSheetPage(
     highlights,
   };
 }
+
+/**
+ * Table for export, respecting the same columnFilters/textFilters/dateFilters/
+ * highlightFilters/syncFilter the on-screen table applies (via
+ * applyCandidateMasterSheetFilters) — an unfiltered query returns the full
+ * table.
+ */
+export async function exportCandidateMasterSheetRows(
+  query: Pick<
+    CandidateMasterSheetQuery,
+    "columnFilters" | "textFilters" | "dateFilters" | "highlightFilters" | "syncFilter"
+  >,
+  sqlClient?: SqlClient
+): Promise<{
+  rows: CandidateMasterSheetPgRow[];
+  headers: string[];
+  sheetName: string;
+}> {
+  const rows = await loadRows(sqlClient);
+  const [changedFields, reviewFlags, syncFilterCids] = await Promise.all([
+    getLatestCandidateChangedFields(sqlClient),
+    getLatestCandidateReviewFlags(sqlClient),
+    query.syncFilter != null
+      ? getCandidateCidsTouchedBySync(query.syncFilter, sqlClient)
+      : Promise.resolve(null),
+  ]);
+  const filtered = applyCandidateMasterSheetFilters(
+    rows,
+    query,
+    { changedFields, reviewFlags },
+    syncFilterCids
+  );
+
+  return {
+    rows: filtered,
+    headers: [...CANDIDATE_MASTER_EXCEL_HEADERS],
+    sheetName: CANDIDATE_MASTER_SHEET_PG_NAME,
+  };
+}

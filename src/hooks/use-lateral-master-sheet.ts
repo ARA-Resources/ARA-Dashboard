@@ -94,15 +94,17 @@ export async function fetchLateralMasterSheet(
   return payload;
 }
 
-/** Download full Master Sheet as .xlsx (headers + AutoFilter). */
-export async function downloadLateralMasterSheetXlsx(options?: {
-  refresh?: boolean;
-}): Promise<void> {
-  const params = new URLSearchParams();
-  if (options?.refresh) params.set("refresh", "1");
-  const qs = params.toString();
+/**
+ * Download Master Sheet as .xlsx (headers + AutoFilter), respecting the same
+ * filters currently applied to the on-screen table.
+ */
+export async function downloadLateralMasterSheetXlsx(
+  query: LateralMasterSheetClientQuery,
+  options?: { refresh?: boolean }
+): Promise<void> {
+  const params = buildParams(query, { refresh: options?.refresh });
   const res = await fetch(
-    `/api/excel/lateral-master-sheet/export${qs ? `?${qs}` : ""}`,
+    `/api/excel/lateral-master-sheet/export?${params.toString()}`,
     { method: "GET", cache: "no-store" }
   );
   if (!res.ok) {

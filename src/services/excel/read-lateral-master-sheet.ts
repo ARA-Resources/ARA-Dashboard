@@ -26,7 +26,9 @@ import {
   countLateralMasterRows,
   listLateralMasterAsExcelRows,
   listLateralMasterDistinctValues,
+  listLateralMasterRows,
   queryLateralMasterAsExcelPage,
+  toExcelStyleMasterRow,
   type LateralMasterFilterValueColumn,
   type LateralMasterQueryFilters,
 } from "@/services/persistence/read-lateral-master";
@@ -398,11 +400,35 @@ export async function queryLateralMasterSheet(
   };
 }
 
+function hasActiveLateralMasterFilters(
+  query: Pick<
+    LateralMasterSheetQuery,
+    "columnFilters" | "textFilters" | "dateFilters" | "search"
+  >
+): boolean {
+  const hasColumn = Object.values(query.columnFilters ?? {}).some(
+    (values) => values.length > 0
+  );
+  const hasText = Object.values(query.textFilters ?? {}).some(
+    (value) => value.trim().length > 0
+  );
+  const hasDate = Object.values(query.dateFilters ?? {}).some(
+    (range) => Boolean(range.from || range.to)
+  );
+  return hasColumn || hasText || hasDate || Boolean(query.search?.trim());
+}
+
 /**
- * Export the entire Master Sheet as .xlsx (row 1 = headers, AutoFilter on).
- * Dashboard UI filters are ignored so Excel gets the full table.
+ * Export the Master Sheet as .xlsx (row 1 = headers, AutoFilter on).
+ * Respects the same columnFilters/textFilters/dateFilters/search the
+ * on-screen table applies — an omitted/empty `query` returns the full table,
+ * same as before filtered export existed.
  */
 export async function exportLateralMasterSheetXlsx(
+  query?: Pick<
+    LateralMasterSheetQuery,
+    "columnFilters" | "textFilters" | "dateFilters" | "search"
+  >,
   options?: ExcelReaderOptions
 ): Promise<{
   buffer: Buffer;
@@ -410,21 +436,53 @@ export async function exportLateralMasterSheetXlsx(
   rowCount: number;
   sheetName: string;
 }> {
-  const sheet = await readLateralMasterSheet(options);
+  const effectiveQuery = query ?? {
+    columnFilters: {},
+    textFilters: {},
+    dateFilters: {},
+  };
+
+  let headers: string[];
+  let rows: ExcelDataRow[];
+  let sheetName: string;
+
+  if (resolveLateralMasterSheetSource() === "postgres") {
+    sheetName = await resolveMasterSheetName();
+    const filters = mapMasterSheetQueryToPgFilters(effectiveQuery);
+    const filteredRows = await listLateralMasterRows(filters, {
+      sortBy: "date",
+      sortDirection: "desc",
+    });
+    headers = [...LATERAL_MASTER_EXCEL_HEADERS];
+    rows = filteredRows.map((row, index) => {
+      const jr = String(row.job_requisition_id ?? "").trim();
+      return {
+        id: jr ? `pg-master-${jr}` : `pg-master-row-${index + 1}`,
+        ...toExcelStyleMasterRow(row),
+      };
+    });
+  } else {
+    const sheet = await readLateralMasterSheet(options);
+    sheetName = sheet.sheetName || LATERAL_MASTER_SHEET_NAME;
+    headers = sheet.headers;
+    rows = applyLateralMasterFilters(sheet.rows, effectiveQuery);
+  }
 
   const buffer = await buildMasterSheetXlsxBuffer({
-    sheetName: sheet.sheetName || LATERAL_MASTER_SHEET_NAME,
-    headers: sheet.headers,
-    rows: sheet.rows,
+    sheetName,
+    headers,
+    rows,
   });
 
   const stamp = new Date().toISOString().slice(0, 10);
-  const fileName = `Lateral-Master-Sheet-${stamp}.xlsx`;
+  const fileName = `Lateral-Master-Sheet-${stamp}${
+    hasActiveLateralMasterFilters(effectiveQuery) ? "-filtered" : ""
+  }.xlsx`;
 
   return {
     buffer,
     fileName,
-    rowCount: sheet.rows.length,
-    sheetName: sheet.sheetName || LATERAL_MASTER_SHEET_NAME,
+    rowCount: rows.length,
+    sheetName,
   };
 }
