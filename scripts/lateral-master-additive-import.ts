@@ -24,12 +24,17 @@
  *
  * Usage:
  *   npx tsx scripts/lateral-master-additive-import.ts --file <path.xlsm> --dry-run
+ *   npx tsx scripts/lateral-master-additive-import.ts --file <path.xlsm> --execute --confirm-insert=<N>
  *   npm run db:lateral-master-additive-import -- --file <path.xlsm> --dry-run
  *
- * --dry-run is currently the ONLY implemented mode. It performs zero writes
- * (not even a transaction is opened) and prints the full report described
- * below. The --execute path is deliberately not implemented yet — pending
- * review of this dry-run's output.
+ * --dry-run performs zero writes (not even a transaction is opened).
+ *
+ * --execute requires --confirm-insert=<N> where <N> must equal the
+ * would-insert count THIS run just computed live (not trusted from a prior
+ * run/report) — a bare --execute, or one with a stale/wrong count, refuses
+ * before opening any connection-level write. This is the only guard; there
+ * is no separate "--dry-run-only" build — --dry-run (or omitting --execute)
+ * is simply what happens when that confirmation isn't present.
  */
 import fs from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -71,7 +76,7 @@ async function loadEnvLocal() {
   }
 }
 
-interface NewRow {
+export interface NewRow {
   excelRowNumber: number;
   job_requisition_id: string;
   date: string | null;
@@ -130,7 +135,7 @@ function findOpenedOnOorwinIndex(headers: string[]): number {
  * `isAllowedJobStatus`, `isAllowedPosted`) so values are normalized exactly
  * the same way everywhere.
  */
-function validateAndPartitionRows(
+export function validateAndPartitionRows(
   headers: string[],
   rawRows: unknown[][],
   mapping: HeaderMappingSuccess
@@ -259,6 +264,54 @@ function validateAndPartitionRows(
   return { validRows, invalidRows, skippedEmptyRows };
 }
 
+/**
+ * The ONLY code path in this file that writes to `lateral_master`. Takes a
+ * pre-validated, pre-filtered list of brand-new rows (callers are
+ * responsible for the skip-existing filter — this function does not query
+ * or filter against existing IDs itself, so it is also directly reusable
+ * by a test harness that wants to exercise the transaction/rollback
+ * behavior with a deliberately-synthetic row list, without touching or
+ * re-implementing the real skip-existing logic above).
+ *
+ * Batches of `batchSize` (default 500, matching the existing one-time
+ * backfill script's convention), ALL in one `sql.begin` transaction — a
+ * Postgres-level error on any row in any batch (e.g. a PK violation that
+ * slipped past this script's own app-level validation) aborts the entire
+ * transaction, rolling back every batch already applied this run, not just
+ * the failing one.
+ */
+export async function insertNewRowsInTransaction(
+  sql: ReturnType<typeof getDbClient>,
+  rows: NewRow[],
+  batchSize = 500
+): Promise<number> {
+  await sql.begin(async (tx) => {
+    for (let i = 0; i < rows.length; i += batchSize) {
+      const batch = rows.slice(i, i + batchSize).map((r) => ({
+        job_requisition_id: r.job_requisition_id,
+        date: r.date,
+        priority: r.priority,
+        job_description: r.job_description,
+        skill_categorization: r.skill_categorization,
+        primary_skills: r.primary_skills,
+        job_management_level: r.job_management_level,
+        primary_location: r.primary_location,
+        market_map: r.market_map,
+        poc: r.poc,
+        job_status: r.job_status,
+        posted: r.posted,
+        opened_on_oorwin: r.opened_on_oorwin,
+        // created_at/updated_at: column defaults (NOW()) apply since they're
+        // omitted here — matches "now() for new rows" without needing a
+        // shared JS timestamp across batches.
+        last_seen_at: null as string | null,
+      }));
+      await tx`INSERT INTO lateral_master ${tx(batch)}`;
+    }
+  });
+  return rows.length;
+}
+
 async function main() {
   await loadEnvLocal();
 
@@ -266,19 +319,12 @@ async function main() {
   const fileIdx = args.indexOf("--file");
   const filePath = fileIdx >= 0 ? args[fileIdx + 1] : undefined;
   const execute = args.includes("--execute");
-
-  if (execute) {
-    console.error(
-      "--execute is not implemented yet. This script currently only supports --dry-run " +
-        "(the default/only mode). Re-run without --execute."
-    );
-    process.exitCode = 1;
-    return;
-  }
+  const confirmArg = args.find((a) => a.startsWith("--confirm-insert="));
+  const confirmInsert = confirmArg ? Number(confirmArg.slice("--confirm-insert=".length)) : null;
 
   if (!filePath) {
     console.error(
-      "Usage: tsx scripts/lateral-master-additive-import.ts --file <path.xlsm> [--dry-run]"
+      "Usage: tsx scripts/lateral-master-additive-import.ts --file <path.xlsm> [--dry-run | --execute --confirm-insert=<N>]"
     );
     process.exitCode = 1;
     return;
@@ -291,7 +337,9 @@ async function main() {
     return;
   }
 
-  console.log("========== LATERAL MASTER ADDITIVE IMPORT — DRY RUN ==========\n");
+  console.log(
+    `========== LATERAL MASTER ADDITIVE IMPORT — ${execute ? "EXECUTE" : "DRY RUN"} ==========\n`
+  );
   console.log(`Source file: ${resolvedPath}`);
   console.log(`Sheet: ${LATERAL_MASTER_SHEET_NAME}\n`);
 
@@ -403,6 +451,70 @@ async function main() {
       `No existing row would be touched: ${toSkip.length} overlapping file rows are skip-only (no UPDATE path exists in this script).\n`
     );
 
+    if (execute) {
+      // Confirmation must match the count THIS run just computed — never
+      // trusted from a prior report, so a stale/copy-pasted number refuses
+      // just as loudly as a bare --execute would.
+      if (confirmInsert === null || Number.isNaN(confirmInsert)) {
+        console.error(
+          `--execute requires --confirm-insert=<N>. This run computed ${toInsert.length} rows to insert — ` +
+            `re-run with --confirm-insert=${toInsert.length} to proceed, or omit --execute for a dry run.`
+        );
+        process.exitCode = 1;
+        return;
+      }
+      if (confirmInsert !== toInsert.length) {
+        console.error(
+          `--confirm-insert=${confirmInsert} does not match this run's live computed count of ${toInsert.length}. ` +
+            `Refusing to write. Re-run with --confirm-insert=${toInsert.length} if that count is correct.`
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      console.log(`Confirmed: --confirm-insert=${confirmInsert} matches the live computed count. Proceeding to insert.\n`);
+      console.log("-- Inserting (single transaction, batches of 500) --");
+      let inserted = 0;
+      try {
+        inserted = await insertNewRowsInTransaction(sql, toInsert, 500);
+      } catch (err) {
+        const countAfter = Number(
+          (await sql<{ c: string }[]>`SELECT COUNT(*)::text AS c FROM lateral_master`)[0]?.c ?? "0"
+        );
+        console.error(
+          `INSERT FAILED — transaction rolled back. lateral_master count after failure: ${countAfter} ` +
+            `(should equal the before-count of ${existingIds.size} if rollback was clean).`
+        );
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+        return;
+      }
+      const countAfter = Number(
+        (await sql<{ c: string }[]>`SELECT COUNT(*)::text AS c FROM lateral_master`)[0]?.c ?? "0"
+      );
+      console.log(`Inserted: ${inserted}`);
+      console.log(`lateral_master count before: ${existingIds.size}, after: ${countAfter}`);
+      console.log("");
+
+      console.log("-- Sample of up to 5 rows actually inserted (read back from DB) --");
+      for (const row of toInsert.slice(0, 5)) {
+        const dbRow = await sql`
+          SELECT job_requisition_id, date::text AS date, priority, job_description,
+                 skill_categorization, primary_skills, job_management_level,
+                 primary_location, market_map, poc, job_status, posted,
+                 opened_on_oorwin, created_at, updated_at, last_seen_at
+          FROM lateral_master WHERE job_requisition_id = ${row.job_requisition_id}
+        `;
+        console.log(JSON.stringify(dbRow[0] ?? null, null, 2));
+      }
+      console.log("");
+      console.log("-- Manual follow-ups (NOT automated by this script) --");
+      console.log("  1. Refresh Home KPI cache (read-only against lateral_master): GET /api/home/widgets?refresh=1");
+      console.log("  2. Update EXPECTED_MASTER_COUNT in scripts/verify-lateral-master-read-layer.ts to the new total.");
+      console.log("\n========== END EXECUTE ==========");
+      return;
+    }
+
     // --- 5. Sample of 5 rows that would be inserted ---
     console.log("-- Sample of up to 5 rows that WOULD be inserted (full field values) --");
     for (const row of toInsert.slice(0, 5)) {
@@ -463,7 +575,17 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exitCode = 1;
-});
+// Guard against running main() when this module is only imported for its
+// exported functions (e.g. by the rollback test harness, which imports
+// `insertNewRowsInTransaction`/`validateAndPartitionRows` and must NOT also
+// trigger this file's own CLI). Same pattern as `import-lateral-master-to-postgres.ts`.
+const isDirectRun =
+  process.argv[1] &&
+  path.resolve(process.argv[1]).includes("lateral-master-additive-import");
+
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  });
+}
