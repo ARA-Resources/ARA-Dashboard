@@ -26,6 +26,7 @@
     "test:candidate-history": "tsx scripts/verify-candidate-history.ts",
     "test:candidate-sort-order": "tsx scripts/verify-candidate-sort-order.ts",
     "db:import-lateral-master-xlsx": "tsx scripts/import-lateral-master-from-xlsx.ts",
+    "db:lateral-master-additive-import": "tsx scripts/lateral-master-additive-import.ts",
     "db:import-lateral-staging": "tsx scripts/import-atci-ds-to-staging.ts",
     "db:sync-lateral-master": "tsx scripts/sync-lateral-master-from-staging.ts",
     "test:persistence": "tsx scripts/verify-postgres-persistence-step13.ts",
