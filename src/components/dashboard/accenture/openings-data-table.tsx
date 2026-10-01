@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   createColumnHelper,
   createPaginatedRowModel,
@@ -20,18 +20,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import type { ExcelDataRow } from "@/types/excel";
-import {
-  OPENINGS_TABLE,
-  OPENINGS_TABLE_PAGE_SIZE_OPTIONS,
-} from "@/constants/accenture-dashboard";
 import { cn } from "@/lib/utils";
 import { polishExcelDisplayValue } from "@/utils/excel-display";
 
@@ -59,6 +48,11 @@ interface OpeningsDataTableProps {
    * navigate to the Master Sheet with matching filters. Lateral pivot only.
    */
   onPrimarySkillClick?: (row: ExcelDataRow) => void;
+  /** Pagination state, lifted to the parent so the toolbar's "Rows per page" control and this table share it. */
+  pagination: PaginationState;
+  onPaginationChange: (
+    updater: PaginationState | ((prev: PaginationState) => PaginationState)
+  ) => void;
 }
 
 const PRIMARY_SKILLS_COLUMN = "Primary Skills";
@@ -115,11 +109,11 @@ export function OpeningsDataTable({
   errorMessage = null,
   showGrandTotalRow = false,
   onPrimarySkillClick,
+  pagination,
+  onPaginationChange,
 }: OpeningsDataTableProps) {
-  const [pagination, setPagination] = useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: OPENINGS_TABLE.pageSize,
-  });
+  const paginationRef = useRef(pagination);
+  paginationRef.current = pagination;
 
   const columns = useMemo(() => {
     if (headers.length === 0) return helper.columns([]);
@@ -179,9 +173,13 @@ export function OpeningsDataTable({
   );
 
   useEffect(() => {
-    setPagination((current) =>
-      current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }
-    );
+    const current = paginationRef.current;
+    if (current.pageIndex !== 0) {
+      onPaginationChange({ ...current, pageIndex: 0 });
+    }
+    // Reset to page 0 only on search/data changes, not on every pagination
+    // change — reading via ref avoids re-running this on Previous/Next.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [globalFilter, data, headers]);
 
   const table = useTable(
@@ -190,7 +188,7 @@ export function OpeningsDataTable({
       columns,
       data: filteredData,
       state: { pagination },
-      onPaginationChange: setPagination,
+      onPaginationChange,
       getRowId: (row) => String(row.id),
     },
     (state) => ({
@@ -313,51 +311,28 @@ export function OpeningsDataTable({
           of <span className="font-medium text-foreground">{rowCount}</span>
         </p>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Rows per page</span>
-            <Select
-              value={String(pageSize)}
-              onValueChange={(value) => {
-                setPagination({ pageIndex: 0, pageSize: Number(value) });
-              }}
-            >
-              <SelectTrigger className="h-9 w-[100px] rounded-lg">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {OPENINGS_TABLE_PAGE_SIZE_OPTIONS.map((size) => (
-                  <SelectItem key={size} value={String(size)}>
-                    {size}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-lg"
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}
-            >
-              Previous
-            </Button>
-            <span className="min-w-16 text-center text-sm text-muted-foreground">
-              {pageCount === 0 ? 0 : pageIndex + 1} / {Math.max(pageCount, 1)}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-lg"
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
-            >
-              Next
-            </Button>
-          </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-lg"
+            onClick={() => table.previousPage()}
+            disabled={!table.getCanPreviousPage()}
+          >
+            Previous
+          </Button>
+          <span className="min-w-16 text-center text-sm text-muted-foreground">
+            {pageCount === 0 ? 0 : pageIndex + 1} / {Math.max(pageCount, 1)}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-lg"
+            onClick={() => table.nextPage()}
+            disabled={!table.getCanNextPage()}
+          >
+            Next
+          </Button>
         </div>
       </div>
     </div>

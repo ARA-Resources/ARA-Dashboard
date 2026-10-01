@@ -28,8 +28,8 @@ export const DEFAULT_FILTER_CONFIG: Record<BusinessUnitId, OpeningsFilterDefault
       preferredPostedValues: ["Yes"],
     },
     executive: {
-      sortByPatterns: [],
-      sortDirection: "asc",
+      sortByPatterns: [/^grand\s*total$/i, /total/i],
+      sortDirection: "desc",
       topN: null,
       preferredStatusValues: ["Active", "Reopen", "New"],
       preferredPostedValues: ["Yes"],

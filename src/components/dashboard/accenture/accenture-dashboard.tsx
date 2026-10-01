@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
+import type { PaginationState } from "@tanstack/react-table";
 import { PageHeader } from "@/components/layouts/page-header";
 import { PageTransition } from "@/animations/page-transition";
 import {
@@ -14,7 +15,10 @@ import { Badge } from "@/components/ui/badge";
 import { BusinessUnitSelect } from "@/components/dashboard/accenture/business-unit-select";
 import { OpeningsTableToolbar } from "@/components/dashboard/accenture/openings-table-toolbar";
 import { OpeningsDataTable } from "@/components/dashboard/accenture/openings-data-table";
-import { DEFAULT_DASHBOARD_BUSINESS_UNIT } from "@/constants/accenture-dashboard";
+import {
+  DEFAULT_DASHBOARD_BUSINESS_UNIT,
+  OPENINGS_TABLE,
+} from "@/constants/accenture-dashboard";
 import { getBusinessUnitById } from "@/constants/business-units";
 import {
   excelFiltersQueryKey,
@@ -40,6 +44,10 @@ export function AccentureDashboard() {
     DEFAULT_DASHBOARD_BUSINESS_UNIT
   );
   const [search, setSearch] = React.useState("");
+  const [pagination, setPagination] = React.useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: OPENINGS_TABLE.pageSize,
+  });
   const [refreshing, setRefreshing] = React.useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<Date | null>(
     null
@@ -410,6 +418,10 @@ export function AccentureDashboard() {
               onTopNChange={(topN) => setTopN(businessUnit, topN)}
               onResetDefaults={() => resetToDefaults(businessUnit)}
               onClearFilters={() => clearFilters(businessUnit)}
+              pageSize={pagination.pageSize}
+              onPageSizeChange={(pageSize) =>
+                setPagination({ pageIndex: 0, pageSize })
+              }
             />
           </CardHeader>
           <CardContent className="pt-4">
@@ -430,6 +442,8 @@ export function AccentureDashboard() {
                     ? handleExecutivePrimarySkillNavigate
                     : undefined
               }
+              pagination={pagination}
+              onPaginationChange={setPagination}
             />
           </CardContent>
         </Card>

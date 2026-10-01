@@ -37,10 +37,11 @@ export interface ExecutivePDashboardInputRow {
  * Categorization × Level combination, after filters (Job Status, Posted,
  * Market Map, Priority, Skill Categorization — the same 5 real filter
  * dimensions Lateral's own pivot respects) are applied.
- * Grand Total row/column: computed by the shared `OpeningsDataTable`
- * component from the plain group rows this module returns — no synthetic
- * "Grand Total" row is emitted here, mirroring
- * `lateral-p-roles-engine.ts`'s `pRolesResultToRows` exactly.
+ * Grand Total: a per-row "Grand Total" column (sum of the 3 level columns)
+ * is emitted here, mirroring `lateral-p-roles-engine.ts`'s
+ * `pRolesResultToRows` exactly. The bottom Grand Total *row* (summing each
+ * column down across every filtered group) is still computed by the shared
+ * `OpeningsDataTable` component itself, not here — same as Lateral.
  */
 
 export const EXECUTIVE_P_DASHBOARD_SHEET_NAME = "P - Dashboard";
@@ -82,6 +83,7 @@ export interface ExecutivePDashboardGroupRow {
   "5-Associate Director": number;
   "6-Senior Manager": number;
   "7-Manager": number;
+  "Grand Total": number;
   detailCount: number;
 }
 
@@ -300,6 +302,10 @@ export function buildExecutivePDashboardFromRows(
       "5-Associate Director": acc["5-Associate Director"],
       "6-Senior Manager": acc["6-Senior Manager"],
       "7-Manager": acc["7-Manager"],
+      "Grand Total":
+        acc["5-Associate Director"] +
+        acc["6-Senior Manager"] +
+        acc["7-Manager"],
       detailCount: acc.detailCount,
     })
   );
@@ -321,9 +327,14 @@ export function buildExecutivePDashboardFromRows(
 }
 
 /**
- * Convert aggregated groups to the openings-table shape. No synthetic Grand
- * Total row — `OpeningsDataTable` computes and renders that itself, the same
- * way it does for Lateral's P-Roles pivot.
+ * Convert aggregated groups to the openings-table shape. Appends a
+ * per-row "Grand Total" column (sum of the 3 level columns) after the level
+ * columns, mirroring `lateral-p-roles-engine.ts`'s `pRolesResultToRows`.
+ * Zero is rendered as `null` (same as the 3 level columns above) so an
+ * all-zero row reads as "—" consistently across the whole row instead of
+ * mixing dashes with a literal "0".
+ * No synthetic Grand Total *row* — `OpeningsDataTable` computes and renders
+ * that itself, the same way it does for Lateral's P-Roles pivot.
  */
 export function groupsToExecutivePDashboardTableRows(
   groups: ExecutivePDashboardGroupRow[]
@@ -331,6 +342,7 @@ export function groupsToExecutivePDashboardTableRows(
   const headers = [
     ...EXECUTIVE_P_DASHBOARD_ROW_COLUMNS,
     ...EXECUTIVE_P_DASHBOARD_LEVEL_COLUMNS,
+    "Grand Total",
   ];
 
   const rows: ExcelDataRow[] = groups.map((group, index) => ({
@@ -340,6 +352,7 @@ export function groupsToExecutivePDashboardTableRows(
     "5-Associate Director": group["5-Associate Director"] || null,
     "6-Senior Manager": group["6-Senior Manager"] || null,
     "7-Manager": group["7-Manager"] || null,
+    "Grand Total": group["Grand Total"] || null,
   }));
 
   return { headers: [...headers], rows };

@@ -12,9 +12,17 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { OpeningsFilterPanel } from "@/components/dashboard/accenture/openings-filter-panel";
 import { OpeningsQuickFilters } from "@/components/dashboard/accenture/openings-quick-filters";
 import { getQuickFilterColumns } from "@/constants/quick-filters";
+import { OPENINGS_TABLE_PAGE_SIZE_OPTIONS } from "@/constants/accenture-dashboard";
 import type { DynamicFilterSchema } from "@/services/excel/discover-filters";
 import type { OpeningsFilters } from "@/types/filters";
 import { countActiveColumnFilters } from "@/services/excel/apply-filters";
@@ -41,6 +49,8 @@ interface OpeningsTableToolbarProps {
   onTopNChange: (topN: number | null) => void;
   onResetDefaults: () => void;
   onClearFilters: () => void;
+  pageSize: number;
+  onPageSizeChange: (pageSize: number) => void;
 }
 
 export function OpeningsTableToolbar({
@@ -64,6 +74,8 @@ export function OpeningsTableToolbar({
   onTopNChange,
   onResetDefaults,
   onClearFilters,
+  pageSize,
+  onPageSizeChange,
 }: OpeningsTableToolbarProps) {
   const quickColumns = getQuickFilterColumns(schema);
   const allFiltersActiveCount = countSheetFilters(filters, quickColumns);
@@ -167,6 +179,25 @@ export function OpeningsTableToolbar({
             />
           </SheetContent>
         </Sheet>
+
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Rows per page</span>
+          <Select
+            value={String(pageSize)}
+            onValueChange={(value) => onPageSizeChange(Number(value))}
+          >
+            <SelectTrigger className="h-9 w-[100px] rounded-lg">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {OPENINGS_TABLE_PAGE_SIZE_OPTIONS.map((size) => (
+                <SelectItem key={size} value={String(size)}>
+                  {size}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
     </div>
   );
