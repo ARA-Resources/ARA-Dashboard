@@ -5,7 +5,19 @@
  * both lateral_master and executive_master, values disagree" for every
  * JR ID actually shared between the two tables today (and only those),
  * and correctly falls back to Oorwin-supplied values when a JR ID isn't
- * found in either table. Read-only — does not write to any table.
+ * found in either table.
+ *
+ * Previously relied entirely on whatever JR IDs happened to already overlap
+ * between lateral_master/executive_master in the target DB — on a DB with no
+ * such overlap (e.g. a freshly-migrated test DB with no real data yet), the
+ * "every colliding JR ID was queried" check had nothing to query and failed,
+ * even though the resolver itself was never exercised, let alone broken.
+ * Now inserts its own guaranteed-overlapping fixture (one agreeing pair, one
+ * conflicting pair, RUN_ID-unique) so the test is self-contained and
+ * deterministic regardless of ambient data; cleans both up in `finally`.
+ *
+ * DESTRUCTIVE (writes its own fixture rows to lateral_master/executive_master,
+ * removed in `finally`) — throwaway/test DB only.
  *
  * Run: npx tsx scripts/verify-candidate-auto-fetch.ts
  */
@@ -18,18 +30,79 @@ interface TestResult {
   detail?: string;
 }
 
+const RUN_ID = Date.now();
+const JR_AGREE = `JR-AGREE-${RUN_ID}`;
+const JR_CONFLICT = `JR-CONFLICT-${RUN_ID}`;
+const JR_LATERAL_ONLY = `JR-LATONLY-${RUN_ID}`;
+const FIXTURE_JRS = [JR_AGREE, JR_CONFLICT, JR_LATERAL_ONLY];
+
 async function main() {
   const sql = getDbClient();
   const results: TestResult[] = [];
 
   try {
+    // -- Self-contained overlap fixture: one JR both tables agree on, one
+    // they conflict on, plus one lateral-only JR for the single-table case. --
+    await sql`
+      INSERT INTO lateral_master (job_requisition_id, primary_skills, job_management_level, market_map, poc)
+      VALUES
+        (${JR_AGREE}, 'Shared Skill', '8-Associate Manager', 'Shared Market', 'Shared SPOC'),
+        (${JR_CONFLICT}, 'Lateral Skill', 'Lateral Level', 'Lateral Market', 'Lateral SPOC'),
+        (${JR_LATERAL_ONLY}, 'Lateral-Only Skill', 'Lateral-Only Level', 'Lateral-Only Market', 'Lateral-Only SPOC')
+      ON CONFLICT (job_requisition_id) DO NOTHING
+    `;
+    await sql`
+      INSERT INTO executive_master (job_requisition_id, primary_skills, job_management_level, market_map)
+      VALUES
+        (${JR_AGREE}, 'Shared Skill', '8-Associate Manager', 'Shared Market'),
+        (${JR_CONFLICT}, 'Executive Skill', 'Executive Level', 'Executive Market')
+      ON CONFLICT (job_requisition_id) DO NOTHING
+    `;
+
     const collisions = await sql<{ job_requisition_id: string }[]>`
       SELECT l.job_requisition_id
       FROM lateral_master l
       JOIN executive_master e ON l.job_requisition_id = e.job_requisition_id
       ORDER BY l.job_requisition_id
     `;
-    console.log(`Found ${collisions.length} JR ID(s) present in both lateral_master and executive_master.\n`);
+    console.log(`Found ${collisions.length} JR ID(s) present in both lateral_master and executive_master (includes this run's own fixture: ${JR_AGREE}, ${JR_CONFLICT}).\n`);
+
+    results.push({
+      name: "Fixture JR_AGREE and JR_CONFLICT both appear in the lateral/executive collision scan",
+      status:
+        collisions.some((c) => c.job_requisition_id === JR_AGREE) &&
+        collisions.some((c) => c.job_requisition_id === JR_CONFLICT)
+          ? "PASS"
+          : "FAIL",
+      detail: JSON.stringify(collisions.map((c) => c.job_requisition_id)),
+    });
+
+    const agreeResult = await resolveCandidateAutoFetchFields(
+      JR_AGREE,
+      { primarySkills: null, market: null, clientSpoc: null },
+      sql
+    );
+    results.push({
+      name: "JR_AGREE (both tables identical): zero conflicts",
+      status: agreeResult.conflicts.length === 0 ? "PASS" : "FAIL",
+      detail: JSON.stringify(agreeResult.conflicts),
+    });
+
+    const conflictResult = await resolveCandidateAutoFetchFields(
+      JR_CONFLICT,
+      { primarySkills: null, market: null, clientSpoc: null },
+      sql
+    );
+    results.push({
+      name: "JR_CONFLICT (tables disagree): primary_skills, job_management_level, and market all flagged as conflicts",
+      status:
+        ["primarySkills", "jobManagementLevel", "market"].every((f) =>
+          conflictResult.conflicts.some((c) => c.field === f)
+        )
+          ? "PASS"
+          : "FAIL",
+      detail: JSON.stringify(conflictResult.conflicts),
+    });
 
     let jrIdsWithAnyConflict = 0;
     let totalConflictFields = 0;
@@ -112,32 +185,25 @@ async function main() {
       status: fallback.conflicts.length === 0 ? "PASS" : "FAIL",
     });
 
-    // Found in exactly one table (a JR only in lateral_master, not executive_master).
-    const lateralOnly = await sql<{ job_requisition_id: string }[]>`
-      SELECT l.job_requisition_id FROM lateral_master l
-      LEFT JOIN executive_master e ON l.job_requisition_id = e.job_requisition_id
-      WHERE e.job_requisition_id IS NULL
-      LIMIT 1
-    `;
-    if (lateralOnly[0]) {
-      const jr = lateralOnly[0].job_requisition_id;
-      const single = await resolveCandidateAutoFetchFields(
-        jr,
-        { primarySkills: "should-not-be-used", market: "should-not-be-used", clientSpoc: "should-not-be-used" },
-        sql
-      );
-      results.push({
-        name: "JR found in exactly one table (lateral only) uses that table's value, no conflict, no fallback used",
-        status:
-          single.conflicts.length === 0 &&
-          single.values.primarySkills !== "should-not-be-used" &&
-          single.values.market !== "should-not-be-used" &&
-          single.values.clientSpoc !== "should-not-be-used"
-            ? "PASS"
-            : "FAIL",
-        detail: JSON.stringify(single.values),
-      });
-    }
+    // Found in exactly one table (JR_LATERAL_ONLY fixture — lateral_master
+    // only, not executive_master). Previously picked an arbitrary ambient
+    // lateral-only JR via LIMIT 1 and silently skipped this check entirely
+    // when none existed; now always exercised via the fixture.
+    const single = await resolveCandidateAutoFetchFields(
+      JR_LATERAL_ONLY,
+      { primarySkills: "should-not-be-used", market: "should-not-be-used", clientSpoc: "should-not-be-used" },
+      sql
+    );
+    results.push({
+      name: "JR found in exactly one table (lateral only) uses that table's value, no conflict, no fallback used",
+      status:
+        single.conflicts.length === 0 &&
+        single.values.primarySkills === "Lateral-Only Skill" &&
+        single.values.market === "Lateral-Only Market"
+          ? "PASS"
+          : "FAIL",
+      detail: JSON.stringify(single.values),
+    });
 
     console.log("\n========== TEST RESULTS ==========");
     let failures = 0;
@@ -148,6 +214,8 @@ async function main() {
     console.log(`\n${results.length - failures}/${results.length} passed.`);
     if (failures > 0) process.exitCode = 1;
   } finally {
+    await sql`DELETE FROM lateral_master WHERE job_requisition_id = ANY(${FIXTURE_JRS})`;
+    await sql`DELETE FROM executive_master WHERE job_requisition_id = ANY(${FIXTURE_JRS})`;
     await closeDbClient();
   }
 }
