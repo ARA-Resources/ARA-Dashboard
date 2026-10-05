@@ -55,7 +55,12 @@ function row(
   };
 }
 
-const CID = "TEST-HIST-CID";
+// Migration 018 requires "C" + digits only — the literal "TEST-HIST-CID" used
+// here before always failed isValidCidFormat(), so every runCandidateSync()
+// call below silently quarantined the row instead of updating it, and the
+// history this test asserts on was never actually written. Fixed with a
+// RUN_ID-unique C\d+ CID, matching the convention already used elsewhere.
+const CID = `C9${Date.now()}9`;
 
 const BASE = {
   firstName: "History",
@@ -150,8 +155,8 @@ async function main() {
     );
     check(
       results,
-      "Entry 2 is Status, old=Status A new=Status B, from sync 2",
-      history[1]?.header === "Status" &&
+      "Entry 2 is Oorwin Candidate Stage, old=Status A new=Status B, from sync 2",
+      history[1]?.header === "Oorwin Candidate Stage" &&
         history[1]?.oldValue === "Status A" &&
         history[1]?.newValue === "Status B" &&
         history[1]?.syncId === syncIds[1],
@@ -187,7 +192,12 @@ async function main() {
     // CID should show ONLY Market (sync 3's change) — proving C9 and C10
     // read the exact same underlying rows through genuinely different
     // filters, not two independently-approximated views that happen to agree.
-    const latest = await getLatestCandidateChangedFields(sql);
+    // getLatestCandidateChangedFields takes an explicit window of sync ids
+    // (migration 021) — scoped to sync 3 alone to isolate "latest sync only"
+    // from this test's own 3 syncs, independent of the real app's window
+    // (which depends on kind='oorwin_upload'/'manual_add'/'manual_modify',
+    // none of which these raw history rows carry).
+    const latest = await getLatestCandidateChangedFields([syncIds[2]], sql);
     const latestFieldsForCid = latest.get(CID) ?? new Set<string>();
     check(
       results,
@@ -204,6 +214,12 @@ async function main() {
     check(results, "A blank/'-' cid returns an empty array without querying", blankHistory.length === 0);
 
     // -- cleanup --
+    // Pre-existing ordering bug, unrelated to migration 022 (same as
+    // verify-candidate-sort-order.ts): BASE has no job_requisition_id, so
+    // each sync also writes a missing_job_requisition_id review flag;
+    // deleting candidate_sync_history before candidate_review_flags trips
+    // the FK (candidate_review_flags, migration 016). Delete flags first.
+    await sql`DELETE FROM candidate_review_flags WHERE sync_id = ANY(${syncIds})`;
     await sql`DELETE FROM candidate_sync_changes WHERE cid = ${CID}`;
     await sql`DELETE FROM candidate_master WHERE cid = ${CID}`;
     await sql`DELETE FROM candidate_sync_history WHERE id = ANY(${syncIds})`;

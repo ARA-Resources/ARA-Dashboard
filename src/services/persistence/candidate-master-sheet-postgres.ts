@@ -58,6 +58,17 @@ export type CandidateMasterSheetPgRow = {
   id: string;
   /** Not a display column — internal only, used by the "filter by sync" predicate below. */
   insertedSyncId: number | null;
+  /**
+   * Not a display column — migration 022, threaded through now (Stage 1,
+   * same shape as insertedSyncId above) so Stage 3's highlight/filter logic
+   * can consume it without further plumbing. The two Accenture lock
+   * booleans are deliberately NOT projected onto this UI-facing row type —
+   * they're not string|number|null, which this type's export path
+   * (ExcelDataRow) requires, and nothing reads them from here; Stage 2's
+   * engine reads them directly off CandidateMasterRow instead. Never
+   * rendered, never accepted from Add/Modify.
+   */
+  lastAccentureSyncId: number | null;
 } & {
   [K in CandidateMasterExcelHeader]: string;
 };
@@ -123,6 +134,7 @@ function toSheetRow(row: CandidateMasterRow): CandidateMasterSheetPgRow {
   const next = {
     id: String(row.id),
     insertedSyncId: row.inserted_sync_id,
+    lastAccentureSyncId: row.last_accenture_sync_id,
   } as CandidateMasterSheetPgRow;
   for (const mapping of CANDIDATE_MASTER_COLUMN_MAP) {
     const value = row[mapping.dbColumn as keyof CandidateMasterRow];
@@ -380,6 +392,17 @@ function parseFilterBoundary(raw: string): Date | null {
   return null;
 }
 
+/**
+ * Migration 022 renamed the "Status" display header to "Oorwin Candidate
+ * Stage" (dbColumn unchanged). A bookmarked URL, a saved filter, or any API
+ * caller still sending the old column key "Status" would otherwise silently
+ * match zero rows (row["Status"] is undefined on the renamed row shape) —
+ * exported so a test can assert the alias directly.
+ */
+export function normalizeLegacyCandidateFilterKey(column: string): string {
+  return column === "Status" ? "Oorwin Candidate Stage" : column;
+}
+
 export function applyCandidateMasterSheetFilters(
   rows: CandidateMasterSheetPgRow[],
   query: Pick<
@@ -396,11 +419,15 @@ export function applyCandidateMasterSheetFilters(
   /** CIDs updated/flagged by `query.syncFilter` (see getCandidateCidsTouchedBySync) — inserts are checked directly via each row's own `insertedSyncId` instead. */
   syncFilterCids?: Set<string> | null
 ): CandidateMasterSheetPgRow[] {
-  const columnEntries = Object.entries(query.columnFilters).filter(([, v]) => v.length > 0);
-  const textEntries = Object.entries(query.textFilters).filter(([, v]) => v.trim().length > 0);
-  const dateEntries = Object.entries(query.dateFilters).filter(
-    ([, r]) => Boolean(r.from || r.to)
-  );
+  const columnEntries = Object.entries(query.columnFilters)
+    .map(([column, v]) => [normalizeLegacyCandidateFilterKey(column), v] as const)
+    .filter(([, v]) => v.length > 0);
+  const textEntries = Object.entries(query.textFilters)
+    .map(([column, v]) => [normalizeLegacyCandidateFilterKey(column), v] as const)
+    .filter(([, v]) => v.trim().length > 0);
+  const dateEntries = Object.entries(query.dateFilters)
+    .map(([column, r]) => [normalizeLegacyCandidateFilterKey(column), r] as const)
+    .filter(([, r]) => Boolean(r.from || r.to));
   const highlightFilters = query.highlightFilters ?? [];
   const syncFilter = query.syncFilter ?? null;
 

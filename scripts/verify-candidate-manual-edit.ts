@@ -94,6 +94,11 @@ function clientShapedSnapshot(row: CandidateMasterRow): CandidateManualFieldValu
     market: row.market,
     client_spoc: row.client_spoc,
     status: row.status,
+    accenture_candidate_stage: row.accenture_candidate_stage,
+    current_cid_source: row.current_cid_source,
+    application_completion_status: row.application_completion_status,
+    screening_candidate_stage: row.screening_candidate_stage,
+    disposition_reason: row.disposition_reason,
     submitted_date: row.submitted_date,
     submission_comments: row.submission_comments,
     gender: row.gender,
@@ -118,6 +123,11 @@ function fullValues(overrides: Partial<CandidateManualFieldValues> & { cid: stri
     market: "",
     client_spoc: "",
     status: "",
+    accenture_candidate_stage: "",
+    current_cid_source: "",
+    application_completion_status: "",
+    screening_candidate_stage: "",
+    disposition_reason: "",
     submitted_date: "",
     submission_comments: "",
     gender: "",
@@ -128,7 +138,7 @@ function fullValues(overrides: Partial<CandidateManualFieldValues> & { cid: stri
 async function main() {
   const results: TestResult[] = [];
   const sql = getDbClient();
-  const testCids = [CID(1), CID(2), CID(3), CID(4), CID(5), CID(6), CID(7), CID(8)];
+  const testCids = [CID(1), CID(2), CID(3), CID(4), CID(5), CID(6), CID(7), CID(8), CID(9)];
   const testJrs = [
     JR("DEFAULT"),
     JR("A"),
@@ -175,6 +185,11 @@ async function main() {
         market: "-",
         client_spoc: "-",
         status: "In Progress",
+        accenture_candidate_stage: "-",
+        current_cid_source: "-",
+        application_completion_status: "-",
+        screening_candidate_stage: "-",
+        disposition_reason: "-",
         submitted_date: "-",
         submission_comments: "-",
         gender: "Male",
@@ -231,6 +246,11 @@ async function main() {
         market: "-",
         client_spoc: "-",
         status: "-",
+        accenture_candidate_stage: "-",
+        current_cid_source: "-",
+        application_completion_status: "-",
+        screening_candidate_stage: "-",
+        disposition_reason: "-",
         submitted_date: "-",
         submission_comments: "-",
         gender: "-",
@@ -291,6 +311,11 @@ async function main() {
       market: beforeModify.market,
       client_spoc: beforeModify.client_spoc,
       status: beforeModify.status,
+      accenture_candidate_stage: beforeModify.accenture_candidate_stage,
+      current_cid_source: beforeModify.current_cid_source,
+      application_completion_status: beforeModify.application_completion_status,
+      screening_candidate_stage: beforeModify.screening_candidate_stage,
+      disposition_reason: beforeModify.disposition_reason,
       submitted_date: beforeModify.submitted_date,
       submission_comments: beforeModify.submission_comments,
       gender: beforeModify.gender,
@@ -349,6 +374,108 @@ async function main() {
     );
     check(results, "Modify: stale original -> status 'stale'", staleOutcome.status === "stale");
 
+    // ===== 5a. Crafted-request protection: lock columns / last_accenture_sync_id =====
+    // Simulate "already touched by a prior Accenture upload" directly via SQL
+    // (migration 022 columns, not yet writable by anything else), then try to
+    // flip them through the real Modify path with a crafted payload carrying
+    // those exact keys alongside one legitimate field change.
+    await sql`
+      UPDATE candidate_master SET
+        email_accenture_locked = TRUE,
+        job_management_level_accenture_locked = TRUE,
+        last_accenture_sync_id = ${addResult.historyId}
+      WHERE id = ${addResult.row.id}
+    `;
+    const lockedRowBefore = await getCandidateMasterById(addResult.row.id, sql);
+    if (!lockedRowBefore) throw new Error("lockedRowBefore vanished");
+    const craftedModifyRaw: Record<string, unknown> = {
+      ...modifiedValues,
+      customer: "Crafted Customer Change",
+      // Not real CandidateManualFieldValues keys — a crafted/malicious client
+      // trying to use the Modify endpoint to clear its own lock.
+      email_accenture_locked: false,
+      job_management_level_accenture_locked: false,
+      last_accenture_sync_id: 999999,
+    };
+    const validatedCraftedModify = validateCandidateManualInput(craftedModifyRaw as Record<string, string>);
+    if (!validatedCraftedModify.ok) throw new Error(`unexpected validation failure: ${validatedCraftedModify.error}`);
+    check(
+      results,
+      "Crafted Modify request: validateCandidateManualInput's output never carries the 3 system keys (named-field extraction, not a spread)",
+      !("email_accenture_locked" in validatedCraftedModify.values) &&
+        !("job_management_level_accenture_locked" in validatedCraftedModify.values) &&
+        !("last_accenture_sync_id" in validatedCraftedModify.values),
+      JSON.stringify(Object.keys(validatedCraftedModify.values))
+    );
+    const craftedModifyOutcome = await updateCandidateManualRow(
+      addResult.row.id,
+      validatedCraftedModify.values,
+      null,
+      modifiedValues,
+      "verify-script@example.com",
+      sql
+    );
+    check(
+      results,
+      "Crafted Modify request: the legitimate field change (customer) still applies — status 'ok'",
+      craftedModifyOutcome.status === "ok",
+      craftedModifyOutcome.status
+    );
+    const lockedRowAfter = await getCandidateMasterById(addResult.row.id, sql);
+    check(
+      results,
+      "Crafted Modify request: email_accenture_locked / job_management_level_accenture_locked / last_accenture_sync_id are UNCHANGED despite the crafted payload",
+      lockedRowAfter?.email_accenture_locked === true &&
+        lockedRowAfter?.job_management_level_accenture_locked === true &&
+        lockedRowAfter?.last_accenture_sync_id === addResult.historyId &&
+        lockedRowAfter?.customer === "Crafted Customer Change",
+      JSON.stringify({
+        email_accenture_locked: lockedRowAfter?.email_accenture_locked,
+        job_management_level_accenture_locked: lockedRowAfter?.job_management_level_accenture_locked,
+        last_accenture_sync_id: lockedRowAfter?.last_accenture_sync_id,
+        customer: lockedRowAfter?.customer,
+      })
+    );
+
+    // Same protection on Add: a crafted insert payload cannot pre-set the
+    // lock/reference columns on a brand-new row either.
+    const craftedAddRaw: Record<string, unknown> = {
+      cid: testCids[8],
+      name: "Crafted Add",
+      email: "-",
+      email_accenture_locked: true,
+      job_management_level_accenture_locked: true,
+      last_accenture_sync_id: addResult.historyId,
+    };
+    const validatedCraftedAdd = validateCandidateManualInput(craftedAddRaw as Record<string, string>);
+    if (!validatedCraftedAdd.ok) throw new Error(`unexpected validation failure: ${validatedCraftedAdd.error}`);
+    check(
+      results,
+      "Crafted Add request: validateCandidateManualInput's output never carries the 3 system keys",
+      !("email_accenture_locked" in validatedCraftedAdd.values) &&
+        !("job_management_level_accenture_locked" in validatedCraftedAdd.values) &&
+        !("last_accenture_sync_id" in validatedCraftedAdd.values),
+      JSON.stringify(Object.keys(validatedCraftedAdd.values))
+    );
+    const craftedAddResult = await insertCandidateManualRow(
+      validatedCraftedAdd.values,
+      null,
+      "verify-script@example.com",
+      sql
+    );
+    check(
+      results,
+      "Crafted Add request: the new row's lock/reference columns default to false/false/null regardless of the crafted payload",
+      craftedAddResult.row.email_accenture_locked === false &&
+        craftedAddResult.row.job_management_level_accenture_locked === false &&
+        craftedAddResult.row.last_accenture_sync_id === null,
+      JSON.stringify({
+        email_accenture_locked: craftedAddResult.row.email_accenture_locked,
+        job_management_level_accenture_locked: craftedAddResult.row.job_management_level_accenture_locked,
+        last_accenture_sync_id: craftedAddResult.row.last_accenture_sync_id,
+      })
+    );
+
     // ===== 5b. Stale-edit guard: blank-normalization (the reported bug) =====
     // Insert a row with several blank fields — confirms (separately from
     // section 1's non-blank fields) that Add stores blanks as "-", not "".
@@ -367,6 +494,11 @@ async function main() {
         market: "-",
         client_spoc: "-",
         status: "Old Status",
+        accenture_candidate_stage: "-",
+        current_cid_source: "-",
+        application_completion_status: "-",
+        screening_candidate_stage: "-",
+        disposition_reason: "-",
         submitted_date: "-",
         submission_comments: "-",
         gender: "-",
@@ -389,6 +521,34 @@ async function main() {
         blankRowResult.row.submitted_date === "-" &&
         blankRowResult.row.submission_comments === "-" &&
         blankRowResult.row.gender === "-"
+    );
+    check(
+      results,
+      "Add: the 5 new Accenture columns, blank on input, are also stored as '-' (migration 022)",
+      blankRowResult.row.accenture_candidate_stage === "-" &&
+        blankRowResult.row.current_cid_source === "-" &&
+        blankRowResult.row.application_completion_status === "-" &&
+        blankRowResult.row.screening_candidate_stage === "-" &&
+        blankRowResult.row.disposition_reason === "-",
+      JSON.stringify({
+        accenture_candidate_stage: blankRowResult.row.accenture_candidate_stage,
+        current_cid_source: blankRowResult.row.current_cid_source,
+        application_completion_status: blankRowResult.row.application_completion_status,
+        screening_candidate_stage: blankRowResult.row.screening_candidate_stage,
+        disposition_reason: blankRowResult.row.disposition_reason,
+      })
+    );
+    check(
+      results,
+      "Add: a brand-new row's Accenture lock columns and last_accenture_sync_id default to false/false/null (never touched by Add)",
+      blankRowResult.row.email_accenture_locked === false &&
+        blankRowResult.row.job_management_level_accenture_locked === false &&
+        blankRowResult.row.last_accenture_sync_id === null,
+      JSON.stringify({
+        email_accenture_locked: blankRowResult.row.email_accenture_locked,
+        job_management_level_accenture_locked: blankRowResult.row.job_management_level_accenture_locked,
+        last_accenture_sync_id: blankRowResult.row.last_accenture_sync_id,
+      })
     );
 
     // The client's own snapshot of the freshly-loaded row (blanks as "") —
@@ -425,6 +585,23 @@ async function main() {
           blankModifyOutcome.result.changedFields[0] === "status"
       );
     }
+    check(
+      results,
+      "Modify: the row's 5 new Accenture columns are at their default (client-shaped as '', stored as '-') in the stale-check snapshot, and that alone does not cause a false 'stale' (migration 022)",
+      blankClientOriginal.accenture_candidate_stage === "" &&
+        blankClientOriginal.current_cid_source === "" &&
+        blankClientOriginal.application_completion_status === "" &&
+        blankClientOriginal.screening_candidate_stage === "" &&
+        blankClientOriginal.disposition_reason === "" &&
+        blankModifyOutcome.status === "ok",
+      `blankClientOriginal Accenture fields: ${JSON.stringify({
+        accenture_candidate_stage: blankClientOriginal.accenture_candidate_stage,
+        current_cid_source: blankClientOriginal.current_cid_source,
+        application_completion_status: blankClientOriginal.application_completion_status,
+        screening_candidate_stage: blankClientOriginal.screening_candidate_stage,
+        disposition_reason: blankClientOriginal.disposition_reason,
+      })}, outcome: ${blankModifyOutcome.status}`
+    );
     const changeRowsAfterBlankModify = await sql<{ id: number }[]>`
       SELECT id FROM candidate_sync_changes WHERE candidate_master_id = ${blankRowResult.row.id}
     `;
@@ -522,6 +699,11 @@ async function main() {
       market: currentForNoop.market,
       client_spoc: currentForNoop.client_spoc,
       status: currentForNoop.status,
+      accenture_candidate_stage: currentForNoop.accenture_candidate_stage,
+      current_cid_source: currentForNoop.current_cid_source,
+      application_completion_status: currentForNoop.application_completion_status,
+      screening_candidate_stage: currentForNoop.screening_candidate_stage,
+      disposition_reason: currentForNoop.disposition_reason,
       submitted_date: currentForNoop.submitted_date,
       submission_comments: currentForNoop.submission_comments,
       gender: currentForNoop.gender,
@@ -650,6 +832,11 @@ async function main() {
         market: "-",
         client_spoc: "-",
         status: "-",
+        accenture_candidate_stage: "-",
+        current_cid_source: "-",
+        application_completion_status: "-",
+        screening_candidate_stage: "-",
+        disposition_reason: "-",
         submitted_date: "-",
         submission_comments: "-",
         gender: "-",
@@ -766,6 +953,11 @@ async function main() {
         market: "-",
         client_spoc: "-",
         status: "-",
+        accenture_candidate_stage: "-",
+        current_cid_source: "-",
+        application_completion_status: "-",
+        screening_candidate_stage: "-",
+        disposition_reason: "-",
         submitted_date: "-",
         submission_comments: "-",
         gender: "-",

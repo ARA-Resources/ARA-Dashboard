@@ -58,8 +58,32 @@ export interface CandidateMasterRow {
   submission_comments: string;
   email: string;
   client_spoc: string;
+  /** Migration 022 — business columns written by the Accenture Final Report upload (Stage 2, not built yet). */
+  accenture_candidate_stage: string;
+  current_cid_source: string;
+  application_completion_status: string;
+  /** Migration 022 — inert placeholders for a later, separate ATCI-screening-file stage. */
+  screening_candidate_stage: string;
+  disposition_reason: string;
   last_touched_at: string | null;
   inserted_sync_id: number | null;
+  /**
+   * Migration 022 — once an Accenture upload writes a new value into
+   * email / job_management_level, the matching lock flips true and stays
+   * true forever (not cleared by a manual edit), so a later Oorwin sync
+   * must fall back to the existing value for that field instead of
+   * overwriting it. System bookkeeping — deliberately NOT in
+   * CANDIDATE_MASTER_SHEET_DB_COLUMNS, never exposed to Add/Modify.
+   */
+  email_accenture_locked: boolean;
+  job_management_level_accenture_locked: boolean;
+  /**
+   * Migration 022 — the most recent Accenture run (matched or inserted)
+   * that touched this row, set unconditionally on every touch regardless of
+   * whether any value changed. System bookkeeping — same exclusions as the
+   * lock fields above.
+   */
+  last_accenture_sync_id: number | null;
   deleted_at: string | null;
   deleted_by: string | null;
 }
@@ -83,9 +107,18 @@ function mapRow(row: Record<string, unknown>): CandidateMasterRow {
     submission_comments: String(row.submission_comments ?? ""),
     email: String(row.email ?? "-"),
     client_spoc: String(row.client_spoc ?? "-"),
+    accenture_candidate_stage: String(row.accenture_candidate_stage ?? "-"),
+    current_cid_source: String(row.current_cid_source ?? "-"),
+    application_completion_status: String(row.application_completion_status ?? "-"),
+    screening_candidate_stage: String(row.screening_candidate_stage ?? "-"),
+    disposition_reason: String(row.disposition_reason ?? "-"),
     last_touched_at:
       row.last_touched_at == null ? null : new Date(row.last_touched_at as string).toISOString(),
     inserted_sync_id: row.inserted_sync_id == null ? null : Number(row.inserted_sync_id),
+    email_accenture_locked: Boolean(row.email_accenture_locked),
+    job_management_level_accenture_locked: Boolean(row.job_management_level_accenture_locked),
+    last_accenture_sync_id:
+      row.last_accenture_sync_id == null ? null : Number(row.last_accenture_sync_id),
     deleted_at:
       row.deleted_at == null ? null : new Date(row.deleted_at as string).toISOString(),
     deleted_by: row.deleted_by == null ? null : String(row.deleted_by),
@@ -142,8 +175,16 @@ export async function listCandidateMasterRows(
       submission_comments,
       email,
       client_spoc,
+      accenture_candidate_stage,
+      current_cid_source,
+      application_completion_status,
+      screening_candidate_stage,
+      disposition_reason,
       last_touched_at,
       inserted_sync_id,
+      email_accenture_locked,
+      job_management_level_accenture_locked,
+      last_accenture_sync_id,
       deleted_at,
       deleted_by
     FROM candidate_master
@@ -183,8 +224,16 @@ export async function getCandidateMasterById(
       submission_comments,
       email,
       client_spoc,
+      accenture_candidate_stage,
+      current_cid_source,
+      application_completion_status,
+      screening_candidate_stage,
+      disposition_reason,
       last_touched_at,
       inserted_sync_id,
+      email_accenture_locked,
+      job_management_level_accenture_locked,
+      last_accenture_sync_id,
       deleted_at,
       deleted_by
     FROM candidate_master
@@ -226,8 +275,16 @@ export async function getCandidateMasterRowsByCid(
       submission_comments,
       email,
       client_spoc,
+      accenture_candidate_stage,
+      current_cid_source,
+      application_completion_status,
+      screening_candidate_stage,
+      disposition_reason,
       last_touched_at,
       inserted_sync_id,
+      email_accenture_locked,
+      job_management_level_accenture_locked,
+      last_accenture_sync_id,
       deleted_at,
       deleted_by
     FROM candidate_master

@@ -38,7 +38,13 @@ function row(
   };
 }
 
-const CIDS = ["TEST-SORT-1", "TEST-SORT-2", "TEST-SORT-3"];
+// Migration 018 requires "C" + digits only — these were plain "TEST-SORT-N"
+// strings before, which the sync engine's isValidCidFormat() always rejected
+// (quarantined as invalid-format, never actually touched), silently making
+// every "touch" step below a no-op. Fixed here with a RUN_ID-unique C\d+ CID,
+// matching the convention already used elsewhere (e.g. verify-candidate-manual-edit.ts).
+const RUN_ID = Date.now();
+const CIDS = [`C9${RUN_ID}1`, `C9${RUN_ID}2`, `C9${RUN_ID}3`];
 
 function cidOrder(rows: { "Candidate ID": string }[]): string[] {
   return rows.filter((r) => CIDS.includes(r["Candidate ID"])).map((r) => r["Candidate ID"]);
@@ -66,9 +72,9 @@ async function main() {
         job_requisition_id, primary_skills, job_management_level, market,
         client_spoc, status, submitted_date, submission_comments, email
       ) VALUES
-        ('TEST-SORT-1', 'Sort One', 'Male', '9200000001', '01/01/2026', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', 'a@example.com'),
-        ('TEST-SORT-2', 'Sort Two', 'Male', '9200000002', '01/01/2026', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', 'b@example.com'),
-        ('TEST-SORT-3', 'Sort Three', 'Male', '9200000003', '01/01/2026', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', 'c@example.com')
+        (${CIDS[0]}, 'Sort One', 'Male', '9200000001', '01/01/2026', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', 'a@example.com'),
+        (${CIDS[1]}, 'Sort Two', 'Male', '9200000002', '01/01/2026', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', 'b@example.com'),
+        (${CIDS[2]}, 'Sort Three', 'Male', '9200000003', '01/01/2026', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', 'c@example.com')
     `;
 
     const baseline = await queryCandidateMasterSheetPage(
@@ -78,18 +84,18 @@ async function main() {
     check(
       results,
       "Baseline (all untouched, last_touched_at NULL): relative order is id ASC — 1, 2, 3",
-      JSON.stringify(cidOrder(baseline.rows)) === JSON.stringify(["TEST-SORT-1", "TEST-SORT-2", "TEST-SORT-3"]),
+      JSON.stringify(cidOrder(baseline.rows)) === JSON.stringify(CIDS),
       JSON.stringify(cidOrder(baseline.rows))
     );
 
-    // -- Touch TEST-SORT-2 via a real sync (sets last_touched_at = NOW()) --
+    // -- Touch CIDS[1] via a real sync (sets last_touched_at = NOW()) --
     const [h1] = await sql<{ id: number }[]>`
       INSERT INTO candidate_sync_history (started_at, result, source_filename)
       VALUES (NOW(), 'success', 'sort-order-touch-2') RETURNING id
     `;
     syncIds.push(Number(h1.id));
     await runCandidateSync(
-      [row({ sheetRowNumber: 1, cid: "TEST-SORT-2", firstName: "Sort", lastName: "Two", mobile: "9200000002", email: "b@example.com", status: "Touched" })],
+      [row({ sheetRowNumber: 1, cid: CIDS[1], firstName: "Sort", lastName: "Two", mobile: "9200000002", email: "b@example.com", status: "Touched" })],
       h1.id,
       sql
     );
@@ -100,12 +106,12 @@ async function main() {
     );
     check(
       results,
-      "After syncing TEST-SORT-2: it now sorts FIRST, ahead of the two still-untouched rows (page 1, no manual refresh/reorder needed)",
-      cidOrder(afterTouch2.rows)[0] === "TEST-SORT-2",
+      "After syncing CIDS[1]: it now sorts FIRST, ahead of the two still-untouched rows (page 1, no manual refresh/reorder needed)",
+      cidOrder(afterTouch2.rows)[0] === CIDS[1],
       JSON.stringify(cidOrder(afterTouch2.rows))
     );
 
-    // -- Touch TEST-SORT-1 a moment later — it should now overtake TEST-SORT-2 --
+    // -- Touch CIDS[0] a moment later — it should now overtake CIDS[1] --
     await new Promise((r) => setTimeout(r, 50)); // ensure a strictly later timestamp
     const [h2] = await sql<{ id: number }[]>`
       INSERT INTO candidate_sync_history (started_at, result, source_filename)
@@ -113,7 +119,7 @@ async function main() {
     `;
     syncIds.push(Number(h2.id));
     await runCandidateSync(
-      [row({ sheetRowNumber: 1, cid: "TEST-SORT-1", firstName: "Sort", lastName: "One", mobile: "9200000001", email: "a@example.com", status: "Touched" })],
+      [row({ sheetRowNumber: 1, cid: CIDS[0], firstName: "Sort", lastName: "One", mobile: "9200000001", email: "a@example.com", status: "Touched" })],
       h2.id,
       sql
     );
@@ -124,12 +130,18 @@ async function main() {
     );
     check(
       results,
-      "After then syncing TEST-SORT-1: it overtakes TEST-SORT-2 (most-recently-touched sorts first, not just 'touched vs untouched') — order is [1, 2, 3]",
-      JSON.stringify(cidOrder(afterTouch1.rows)) === JSON.stringify(["TEST-SORT-1", "TEST-SORT-2", "TEST-SORT-3"]),
+      "After then syncing CIDS[0]: it overtakes CIDS[1] (most-recently-touched sorts first, not just 'touched vs untouched') — order is [0, 1, 2]",
+      JSON.stringify(cidOrder(afterTouch1.rows)) === JSON.stringify(CIDS),
       JSON.stringify(cidOrder(afterTouch1.rows))
     );
 
     // -- cleanup --
+    // Pre-existing ordering bug, unrelated to migration 022: every row here
+    // has a blank Job Requisition ID, so each sync also writes a
+    // missing_job_requisition_id review flag; deleting candidate_sync_history
+    // before candidate_review_flags trips the FK (candidate_review_flags
+    // migration 016). Delete flags first.
+    await sql`DELETE FROM candidate_review_flags WHERE sync_id = ANY(${syncIds})`;
     await sql`DELETE FROM candidate_sync_changes WHERE cid = ANY(${CIDS})`;
     await sql`DELETE FROM candidate_master WHERE cid = ANY(${CIDS})`;
     await sql`DELETE FROM candidate_sync_history WHERE id = ANY(${syncIds})`;

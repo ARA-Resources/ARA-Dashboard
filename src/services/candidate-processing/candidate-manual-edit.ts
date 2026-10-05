@@ -129,6 +129,17 @@ export function validateCandidateManualInput(
     market: coerceBlank(String(raw.market ?? "")),
     client_spoc: coerceBlank(String(raw.client_spoc ?? "")),
     status: coerceBlank(String(raw.status ?? "")),
+    // Migration 022 — Accenture Final Report columns. Editable like every
+    // other field here; named explicitly (not spread from `raw`) same as
+    // the rest of this function, so a crafted request supplying
+    // email_accenture_locked/job_management_level_accenture_locked/
+    // last_accenture_sync_id is never read — those 3 names simply never
+    // appear anywhere in this function.
+    accenture_candidate_stage: coerceBlank(String(raw.accenture_candidate_stage ?? "")),
+    current_cid_source: coerceBlank(String(raw.current_cid_source ?? "")),
+    application_completion_status: coerceBlank(String(raw.application_completion_status ?? "")),
+    screening_candidate_stage: coerceBlank(String(raw.screening_candidate_stage ?? "")),
+    disposition_reason: coerceBlank(String(raw.disposition_reason ?? "")),
     submitted_date: coerceBlank(String(raw.submitted_date ?? "")),
     submission_comments: coerceBlank(String(raw.submission_comments ?? "")),
     gender: coerceBlank(String(raw.gender ?? "")),
@@ -233,14 +244,19 @@ export async function insertCandidateManualRow(
       INSERT INTO candidate_master (
         cid, name, gender, contact_number, date_of_upload, submitter, customer,
         job_requisition_id, primary_skills, job_management_level, market,
-        client_spoc, status, submitted_date, submission_comments, email,
+        client_spoc, status, accenture_candidate_stage, current_cid_source,
+        application_completion_status, screening_candidate_stage, disposition_reason,
+        submitted_date, submission_comments, email,
         last_touched_at, inserted_sync_id
       ) VALUES (
         ${values.cid}, ${values.name}, ${values.gender}, ${values.contact_number},
         ${values.date_of_upload}, ${values.submitter}, ${values.customer},
         ${values.job_requisition_id}, ${values.primary_skills}, ${values.job_management_level},
-        ${values.market}, ${values.client_spoc}, ${values.status}, ${values.submitted_date},
-        ${values.submission_comments}, ${values.email}, NOW(), ${syncId}
+        ${values.market}, ${values.client_spoc}, ${values.status},
+        ${values.accenture_candidate_stage}, ${values.current_cid_source},
+        ${values.application_completion_status}, ${values.screening_candidate_stage},
+        ${values.disposition_reason},
+        ${values.submitted_date}, ${values.submission_comments}, ${values.email}, NOW(), ${syncId}
       )
       RETURNING id
     `;
@@ -410,6 +426,11 @@ export async function updateCandidateManualRow(
         market = ${values.market},
         client_spoc = ${values.client_spoc},
         status = ${values.status},
+        accenture_candidate_stage = ${values.accenture_candidate_stage},
+        current_cid_source = ${values.current_cid_source},
+        application_completion_status = ${values.application_completion_status},
+        screening_candidate_stage = ${values.screening_candidate_stage},
+        disposition_reason = ${values.disposition_reason},
         submitted_date = ${values.submitted_date},
         submission_comments = ${values.submission_comments},
         email = ${values.email},
