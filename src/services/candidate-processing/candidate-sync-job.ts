@@ -57,6 +57,8 @@ export interface CandidateSyncRunResult {
     quarantined: number;
     skippedBlankCid: number;
     reviewFlags: number;
+    /** Migration 022 — (row, field) instances where email/level was kept as-is because the row's Accenture lock was already set. */
+    accentureLockedFieldsKept: number;
   };
   failureReason: string | null;
 }
@@ -69,6 +71,7 @@ const EMPTY_COUNTS: CandidateSyncRunResult["counts"] = {
   quarantined: 0,
   skippedBlankCid: 0,
   reviewFlags: 0,
+  accentureLockedFieldsKept: 0,
 };
 
 function toCounts(summary: CandidateSyncSummary): CandidateSyncRunResult["counts"] {
@@ -80,6 +83,7 @@ function toCounts(summary: CandidateSyncSummary): CandidateSyncRunResult["counts
     quarantined: summary.quarantinedCount,
     skippedBlankCid: summary.skippedBlankCidCount,
     reviewFlags: summary.reviewFlagCount,
+    accentureLockedFieldsKept: summary.accentureLockedFieldsKeptCount,
   };
 }
 

@@ -137,6 +137,15 @@ export interface CandidateSyncSummary {
   quarantinedCount: number;
   skippedBlankCidCount: number;
   reviewFlagCount: number;
+  /**
+   * Migration 022 — count of (row, field) instances where email or
+   * job_management_level was skipped this run because the row's Accenture
+   * lock was already set. No review flag or candidate_sync_changes row is
+   * written for this (unlike jr_id_conflict, which recurs every run by
+   * design) — this counter is the only record of it, surfaced on the
+   * result banner as "N email/level values kept (Accenture-locked)".
+   */
+  accentureLockedFieldsKeptCount: number;
   outcomes: CandidateSyncRowOutcome[];
 }
 
@@ -356,7 +365,11 @@ async function processSurvivorRow(
   sqlClient: SqlClient,
   syncId: number,
   row: CandidateOorwinParsedRow
-): Promise<{ outcome: CandidateSyncRowOutcome; reviewFlagsWritten: number }> {
+): Promise<{
+  outcome: CandidateSyncRowOutcome;
+  reviewFlagsWritten: number;
+  accentureLockedFieldsKept: number;
+}> {
   const cid = row.cid.trim();
   const desired = await buildDesiredFields(row, sqlClient);
   let reviewFlagsWritten = 0;
@@ -406,7 +419,27 @@ async function processSurvivorRow(
       return {
         outcome: { cid, action: "quarantined", changedFields: [] },
         reviewFlagsWritten,
+        accentureLockedFieldsKept: 0,
       };
+    }
+  }
+
+  // Migration 022 — Accenture lock support. Reuses the exact same
+  // conflictFields skip machinery the JR-conflict path already relies on
+  // (never overwrite on conflict, in both the changedFields diff below and
+  // the UPDATE's SET list) — so a locked field writes NO review flag and NO
+  // candidate_sync_changes row, unlike jr_id_conflict's own recurring flag.
+  // Only applies to an existing row: a lock can't exist on a row that
+  // doesn't exist yet, so this never touches the INSERT path below.
+  let accentureLockedFieldsKept = 0;
+  if (existing) {
+    if (existing.email_accenture_locked) {
+      desired.conflictFields.add("email");
+      accentureLockedFieldsKept += 1;
+    }
+    if (existing.job_management_level_accenture_locked) {
+      desired.conflictFields.add("job_management_level");
+      accentureLockedFieldsKept += 1;
     }
   }
 
@@ -433,6 +466,7 @@ async function processSurvivorRow(
     return {
       outcome: { cid, action: "inserted", changedFields: [] },
       reviewFlagsWritten,
+      accentureLockedFieldsKept: 0,
     };
   }
 
@@ -445,7 +479,11 @@ async function processSurvivorRow(
   }
 
   if (changedFields.length === 0) {
-    return { outcome: { cid, action: "unchanged", changedFields: [] }, reviewFlagsWritten };
+    return {
+      outcome: { cid, action: "unchanged", changedFields: [] },
+      reviewFlagsWritten,
+      accentureLockedFieldsKept,
+    };
   }
 
   for (const field of changedFields) {
@@ -480,6 +518,7 @@ async function processSurvivorRow(
   return {
     outcome: { cid, action: "updated", changedFields },
     reviewFlagsWritten,
+    accentureLockedFieldsKept,
   };
 }
 
@@ -522,11 +561,17 @@ export async function runCandidateSync(
   // CID that job_requisition_id couldn't narrow to one live row), distinct
   // from the pre-processing dedupe.quarantined/invalidCid groups below.
   let ambiguousCidQuarantinedCount = 0;
+  let accentureLockedFieldsKeptCount = 0;
 
   for (const survivor of dedupe.survivors) {
-    const { outcome, reviewFlagsWritten } = await processSurvivorRow(sql, syncId, survivor.row);
+    const { outcome, reviewFlagsWritten, accentureLockedFieldsKept } = await processSurvivorRow(
+      sql,
+      syncId,
+      survivor.row
+    );
     outcomes.push(outcome);
     reviewFlagCount += reviewFlagsWritten;
+    accentureLockedFieldsKeptCount += accentureLockedFieldsKept;
     if (outcome.action === "inserted") insertedCount += 1;
     else if (outcome.action === "updated") updatedCount += 1;
     else if (outcome.action === "unchanged") unchangedCount += 1;
@@ -546,6 +591,7 @@ export async function runCandidateSync(
     quarantinedCount,
     skippedBlankCidCount,
     reviewFlagCount,
+    accentureLockedFieldsKeptCount,
     outcomes,
   };
 }

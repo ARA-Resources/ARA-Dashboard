@@ -59,6 +59,11 @@ import {
   isAcceptedCandidateOorwinFile,
   useCandidateOorwinSync,
 } from "@/hooks/use-candidate-oorwin-sync";
+import {
+  CANDIDATE_ACCENTURE_ACCEPTED_EXTENSIONS,
+  isAcceptedCandidateAccentureFile,
+  useCandidateAccentureSync,
+} from "@/hooks/use-candidate-accenture-sync";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { cn } from "@/lib/utils";
@@ -219,10 +224,14 @@ export function CandidateMasterSheetPage() {
   // The checkbox column only needs to exist if at least one of Modify/Delete is available to this user.
   const selectionUiEnabled = canModifyCandidate || canDeleteCandidate;
   const oorwinSync = useCandidateOorwinSync();
+  const accentureSync = useCandidateAccentureSync();
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [uploadInputKey, setUploadInputKey] = React.useState(0);
   const [selectedOorwinFile, setSelectedOorwinFile] = React.useState<File | null>(null);
   const [oorwinFileError, setOorwinFileError] = React.useState<string | null>(null);
+  const [accentureInputKey, setAccentureInputKey] = React.useState(0);
+  const [selectedAccentureFile, setSelectedAccentureFile] = React.useState<File | null>(null);
+  const [accentureFileError, setAccentureFileError] = React.useState<string | null>(null);
 
   // Migration 021 — Add/Modify/Delete. One shared selection (radio-style:
   // at most one row, driving both Modify and Delete) so there is never an
@@ -395,6 +404,29 @@ export function CandidateMasterSheetPage() {
     }
   }
 
+  function handleAccentureFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    if (file && !isAcceptedCandidateAccentureFile(file.name)) {
+      setSelectedAccentureFile(null);
+      setAccentureFileError("Unsupported file type. Expected .xlsx.");
+      return;
+    }
+    setAccentureFileError(null);
+    setSelectedAccentureFile(file);
+  }
+
+  async function handleRunAccentureSync() {
+    if (!selectedAccentureFile) return;
+    try {
+      await accentureSync.mutateAsync(selectedAccentureFile);
+      setSelectedAccentureFile(null);
+      setAccentureInputKey((k) => k + 1);
+      setUploadOpen(false);
+    } catch {
+      // surfaced via accentureSync.error in the result banner below
+    }
+  }
+
   function toggleColumnValue(column: string, value: string) {
     setColumnFilters((prev) => {
       const current = prev[column] ?? [];
@@ -468,6 +500,14 @@ export function CandidateMasterSheetPage() {
     ? "failed"
     : oorwinResult
       ? oorwinResult.result
+      : null;
+
+  const accentureError = accentureSync.error instanceof Error ? accentureSync.error.message : null;
+  const accentureResult = accentureSync.data ?? null;
+  const accentureBannerTone: "success" | "partial" | "failed" | null = accentureError
+    ? "failed"
+    : accentureResult
+      ? accentureResult.result
       : null;
 
   return (
@@ -578,6 +618,41 @@ export function CandidateMasterSheetPage() {
                       {oorwinSync.isPending ? "Syncing…" : "Run Sync"}
                     </Button>
                   </div>
+                  <DropdownMenuSeparator className="my-3" />
+                  <DropdownMenuLabel className="px-0 pb-2 text-xs">
+                    Upload Accenture Final Report
+                  </DropdownMenuLabel>
+                  <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+                    <p className="text-xs text-muted-foreground">
+                      Accepts .xlsx — the raw Accenture Final Report export,
+                      unmodified.
+                    </p>
+                    <Input
+                      key={accentureInputKey}
+                      type="file"
+                      accept={CANDIDATE_ACCENTURE_ACCEPTED_EXTENSIONS.join(",")}
+                      onChange={handleAccentureFileChange}
+                      disabled={accentureSync.isPending}
+                      className="h-auto py-1.5 text-xs"
+                      onKeyDown={(e) => e.stopPropagation()}
+                    />
+                    {accentureFileError ? (
+                      <p className="text-xs text-destructive">{accentureFileError}</p>
+                    ) : null}
+                    <Button
+                      type="button"
+                      className="w-full rounded-xl gap-2"
+                      onClick={() => void handleRunAccentureSync()}
+                      disabled={accentureSync.isPending || !selectedAccentureFile}
+                    >
+                      {accentureSync.isPending ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Upload className="size-4" />
+                      )}
+                      {accentureSync.isPending ? "Syncing…" : "Run Sync"}
+                    </Button>
+                  </div>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : null}
@@ -678,6 +753,9 @@ export function CandidateMasterSheetPage() {
                     unchanged · {oorwinResult.counts.quarantined} quarantined ·{" "}
                     {oorwinResult.counts.skippedBlankCid} skipped (blank CID) ·{" "}
                     {oorwinResult.counts.reviewFlags} review flag(s)
+                    {oorwinResult.counts.accentureLockedFieldsKept > 0
+                      ? ` · ${oorwinResult.counts.accentureLockedFieldsKept} email/level values kept (Accenture-locked)`
+                      : ""}
                   </p>
                   {oorwinResult.failureReason ? (
                     <p className="text-xs text-destructive/90">{oorwinResult.failureReason}</p>
@@ -701,6 +779,73 @@ export function CandidateMasterSheetPage() {
             <button
               type="button"
               onClick={() => oorwinSync.reset()}
+              aria-label="Dismiss sync result"
+              className="-mr-0.5 -mt-0.5 shrink-0 rounded-sm p-0.5 hover:bg-foreground/10"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        </FadeIn>
+      ) : null}
+
+      {accentureBannerTone ? (
+        <FadeIn>
+          <div
+            className={cn(
+              "mb-3 flex items-start gap-2 rounded-xl border p-3 text-sm",
+              accentureBannerTone === "success"
+                ? "border-primary/30 bg-primary/5 text-foreground"
+                : accentureBannerTone === "partial"
+                  ? "border-amber-500/25 bg-amber-500/5 text-foreground"
+                  : "border-destructive/30 bg-destructive/5 text-destructive"
+            )}
+            role="status"
+          >
+            {accentureBannerTone === "success" ? (
+              <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+            ) : accentureBannerTone === "partial" ? (
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            ) : (
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            )}
+            <div className="min-w-0 flex-1 space-y-1">
+              {accentureError ? (
+                <p>{accentureError}</p>
+              ) : accentureResult ? (
+                <>
+                  <p
+                    className={
+                      accentureBannerTone === "partial"
+                        ? "font-medium text-amber-600 dark:text-amber-400"
+                        : "font-medium"
+                    }
+                  >
+                    {accentureResult.result === "success"
+                      ? "Accenture Final Report sync completed — no issues."
+                      : accentureResult.result === "partial"
+                        ? "Accenture Final Report sync completed — some rows need review."
+                        : "Accenture Final Report sync failed."}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {accentureResult.sourceFilename} · {accentureResult.counts.rowsInSheet} row(s)
+                    in sheet · {accentureResult.counts.matchedCidCount} CIDs matched (
+                    {accentureResult.counts.matchedRowCount} rows) ·{" "}
+                    {accentureResult.counts.insertedCount} inserted ·{" "}
+                    {accentureResult.counts.fieldChangeCounts.email} email changed ·{" "}
+                    {accentureResult.counts.fieldChangeCounts.job_management_level} level changed ·{" "}
+                    {accentureResult.counts.nameMismatchNotesCount} name mismatch(es) noted ·{" "}
+                    {accentureResult.counts.blankCellsKeptCount} blank cell(s) kept ·{" "}
+                    {accentureResult.counts.reviewFlagCount} review flag(s)
+                  </p>
+                  {accentureResult.failureReason ? (
+                    <p className="text-xs text-destructive/90">{accentureResult.failureReason}</p>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => accentureSync.reset()}
               aria-label="Dismiss sync result"
               className="-mr-0.5 -mt-0.5 shrink-0 rounded-sm p-0.5 hover:bg-foreground/10"
             >
