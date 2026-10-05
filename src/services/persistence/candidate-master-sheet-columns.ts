@@ -23,7 +23,19 @@
  * (hypothetical re-run) behavior.
  */
 
-/** Candidate header keys in dashboard display order (Sr. No. is computed client-side, not listed here). */
+/**
+ * Candidate header keys in dashboard display order (Sr. No. is computed
+ * client-side, not listed here).
+ *
+ * "Status" was renamed to "Oorwin Candidate Stage" for the Accenture Final
+ * Report upload feature (migration 022) — display label only, the
+ * underlying `status` DB column is unchanged (see CANDIDATE_MASTER_COLUMN_MAP
+ * below, which keeps "Status" as an import alias). Five columns were added
+ * after it: Accenture Candidate Stage / Current CID Source / Application
+ * Completion Status (written by the Accenture upload, not built yet) and
+ * Screening Candidate Stage / Disposition Reason (inert placeholders for a
+ * later, separate ATCI-screening-file stage).
+ */
 export const CANDIDATE_MASTER_EXCEL_HEADERS = [
   "Candidate ID",
   "Upload Date",
@@ -37,7 +49,12 @@ export const CANDIDATE_MASTER_EXCEL_HEADERS = [
   "Job Management Level",
   "Market",
   "Client SPOC",
-  "Status",
+  "Oorwin Candidate Stage",
+  "Accenture Candidate Stage",
+  "Current CID Source",
+  "Application Completion Status",
+  "Screening Candidate Stage",
+  "Disposition Reason",
   "Submitted Date",
   "Submission Comments",
   "Gender",
@@ -67,7 +84,12 @@ export const CANDIDATE_MASTER_SHEET_DB_COLUMNS = [
   "job_management_level", // was management_level
   "market",
   "client_spoc",
-  "status", // was status_recruiter
+  "status", // was status_recruiter; displayed as "Oorwin Candidate Stage"
+  "accenture_candidate_stage", // migration 022
+  "current_cid_source", // migration 022
+  "application_completion_status", // migration 022
+  "screening_candidate_stage", // migration 022; placeholder, not written yet
+  "disposition_reason", // migration 022; placeholder, not written yet
   "submitted_date", // was submitted_date_tracker
   "submission_comments", // was remarks_status
   "gender", // was diversity
@@ -137,9 +159,38 @@ export const CANDIDATE_MASTER_COLUMN_MAP: readonly CandidateMasterColumnMapping[
     { excelHeader: "Market", dbColumn: "market", importAliases: ["Market"] },
     { excelHeader: "Client SPOC", dbColumn: "client_spoc", importAliases: [] },
     {
-      excelHeader: "Status",
+      // Label renamed from "Status" for the Accenture Final Report upload
+      // feature (migration 022) — dbColumn is unchanged; "Status" is kept as
+      // an import alias so any import path still matching that spelling
+      // keeps working.
+      excelHeader: "Oorwin Candidate Stage",
       dbColumn: "status",
-      importAliases: ["Status (Recruiter)"],
+      importAliases: ["Status (Recruiter)", "Status"],
+    },
+    {
+      excelHeader: "Accenture Candidate Stage",
+      dbColumn: "accenture_candidate_stage",
+      importAliases: [],
+    },
+    {
+      excelHeader: "Current CID Source",
+      dbColumn: "current_cid_source",
+      importAliases: [],
+    },
+    {
+      excelHeader: "Application Completion Status",
+      dbColumn: "application_completion_status",
+      importAliases: [],
+    },
+    {
+      excelHeader: "Screening Candidate Stage",
+      dbColumn: "screening_candidate_stage",
+      importAliases: [],
+    },
+    {
+      excelHeader: "Disposition Reason",
+      dbColumn: "disposition_reason",
+      importAliases: [],
     },
     {
       excelHeader: "Submitted Date",

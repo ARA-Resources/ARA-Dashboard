@@ -232,8 +232,8 @@ async function main() {
 
     check(
       results,
-      "Sync 1: C90000101 shows 'Status' as a changed (green) cell",
-      (h1.changedCellsByCid["C90000101"] ?? []).includes("Status"),
+      "Sync 1: C90000101 shows 'Oorwin Candidate Stage' as a changed (green) cell",
+      (h1.changedCellsByCid["C90000101"] ?? []).includes("Oorwin Candidate Stage"),
       JSON.stringify(h1.changedCellsByCid["C90000101"])
     );
     check(
@@ -375,9 +375,9 @@ async function main() {
 
     check(
       results,
-      "Sync 2: C90000101 now shows ONLY 'Customer' as changed — NOT 'Status' (sync 1's change doesn't leak forward)",
+      "Sync 2: C90000101 now shows ONLY 'Customer' as changed — NOT 'Oorwin Candidate Stage' (sync 1's change doesn't leak forward)",
       (h2.changedCellsByCid["C90000101"] ?? []).includes("Customer") &&
-        !(h2.changedCellsByCid["C90000101"] ?? []).includes("Status"),
+        !(h2.changedCellsByCid["C90000101"] ?? []).includes("Oorwin Candidate Stage"),
       JSON.stringify(h2.changedCellsByCid["C90000101"])
     );
     check(

@@ -78,6 +78,22 @@ const SECTIONS: { title: string; fields: CandidateMasterSheetDbColumn[] }[] = [
       "client_spoc",
     ],
   },
+  {
+    // Migration 022 — Accenture Final Report columns. Editable like every
+    // other field in this form; email_accenture_locked /
+    // job_management_level_accenture_locked / last_accenture_sync_id are
+    // deliberately NOT in CANDIDATE_MASTER_SHEET_DB_COLUMNS (see
+    // candidate-master-sheet-columns.ts) so they can never appear here or
+    // in any request this form sends.
+    title: "Accenture",
+    fields: [
+      "accenture_candidate_stage",
+      "current_cid_source",
+      "application_completion_status",
+      "screening_candidate_stage",
+      "disposition_reason",
+    ],
+  },
 ];
 
 const LABEL_BY_COLUMN = new Map<CandidateMasterSheetDbColumn, string>(

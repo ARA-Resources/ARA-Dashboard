@@ -144,12 +144,12 @@ async function main() {
     const andedResult = await queryCandidateMasterSheetPage({
       ...BASE_QUERY,
       syncFilter: targetSyncId,
-      columnFilters: { Status: ["Active"] },
+      columnFilters: { "Oorwin Candidate Stage": ["Active"] },
     });
     const andedCids = new Set(andedResult.rows.map((r) => r["Candidate ID"]));
     check(
       results,
-      "syncFilter ANDs with an existing column filter (Status=Active keeps all 3 — they're all Active)",
+      "syncFilter ANDs with an existing column filter (Oorwin Candidate Stage=Active keeps all 3 — they are all Active)",
       andedCids.size === 3,
       `got: ${[...andedCids].sort().join(", ")}`
     );
@@ -157,11 +157,11 @@ async function main() {
     const andedResultInactive = await queryCandidateMasterSheetPage({
       ...BASE_QUERY,
       syncFilter: targetSyncId,
-      columnFilters: { Status: ["Inactive"] },
+      columnFilters: { "Oorwin Candidate Stage": ["Inactive"] },
     });
     check(
       results,
-      "syncFilter ANDs with an existing column filter (Status=Inactive excludes all 3 target-sync rows)",
+      "syncFilter ANDs with an existing column filter (Oorwin Candidate Stage=Inactive excludes all 3 target-sync rows)",
       andedResultInactive.rows.length === 0,
       `got: ${andedResultInactive.rows.length} row(s)`
     );
