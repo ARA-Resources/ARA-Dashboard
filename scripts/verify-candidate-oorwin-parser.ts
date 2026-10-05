@@ -61,17 +61,23 @@ async function main() {
     JSON.stringify(parsed.matchedHeaders)
   );
 
+  // Detail is a redacted summary (booleans per field, never the actual
+  // name/mobile values) — this script reads a real Oorwin sample file, and
+  // its output must never print a real candidate's name/email/phone.
   const first = parsed.rows[0];
+  const firstRowChecks = {
+    cid: first?.cid === "C27803646",
+    firstName: first?.firstName === "Nitu",
+    middleName: first?.middleName === "-",
+    lastName: first?.lastName === "Kumari",
+    mobile: first?.mobile === "918797271671",
+    clientSubmissionJr: first?.clientSubmissionJr === "ATCI-R1-S1926331",
+  };
   check(
     results,
     "First data row's fields match the real file exactly",
-    first?.cid === "C27803646" &&
-      first?.firstName === "Nitu" &&
-      first?.middleName === "-" &&
-      first?.lastName === "Kumari" &&
-      first?.mobile === "918797271671" &&
-      first?.clientSubmissionJr === "ATCI-R1-S1926331",
-    JSON.stringify(first)
+    Object.values(firstRowChecks).every(Boolean),
+    JSON.stringify(firstRowChecks)
   );
 
   // Row with a numeric-typed CID cell (7447312071, no "C" prefix) — must come

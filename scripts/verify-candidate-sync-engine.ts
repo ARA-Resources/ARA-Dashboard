@@ -89,12 +89,12 @@ async function main() {
   );
   check(
     results,
-    "Real file: C27803646 (Nitu Kumari vs Yogesh Bhati) quarantined with 2 members",
+    "Real file: C27803646 (a known duplicate-name-mismatch CID) quarantined with 2 members",
     groupsByType.get("C27803646")?.members.length === 2
   );
   check(
     results,
-    "Real file: C27788750 (Subhashree Panda vs SUSHMA NAIK) quarantined with 2 members",
+    "Real file: C27788750 (a known duplicate-name-mismatch CID) quarantined with 2 members",
     groupsByType.get("C27788750")?.members.length === 2
   );
   check(
