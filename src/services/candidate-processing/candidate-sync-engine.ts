@@ -100,6 +100,7 @@ import { getDbClient } from "@/lib/persistence/db-client";
 import { resolveCandidateAutoFetchFields } from "./candidate-auto-fetch";
 import { combineCandidateName, normalizeCandidateMobile } from "./candidate-field-utils";
 import type { CandidateOorwinParsedRow } from "./candidate-oorwin-parser";
+import { extractJmlNumber } from "./candidate-jml-format";
 
 /** DB columns diffed/updated by the sync (excludes id/cid/date_of_upload/created_at/updated_at/last_touched_at). */
 const DIFFABLE_FIELDS = [
@@ -137,6 +138,15 @@ export interface CandidateSyncSummary {
   quarantinedCount: number;
   skippedBlankCidCount: number;
   reviewFlagCount: number;
+  /**
+   * Migration 022 — count of (row, field) instances where email or
+   * job_management_level was skipped this run because the row's Accenture
+   * lock was already set. No review flag or candidate_sync_changes row is
+   * written for this (unlike jr_id_conflict, which recurs every run by
+   * design) — this counter is the only record of it, surfaced on the
+   * result banner as "N email/level values kept (Accenture-locked)".
+   */
+  accentureLockedFieldsKeptCount: number;
   outcomes: CandidateSyncRowOutcome[];
 }
 
@@ -356,7 +366,11 @@ async function processSurvivorRow(
   sqlClient: SqlClient,
   syncId: number,
   row: CandidateOorwinParsedRow
-): Promise<{ outcome: CandidateSyncRowOutcome; reviewFlagsWritten: number }> {
+): Promise<{
+  outcome: CandidateSyncRowOutcome;
+  reviewFlagsWritten: number;
+  accentureLockedFieldsKept: number;
+}> {
   const cid = row.cid.trim();
   const desired = await buildDesiredFields(row, sqlClient);
   let reviewFlagsWritten = 0;
@@ -406,7 +420,45 @@ async function processSurvivorRow(
       return {
         outcome: { cid, action: "quarantined", changedFields: [] },
         reviewFlagsWritten,
+        accentureLockedFieldsKept: 0,
       };
+    }
+  }
+
+  // Migration 022 — Accenture lock support. Reuses the exact same
+  // conflictFields skip machinery the JR-conflict path already relies on
+  // (never overwrite on conflict, in both the changedFields diff below and
+  // the UPDATE's SET list) — so a locked field writes NO review flag and NO
+  // candidate_sync_changes row, unlike jr_id_conflict's own recurring flag.
+  // Only applies to an existing row: a lock can't exist on a row that
+  // doesn't exist yet, so this never touches the INSERT path below.
+  //
+  // The counter only increments when the lock actually blocked something —
+  // i.e. Oorwin's own desired value for that field, read BEFORE these
+  // conflictFields.add() calls run (buildDesiredFields already computed
+  // `desired.values` from its own, separate, JR-conflict-only snapshot of
+  // conflictFields, so these reads are never blanked out by the add() calls
+  // below), genuinely differs from what's already stored. A locked row
+  // where Oorwin agrees, or has nothing usable for that field, never
+  // actually loses a write, so it must count 0. Email compares the same way
+  // the plain diff loop below does (`!==` on the already-coerceBlank'd
+  // value); job_management_level compares by NUMBER via extractJmlNumber —
+  // Oorwin's auto-fetched value and Accenture's stored "CL<n>" form are
+  // frequently the same level in different text ("9-Team Lead/Consultant"
+  // vs "CL9"), and a format-only difference must not count as blocked.
+  let accentureLockedFieldsKept = 0;
+  if (existing) {
+    if (existing.email_accenture_locked) {
+      if (desired.values.email !== existing.email) accentureLockedFieldsKept += 1;
+      desired.conflictFields.add("email");
+    }
+    if (existing.job_management_level_accenture_locked) {
+      const desiredLevelNumber = extractJmlNumber(desired.values.job_management_level);
+      const storedLevelNumber = extractJmlNumber(existing.job_management_level);
+      if (desiredLevelNumber !== null && desiredLevelNumber !== storedLevelNumber) {
+        accentureLockedFieldsKept += 1;
+      }
+      desired.conflictFields.add("job_management_level");
     }
   }
 
@@ -433,6 +485,7 @@ async function processSurvivorRow(
     return {
       outcome: { cid, action: "inserted", changedFields: [] },
       reviewFlagsWritten,
+      accentureLockedFieldsKept: 0,
     };
   }
 
@@ -445,7 +498,11 @@ async function processSurvivorRow(
   }
 
   if (changedFields.length === 0) {
-    return { outcome: { cid, action: "unchanged", changedFields: [] }, reviewFlagsWritten };
+    return {
+      outcome: { cid, action: "unchanged", changedFields: [] },
+      reviewFlagsWritten,
+      accentureLockedFieldsKept,
+    };
   }
 
   for (const field of changedFields) {
@@ -480,6 +537,7 @@ async function processSurvivorRow(
   return {
     outcome: { cid, action: "updated", changedFields },
     reviewFlagsWritten,
+    accentureLockedFieldsKept,
   };
 }
 
@@ -522,11 +580,17 @@ export async function runCandidateSync(
   // CID that job_requisition_id couldn't narrow to one live row), distinct
   // from the pre-processing dedupe.quarantined/invalidCid groups below.
   let ambiguousCidQuarantinedCount = 0;
+  let accentureLockedFieldsKeptCount = 0;
 
   for (const survivor of dedupe.survivors) {
-    const { outcome, reviewFlagsWritten } = await processSurvivorRow(sql, syncId, survivor.row);
+    const { outcome, reviewFlagsWritten, accentureLockedFieldsKept } = await processSurvivorRow(
+      sql,
+      syncId,
+      survivor.row
+    );
     outcomes.push(outcome);
     reviewFlagCount += reviewFlagsWritten;
+    accentureLockedFieldsKeptCount += accentureLockedFieldsKept;
     if (outcome.action === "inserted") insertedCount += 1;
     else if (outcome.action === "updated") updatedCount += 1;
     else if (outcome.action === "unchanged") unchangedCount += 1;
@@ -546,6 +610,7 @@ export async function runCandidateSync(
     quarantinedCount,
     skippedBlankCidCount,
     reviewFlagCount,
+    accentureLockedFieldsKeptCount,
     outcomes,
   };
 }

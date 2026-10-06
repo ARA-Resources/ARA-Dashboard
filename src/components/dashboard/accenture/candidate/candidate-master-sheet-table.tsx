@@ -25,6 +25,43 @@ import type {
   CandidateMasterSheetHighlights,
   CandidateMasterSheetPgRow,
 } from "@/services/persistence/candidate-master-sheet-postgres";
+import type { CandidateAccentureHoverEntry } from "@/services/persistence/read-candidate-accenture-highlights";
+
+/** Stage 3 — the 5 Accenture-synced fields + Name get the richer hover; every other column's hover stays the plain cell-value title. */
+const ACCENTURE_HOVER_HEADERS = new Set([
+  "Email",
+  "Job Management Level",
+  "Accenture Candidate Stage",
+  "Current CID Source",
+  "Application Completion Status",
+  "Name",
+]);
+
+function formatAccentureHoverDate(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
+}
+
+/** Builds the rich Accenture hover title for one of ACCENTURE_HOVER_HEADERS, or null when the plain cell-value title should be used instead (not Accenture-latest, or a Name note that's since been corrected). */
+function buildAccentureHoverTitle(
+  header: string,
+  hoverEntry: CandidateAccentureHoverEntry | undefined,
+  currentDisplayValue: string
+): string | null {
+  if (!hoverEntry?.isAccentureLatest) return null;
+  const date = formatAccentureHoverDate(hoverEntry.startedAt);
+  if (header === "Name") {
+    const fileName = hoverEntry.fileReportedValue;
+    if (!fileName) return null;
+    const stillDiffers =
+      fileName.trim().toLowerCase().replace(/\s+/g, " ") !==
+      currentDisplayValue.trim().toLowerCase().replace(/\s+/g, " ");
+    if (!stillDiffers) return null; // corrected to match — no note, no highlight (caller already drops the highlight via accentureCellsByCid)
+    return `Accenture reports: ${fileName}. Name not changed.`;
+  }
+  return `Updated by Accenture Final Report, ${date}, previous value: ${hoverEntry.previousValue ?? "-"}`;
+}
 import { LateralMasterColumnFilter } from "@/components/dashboard/accenture/lateral/lateral-master-column-filter";
 import {
   useMasterSheetScrollShell,
@@ -409,6 +446,10 @@ export function CandidateMasterSheetTable({
                       const isDuplicateFlagged = duplicateFlagReasons.length > 0;
                       const changedHeaders = cid ? highlights?.changedCellsByCid[cid] : undefined;
                       const fieldFlags = cid ? highlights?.fieldFlagsByCid[cid] : undefined;
+                      const accentureHeaders = cid ? highlights?.accentureCellsByCid[cid] : undefined;
+                      const accentureHoverForRow = cid ? highlights?.accentureHoverByCid[cid] : undefined;
+                      const isAccentureInsertedRow =
+                        cid ? (highlights?.accentureInsertedCids.includes(cid) ?? false) : false;
                       const duplicateFlagMessages: Record<string, string> = {
                         invalid_candidate_id:
                           "This Candidate ID doesn't match the expected format (\"C\" + digits) — needs manual review.",
@@ -457,6 +498,13 @@ export function CandidateMasterSheetTable({
                             const isCandidateId = isCandidateIdColumn(header);
                             const fieldFlag = fieldFlags?.find((f) => f.header === header);
                             const isChanged = changedHeaders?.some((h) => h === header) ?? false;
+                            // Stage 3 precedence: amber (review flag) > violet (Accenture) > emerald (Oorwin).
+                            const isAccentureCell =
+                              (accentureHeaders?.some((h) => h === header) ?? false) ||
+                              (isCandidateId && isAccentureInsertedRow);
+                            const richHoverTitle = ACCENTURE_HOVER_HEADERS.has(header)
+                              ? buildAccentureHoverTitle(header, accentureHoverForRow?.[header], display)
+                              : null;
                             return (
                               <TableCell
                                 key={`${row.id}-${header}`}
@@ -464,7 +512,9 @@ export function CandidateMasterSheetTable({
                                   "max-w-[280px] px-3 py-3",
                                   fieldFlag
                                     ? "bg-amber-500/10"
-                                    : isChanged && "bg-emerald-500/10"
+                                    : isAccentureCell
+                                      ? "bg-violet-500/10"
+                                      : isChanged && "bg-emerald-500/10"
                                 )}
                               >
                                 {fieldFlag ? (
@@ -499,7 +549,7 @@ export function CandidateMasterSheetTable({
                                 ) : (
                                   <span
                                     className="line-clamp-3 break-words"
-                                    title={display}
+                                    title={richHoverTitle ?? display}
                                   >
                                     {display}
                                   </span>

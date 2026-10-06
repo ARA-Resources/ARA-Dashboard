@@ -24,6 +24,7 @@ export interface CandidateSyncRunResult {
     quarantined: number;
     skippedBlankCid: number;
     reviewFlags: number;
+    accentureLockedFieldsKept: number;
   };
   failureReason: string | null;
 }

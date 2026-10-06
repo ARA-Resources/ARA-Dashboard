@@ -20,6 +20,7 @@ import {
   getCandidateChangeHistory,
   getLatestCandidateChangedFields,
 } from "../src/services/persistence/read-candidate-highlights";
+import { kindLabelClassName } from "../src/services/candidate-processing/candidate-history-label-style";
 
 interface TestResult {
   name: string;
@@ -79,6 +80,14 @@ const BASE = {
 
 async function main() {
   const results: TestResult[] = [];
+
+  // History modal label color: violet ONLY for Accenture entries; a neutral
+  // muted color for Oorwin, manual, and legacy entries (no DB needed — pure).
+  check(results, "kindLabelClassName('Accenture Final Report upload') is violet", kindLabelClassName("Accenture Final Report upload").includes("violet"));
+  check(results, "kindLabelClassName('Oorwin upload') is muted, not violet", kindLabelClassName("Oorwin upload") === "text-muted-foreground");
+  check(results, "kindLabelClassName('Manual edit') is muted, not violet", kindLabelClassName("Manual edit") === "text-muted-foreground");
+  check(results, "kindLabelClassName('Legacy') is muted, not violet", kindLabelClassName("Legacy") === "text-muted-foreground");
+
   const sql = getDbClient();
 
   try {
@@ -144,13 +153,18 @@ async function main() {
     const history = await getCandidateChangeHistory(CID, sql);
 
     check(results, "History has exactly 3 entries (one per sync, not accumulated/deduped away)", history.length === 3, `got ${history.length}`);
+    // Stage 3: ordering is now changed_at DESC, id DESC (newest first) —
+    // entry[0] is the NEWEST sync, entry[2] the OLDEST. See
+    // read-candidate-highlights.ts's getCandidateChangeHistory doc comment
+    // for why the id tie-break is required (Stage 2's Accenture engine runs
+    // one whole-file transaction, under which Postgres's now() is stable).
     check(
       results,
-      "Entry 1 (oldest) is Customer, old=Cust A new=Cust B, from sync 1",
-      history[0]?.header === "Customer" &&
-        history[0]?.oldValue === "Cust A" &&
-        history[0]?.newValue === "Cust B" &&
-        history[0]?.syncId === syncIds[0],
+      "Entry 1 (newest) is Market, old=Mkt A new=Mkt B, from sync 3",
+      history[0]?.header === "Market" &&
+        history[0]?.oldValue === "Mkt A" &&
+        history[0]?.newValue === "Mkt B" &&
+        history[0]?.syncId === syncIds[2],
       JSON.stringify(history[0])
     );
     check(
@@ -164,28 +178,28 @@ async function main() {
     );
     check(
       results,
-      "Entry 3 (newest) is Market, old=Mkt A new=Mkt B, from sync 3",
-      history[2]?.header === "Market" &&
-        history[2]?.oldValue === "Mkt A" &&
-        history[2]?.newValue === "Mkt B" &&
-        history[2]?.syncId === syncIds[2],
+      "Entry 3 (oldest) is Customer, old=Cust A new=Cust B, from sync 1",
+      history[2]?.header === "Customer" &&
+        history[2]?.oldValue === "Cust A" &&
+        history[2]?.newValue === "Cust B" &&
+        history[2]?.syncId === syncIds[0],
       JSON.stringify(history[2])
     );
     check(
       results,
-      "Chronological order: changedAt strictly increasing across all 3 entries",
-      new Date(history[0]!.changedAt).getTime() <= new Date(history[1]!.changedAt).getTime() &&
-        new Date(history[1]!.changedAt).getTime() <= new Date(history[2]!.changedAt).getTime()
+      "Order: changedAt non-increasing (newest first) across all 3 entries",
+      new Date(history[0]!.changedAt).getTime() >= new Date(history[1]!.changedAt).getTime() &&
+        new Date(history[1]!.changedAt).getTime() >= new Date(history[2]!.changedAt).getTime()
     );
     check(
       results,
       "Each entry's source_filename/triggered_by traces back to the right sync",
-      history[0]?.sourceFilename === "history-sync-1.xls" &&
-        history[0]?.triggeredBy === "alice@example.com" &&
+      history[0]?.sourceFilename === "history-sync-3.xls" &&
+        history[0]?.triggeredBy === "carol@example.com" &&
         history[1]?.sourceFilename === "history-sync-2.xls" &&
         history[1]?.triggeredBy === "bob@example.com" &&
-        history[2]?.sourceFilename === "history-sync-3.xls" &&
-        history[2]?.triggeredBy === "carol@example.com"
+        history[2]?.sourceFilename === "history-sync-1.xls" &&
+        history[2]?.triggeredBy === "alice@example.com"
     );
 
     // Cross-check against C9: the highlight (latest-only) view for the same

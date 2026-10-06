@@ -28,6 +28,8 @@ export interface CandidateSyncHistoryRow {
   result: "success" | "partial" | "failed";
   sourceFilename: string | null;
   triggeredBy: string | null;
+  /** Stage 3 — null for a pre-migration-021/script-driven row. */
+  kind: string | null;
   counts: {
     rowsInSheet: number;
     inserted: number;
@@ -66,12 +68,13 @@ export async function listRecentCandidateSyncHistory(
       unchanged_count: number;
       quarantined_count: number;
       review_flag_count: number;
+      kind: string | null;
     }[]
   >`
     SELECT
       id, started_at, finished_at, result, source_filename, triggered_by,
       rows_in_sheet, inserted_count, updated_count, unchanged_count,
-      quarantined_count, review_flag_count
+      quarantined_count, review_flag_count, kind
     FROM candidate_sync_history
     WHERE source_filename IS DISTINCT FROM 'legacy-schema-migration-oorwin'
       AND (source_filename IS NULL OR source_filename NOT LIKE 'manual-%')
@@ -85,6 +88,7 @@ export async function listRecentCandidateSyncHistory(
     result: row.result as CandidateSyncHistoryRow["result"],
     sourceFilename: row.source_filename,
     triggeredBy: row.triggered_by,
+    kind: row.kind,
     counts: {
       rowsInSheet: row.rows_in_sheet,
       inserted: row.inserted_count,

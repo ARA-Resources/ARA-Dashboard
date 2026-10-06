@@ -6,6 +6,7 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CandidateHistoryEntry } from "@/services/persistence/read-candidate-highlights";
+import { kindLabelClassName } from "@/services/candidate-processing/candidate-history-label-style";
 
 export interface CandidateHistoryModalProps {
   open: boolean;
@@ -21,6 +22,7 @@ function formatChangedAt(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
+
 /**
  * Candidate Master Sheet — C10 full change history popup. Opens from
  * clicking a Candidate ID cell; same modal shell as
@@ -31,7 +33,8 @@ function formatChangedAt(iso: string): string {
  * nobody clicks.
  *
  * Deliberately unfiltered: every field change ever recorded for this CID,
- * oldest first — the opposite of C9's "latest sync only" highlight rule.
+ * newest first (Stage 3) — the opposite of C9's "latest sync only"
+ * highlight rule.
  */
 export function CandidateHistoryModal({
   open,
@@ -101,11 +104,20 @@ export function CandidateHistoryModal({
                         {formatChangedAt(entry.changedAt)}
                       </span>
                     </div>
-                    <p className="mt-1 break-words text-foreground">
-                      <span className="text-muted-foreground line-through">{entry.oldValue}</span>
-                      <span className="mx-1.5 text-muted-foreground">&rarr;</span>
-                      <span>{entry.newValue}</span>
+                    <p className={cn("mt-0.5 text-xs font-medium", kindLabelClassName(entry.kindLabel))}>
+                      {entry.kindLabel}
                     </p>
+                    {entry.isAccentureNameMismatch ? (
+                      <p className="mt-1 break-words text-foreground">
+                        Name mismatch noted (Accenture): {entry.newValue}, not applied
+                      </p>
+                    ) : (
+                      <p className="mt-1 break-words text-foreground">
+                        <span className="text-muted-foreground line-through">{entry.oldValue}</span>
+                        <span className="mx-1.5 text-muted-foreground">&rarr;</span>
+                        <span>{entry.newValue}</span>
+                      </p>
+                    )}
                     {entry.sourceFilename || entry.triggeredBy ? (
                       <p className="mt-1 truncate text-xs text-muted-foreground">
                         {entry.sourceFilename ?? "-"}
