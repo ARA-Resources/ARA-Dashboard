@@ -173,6 +173,42 @@ async function main() {
     );
   }
 
+  // ===== 4. --apply refuses while an Oorwin sync run is IN PROGRESS (finished_at IS NULL) =====
+  {
+    const sql = postgres(NORMAL_URL!, { max: 1, ssl: NORMAL_URL!.includes("127.0.0.1") ? false : "require" });
+    const [{ id: fakeRunId }] = await sql<{ id: number }[]>`
+      INSERT INTO candidate_sync_history (started_at, result, kind) VALUES (NOW(), 'success', 'oorwin_upload') RETURNING id
+    `;
+    try {
+      const before = await countRows(NORMAL_URL!);
+      const { stdout: dryStdout } = await runCli(NORMAL_URL!, ["--file", SAMPLE_FILE]);
+      const liveMatch = dryStdout.match(/matchedCidCount: (\d+)/);
+      const liveMatchedCidCount = liveMatch ? liveMatch[1] : "0";
+      const { stdout, stderr, code } = await runCli(NORMAL_URL!, [
+        "--file",
+        SAMPLE_FILE,
+        "--apply",
+        `--confirm-matched=${liveMatchedCidCount}`,
+      ]);
+      const after = await countRows(NORMAL_URL!);
+      check("In-progress Oorwin run: --apply is REFUSED (non-zero exit)", code !== 0, `exit=${code}`);
+      check(
+        "In-progress Oorwin run: refusal names the in-progress run",
+        new RegExp(`IN PROGRESS.*ids ${fakeRunId}\\b`).test(stderr) || stderr.includes(`ids ${fakeRunId},`),
+        stderr.slice(0, 300)
+      );
+      check(
+        "In-progress Oorwin run: wrote absolutely nothing",
+        before.master === after.master && before.history === after.history && before.changes === after.changes,
+        JSON.stringify({ before, after })
+      );
+      check("In-progress Oorwin run: no 'Applied (real writes)' banner ever printed", !/Applied \(real writes\)/.test(stdout));
+    } finally {
+      await sql`DELETE FROM candidate_sync_history WHERE id = ${fakeRunId}`;
+      await sql.end();
+    }
+  }
+
   console.log("\n========== TEST RESULTS ==========");
   let failures = 0;
   for (const r of results) {

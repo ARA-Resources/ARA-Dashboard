@@ -66,6 +66,13 @@ function makeSqlClient(url: string): ReturnType<typeof postgres> {
   });
 }
 
+/** True for the replay-mode summary (dated Master Sheet export) — the one field neither shape shares with the other. */
+function isReplaySummary(
+  c: Awaited<ReturnType<typeof invokeCandidateAccentureSync>>["counts"]
+): c is Extract<typeof c, { fileLastDateKey: unknown }> {
+  return "fileLastDateKey" in c;
+}
+
 function printCounts(label: string, result: Awaited<ReturnType<typeof invokeCandidateAccentureSync>>) {
   console.log(`\n${label}`);
   console.log(`  result: ${result.result}${result.dryRun ? " (dry run — zero writes)" : ""}`);
@@ -81,10 +88,19 @@ function printCounts(label: string, result: Awaited<ReturnType<typeof invokeCand
   console.log(`  invalidCidCount: ${c.invalidCidCount}`);
   console.log(`  reviewFlagCount: ${c.reviewFlagCount}`);
   console.log(`  fieldChangeCounts: ${JSON.stringify(c.fieldChangeCounts)}`);
-  console.log(`  levelFormatOnlyNoOpCount: ${c.levelFormatOnlyNoOpCount}`);
-  console.log(`  nameMismatchNotesCount: ${c.nameMismatchNotesCount}`);
-  console.log(`  blankCellsKeptCount: ${c.blankCellsKeptCount}`);
   console.log(`  newlyLockedCount: ${JSON.stringify(c.newlyLockedCount)}`);
+  if (isReplaySummary(c)) {
+    console.log(`  [replay mode] fileLastDateKey: ${c.fileLastDateKey}`);
+    console.log(`  [replay mode] uniqueCidCount: ${c.uniqueCidCount}`);
+    console.log(`  [replay mode] sameDayDuplicateRowCount: ${c.sameDayDuplicateRowCount}`);
+    console.log(`  [replay mode] historyRowCount: ${c.historyRowCount}`);
+    console.log(`  [replay mode] frozenFieldCount: ${c.frozenFieldCount}`);
+    console.log(`  [replay mode] nameMismatchNotesCount: ${c.nameMismatchNotesCount}`);
+  } else {
+    console.log(`  levelFormatOnlyNoOpCount: ${c.levelFormatOnlyNoOpCount}`);
+    console.log(`  nameMismatchNotesCount: ${c.nameMismatchNotesCount}`);
+    console.log(`  blankCellsKeptCount: ${c.blankCellsKeptCount}`);
+  }
 }
 
 async function main() {
@@ -164,6 +180,29 @@ async function main() {
       console.error(
         `\n--confirm-matched=${confirmMatched} does not match this run's live computed count of ${liveMatchedCidCount}. ` +
           `Refusing to write. Re-run with --confirm-matched=${liveMatchedCidCount} if that count is correct.`
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    // A running Oorwin upload creates its candidate_sync_history row with
+    // finished_at still NULL and only fills it in once that run completes
+    // (candidate-sync-job.ts) — the one existing, reliable "in progress"
+    // signal this schema already has. Refuse to start a 51k-row Accenture
+    // apply that might overlap it: both engines write candidate_master /
+    // candidate_sync_changes, and neither takes a lock the other respects.
+    const inProgressOorwin = await sql<{ id: number; started_at: string }[]>`
+      SELECT id, started_at FROM candidate_sync_history
+      WHERE kind = 'oorwin_upload' AND finished_at IS NULL
+      ORDER BY id DESC
+    `;
+    if (inProgressOorwin.length > 0) {
+      console.error(
+        `\nRefusing --apply: ${inProgressOorwin.length} Oorwin sync run(s) appear to be IN PROGRESS ` +
+          `(candidate_sync_history.finished_at IS NULL) — ids ${inProgressOorwin.map((r) => r.id).join(", ")}, ` +
+          `started ${inProgressOorwin.map((r) => r.started_at).join(", ")}. ` +
+          "Both engines write candidate_master / candidate_sync_changes; wait for it to finish (or confirm it's actually stuck/dead) before applying. " +
+          "Re-run once clear."
       );
       process.exitCode = 1;
       return;
