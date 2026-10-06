@@ -22,6 +22,12 @@ function formatChangedAt(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
+/** "YYYY-MM-DD" -> a locale date string, matching formatChangedAt's style but date-only (a report date has no time-of-day). */
+function formatReportDate(dateKey: string): string {
+  const d = new Date(`${dateKey}T00:00:00.000Z`);
+  return Number.isNaN(d.getTime()) ? dateKey : d.toLocaleDateString();
+}
+
 
 /**
  * Candidate Master Sheet — C10 full change history popup. Opens from
@@ -101,9 +107,14 @@ export function CandidateHistoryModal({
                     <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
                       <span className="font-medium text-foreground">{entry.header}</span>
                       <span className="text-xs text-muted-foreground">
-                        {formatChangedAt(entry.changedAt)}
+                        {entry.reportDate ? formatReportDate(entry.reportDate) : formatChangedAt(entry.changedAt)}
                       </span>
                     </div>
+                    {entry.reportDate ? (
+                      <p className="text-[10px] text-muted-foreground/70">
+                        Uploaded {formatChangedAt(entry.changedAt)}
+                      </p>
+                    ) : null}
                     <p className={cn("mt-0.5 text-xs font-medium", kindLabelClassName(entry.kindLabel))}>
                       {entry.kindLabel}
                     </p>

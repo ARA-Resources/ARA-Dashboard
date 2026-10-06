@@ -21,15 +21,32 @@
  * filter is a belt-and-suspenders guard, not the only thing protecting
  * against a failed run polluting the highlight state.
  *
- * Tie-break by `id DESC`, never `changed_at DESC`, when finding the single
- * most recent candidate_sync_changes row for a (cid, field_name) pair:
- * confirmed empirically (see scripts/verify-candidate-accenture-highlights.ts)
- * that Postgres's `now()` — what `changed_at`'s column DEFAULT uses — is
- * STABLE for the lifetime of one transaction, not per-statement. Stage 2's
- * whole-file engine runs inside exactly one `sql.begin()` transaction, so
- * EVERY candidate_sync_changes row one Accenture run writes shares the
- * identical `changed_at` value; `id` (BIGSERIAL, strictly increasing in
- * insertion/statement order) is the only reliable ordering signal.
+ * ORDER BY `changed_at DESC, id DESC` (changed from a plain `id DESC`) when
+ * finding the single most recent candidate_sync_changes row for a
+ * (cid, field_name) pair. The classic engine's own rows never backdate
+ * `changed_at` — within its one `sql.begin()` transaction, Postgres's
+ * `now()` (the column's DEFAULT) is stable for the whole transaction, so
+ * every row that ONE run writes shares an identical `changed_at`, and
+ * `id DESC` alone used to be the only reliable signal for those rows
+ * (confirmed empirically, scripts/verify-candidate-accenture-highlights.ts).
+ * That stopped being sufficient once the Accenture REPLAY engine
+ * (candidate-accenture-replay-engine.ts, dated Master Sheet uploads)
+ * started backdating most steps' `changed_at` to their true file report
+ * date — a row inserted today with an old `changed_at` still gets a
+ * higher `id` than anything from a genuinely older run, so `id DESC`
+ * alone would wrongly rank a backdated historical step as "latest" over
+ * a real, more recent Oorwin/manual edit (the frozen-field case).
+ *
+ * This is only safe BECAUSE the replay engine stamps exactly one step per
+ * (cid, field_name) per run — whichever one actually writes the live
+ * `candidate_master` column — with REAL time instead of its backdated
+ * date (see that module's "LATEST-WRITER ORDERING" doc comment). That
+ * makes `changed_at DESC, id DESC` correct in both directions: a frozen
+ * field's Accenture steps all stay backdated (none of them wrote live),
+ * so a later real edit's genuinely later `changed_at` correctly wins; and
+ * when Accenture DOES overwrite a field after an earlier real edit (the
+ * "inversion" case), the one step that performed that write carries
+ * today's real timestamp, correctly outranking that earlier edit.
  */
 import { getDbClient } from "@/lib/persistence/db-client";
 import type postgres from "postgres";
@@ -171,14 +188,14 @@ export async function getAccentureHoverData(
     }[]
   >`
     WITH scoped AS (
-      SELECT cid, field_name, sync_id, old_value, new_value, id
+      SELECT cid, field_name, sync_id, old_value, new_value, id, changed_at
       FROM candidate_sync_changes
       WHERE cid = ANY(${cids}) AND field_name = ANY(${ACCENTURE_HOVER_FIELDS})
     ),
     ranked AS (
       SELECT
-        cid, field_name, sync_id, old_value, new_value, id,
-        ROW_NUMBER() OVER (PARTITION BY cid, field_name ORDER BY id DESC) AS rn_latest,
+        cid, field_name, sync_id, old_value, new_value, id, changed_at,
+        ROW_NUMBER() OVER (PARTITION BY cid, field_name ORDER BY changed_at DESC, id DESC) AS rn_latest,
         ROW_NUMBER() OVER (PARTITION BY cid, field_name, sync_id ORDER BY id ASC) AS rn_earliest_in_run
       FROM scoped
     )

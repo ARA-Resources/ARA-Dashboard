@@ -189,6 +189,19 @@ export interface CandidateHistoryEntry {
   oldValue: string;
   newValue: string;
   changedAt: string;
+  /**
+   * Migration 024 — the true file report date ("YYYY-MM-DD") for a replay
+   * -mode Accenture step, independent of `changedAt`. The replay engine
+   * stamps exactly one step per (cid, field) per run — whichever one
+   * actually writes the live column — with the real upload time instead
+   * of its backdated file date, so that highlight/hover ordering stays
+   * correct (see candidate-accenture-replay-engine.ts's "LATEST-WRITER
+   * ORDERING" doc comment); `reportDate` is what survives that override
+   * for display. Null for every classic-engine step and every
+   * Oorwin/manual edit, where `changedAt` is already the right date to
+   * show and no override ever happens.
+   */
+  reportDate: string | null;
   syncId: number;
   sourceFilename: string | null;
   triggeredBy: string | null;
@@ -231,6 +244,7 @@ export async function getCandidateChangeHistory(
       old_value: string | null;
       new_value: string | null;
       changed_at: string;
+      report_date: string | null;
       sync_id: number | string;
       source_filename: string | null;
       triggered_by: string | null;
@@ -242,6 +256,7 @@ export async function getCandidateChangeHistory(
       csc.old_value,
       csc.new_value,
       csc.changed_at,
+      csc.report_date,
       csc.sync_id,
       csh.source_filename,
       csh.triggered_by,
@@ -265,6 +280,7 @@ export async function getCandidateChangeHistory(
       oldValue: row.old_value ?? "-",
       newValue: row.new_value ?? "-",
       changedAt: new Date(row.changed_at).toISOString(),
+      reportDate: row.report_date,
       syncId: Number(row.sync_id),
       sourceFilename: row.source_filename,
       triggeredBy: row.triggered_by,
