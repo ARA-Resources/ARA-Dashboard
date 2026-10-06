@@ -132,9 +132,45 @@ async function main() {
   }
 
   try {
-    // ===== 1. Insert path: new CID, full fields, locks per usable value =====
+    // ===== 1. Insert path: new CID, SINGLE occurrence, locks per usable value =====
+    // (regression — the single-occurrence case must behave exactly as before the
+    // repeated-new-CID fix: no continuation, no change rows, values land as-is.)
     {
       const cid = CID(1);
+      const syncId = await makeSyncId(sql);
+      const rows = [
+        fileRow(cid, {
+          name: "Only Occ",
+          email: "only@x.com",
+          level: "CL10",
+          candidateStage: "On Hold",
+          currentCidSource: "Recruiting Agency",
+          applicationCompletionStatus: "",
+        }),
+      ];
+      const summary = await runCandidateAccentureSync(rows, syncId, sql, { dryRun: false });
+      check("Insert: insertedCount is 1", summary.insertedCount === 1, String(summary.insertedCount));
+      cidsUsed.push(cid);
+      const [row] = await getCandidateMasterRowsByCid(cid, sql);
+      check("Insert: Name/Email are the single occurrence's values", row?.name === "Only Occ" && row?.email === "only@x.com", JSON.stringify({ name: row?.name, email: row?.email }));
+      check("Insert: level stored as CLn (canonical)", row?.job_management_level === "CL10", row?.job_management_level);
+      check("Insert: 3 snapshot fields from the occurrence, blank -> '-'", row?.accenture_candidate_stage === "On Hold" && row?.current_cid_source === "Recruiting Agency" && row?.application_completion_status === "-", JSON.stringify(row));
+      check("Insert: no Job Requisition ID ('-')", row?.job_requisition_id === "-", row?.job_requisition_id);
+      check("Insert: locks set TRUE (usable email+level supplied)", row?.email_accenture_locked === true && row?.job_management_level_accenture_locked === true);
+      check("Insert: inserted_sync_id and last_accenture_sync_id both = this run", row?.inserted_sync_id === syncId && row?.last_accenture_sync_id === syncId);
+      check("Insert: last_touched_at is set (not null)", row?.last_touched_at != null);
+      const changeRows = await sql<{ id: number }[]>`SELECT id FROM candidate_sync_changes WHERE candidate_master_id = ${row!.id}`;
+      check("Insert: single occurrence logs ZERO candidate_sync_changes rows (nothing to catch up on)", changeRows.length === 0, String(changeRows.length));
+    }
+
+    // ===== 1b. Insert path: new CID, REPEATED occurrences — first inserted, rest fed through the matched-row chain =====
+    {
+      // (a) Full-field case: first occurrence inserted; later occurrence's differing
+      // values land as one logged step per field, final state = last occurrence's
+      // values (same end state the old, un-fixed code produced) EXCEPT Name, which
+      // — once the row exists — is protected like any matched row's name and stays
+      // the FIRST occurrence, with the later name landing as a mismatch note instead.
+      const cid = CID(100);
       const syncId = await makeSyncId(sql);
       const rows = [
         fileRow(cid, {
@@ -155,16 +191,109 @@ async function main() {
         }),
       ];
       const summary = await runCandidateAccentureSync(rows, syncId, sql, { dryRun: false });
-      check("Insert: insertedCount is 1", summary.insertedCount === 1, String(summary.insertedCount));
+      cidsUsed.push(cid);
+      check("Repeated-new-CID: insertedCount is still 1 (one row, not two)", summary.insertedCount === 1, String(summary.insertedCount));
+      const [row] = await getCandidateMasterRowsByCid(cid, sql);
+      check("Repeated-new-CID: Name stays the FIRST occurrence (protected like a matched row, once inserted)", row?.name === "First Occ", row?.name);
+      check("Repeated-new-CID: Email/level/snapshot fields land on the LAST occurrence's values (same end state as before the fix)", row?.email === "final@x.com" && row?.job_management_level === "CL10" && row?.accenture_candidate_stage === "On Hold" && row?.current_cid_source === "Recruiting Agency" && row?.application_completion_status === "-", JSON.stringify(row));
+      check("Repeated-new-CID: locks still set TRUE (lock rule unchanged — any usable occurrence in the whole group)", row?.email_accenture_locked === true && row?.job_management_level_accenture_locked === true);
+      check("Repeated-new-CID: inserted_sync_id and last_accenture_sync_id both = this one run (continuation is the SAME run, not a second one)", row?.inserted_sync_id === syncId && row?.last_accenture_sync_id === syncId);
+      check("Repeated-new-CID: fieldChangeCounts counts the continuation's steps (email/level/stage/cidSource/completionStatus, all 1)", summary.fieldChangeCounts.email === 1 && summary.fieldChangeCounts.job_management_level === 1 && summary.fieldChangeCounts.accenture_candidate_stage === 1 && summary.fieldChangeCounts.current_cid_source === 1 && summary.fieldChangeCounts.application_completion_status === 1, JSON.stringify(summary.fieldChangeCounts));
+      check("Repeated-new-CID: exactly 1 nameMismatchNotesCount (First Occ -> Final Occ)", summary.nameMismatchNotesCount === 1, String(summary.nameMismatchNotesCount));
+      const emailSteps = await sql<{ old_value: string; new_value: string }[]>`SELECT old_value, new_value FROM candidate_sync_changes WHERE candidate_master_id = ${row!.id} AND field_name = 'email' ORDER BY id`;
+      check("Repeated-new-CID: exactly 1 email step logged, first->final", emailSteps.length === 1 && emailSteps[0].old_value === "first@x.com" && emailSteps[0].new_value === "final@x.com", JSON.stringify(emailSteps));
+      const nameSteps = await sql<{ old_value: string; new_value: string }[]>`SELECT old_value, new_value FROM candidate_sync_changes WHERE candidate_master_id = ${row!.id} AND field_name = 'name'`;
+      check("Repeated-new-CID: the Name mismatch note records First Occ -> Final Occ without writing the name column", nameSteps.length === 1 && nameSteps[0].old_value === "First Occ" && nameSteps[0].new_value === "Final Occ", JSON.stringify(nameSteps));
+    }
+    {
+      // (b) Explicit simplest case: new CID, occurrences A then B (email only,
+      // every other field blank throughout) -> exactly 1 history row total for
+      // this CID, final value B.
+      const cid = CID(101);
+      const syncId = await makeSyncId(sql);
+      const rows = [fileRow(cid, { email: "a@x.com" }), fileRow(cid, { email: "b@x.com" })];
+      await runCandidateAccentureSync(rows, syncId, sql, { dryRun: false });
       cidsUsed.push(cid);
       const [row] = await getCandidateMasterRowsByCid(cid, sql);
-      check("Insert: Name/Email are the LAST occurrence's values", row?.name === "Final Occ" && row?.email === "final@x.com", JSON.stringify({ name: row?.name, email: row?.email }));
-      check("Insert: level stored as CLn (canonical), last occurrence's number", row?.job_management_level === "CL10", row?.job_management_level);
-      check("Insert: 3 snapshot fields from the last occurrence, blank -> '-'", row?.accenture_candidate_stage === "On Hold" && row?.current_cid_source === "Recruiting Agency" && row?.application_completion_status === "-", JSON.stringify(row));
-      check("Insert: no Job Requisition ID ('-')", row?.job_requisition_id === "-", row?.job_requisition_id);
-      check("Insert: locks set TRUE (usable email+level supplied)", row?.email_accenture_locked === true && row?.job_management_level_accenture_locked === true);
-      check("Insert: inserted_sync_id and last_accenture_sync_id both = this run", row?.inserted_sync_id === syncId && row?.last_accenture_sync_id === syncId);
-      check("Insert: last_touched_at is set (not null)", row?.last_touched_at != null);
+      check("A-then-B: final email is B", row?.email === "b@x.com", row?.email);
+      const allSteps = await sql<{ id: number }[]>`SELECT id FROM candidate_sync_changes WHERE candidate_master_id = ${row!.id}`;
+      check("A-then-B: exactly 1 history row total for this CID", allSteps.length === 1, String(allSteps.length));
+    }
+    {
+      // (c) 3 occurrences A,B,C (email only) -> 2 steps logged (A->B, B->C), final C.
+      const cid = CID(102);
+      const syncId = await makeSyncId(sql);
+      const rows = [fileRow(cid, { email: "a@x.com" }), fileRow(cid, { email: "b@x.com" }), fileRow(cid, { email: "c@x.com" })];
+      await runCandidateAccentureSync(rows, syncId, sql, { dryRun: false });
+      cidsUsed.push(cid);
+      const [row] = await getCandidateMasterRowsByCid(cid, sql);
+      check("A,B,C: final email is C", row?.email === "c@x.com", row?.email);
+      const steps = await sql<{ old_value: string; new_value: string }[]>`SELECT old_value, new_value FROM candidate_sync_changes WHERE candidate_master_id = ${row!.id} AND field_name = 'email' ORDER BY id`;
+      check(
+        "A,B,C: exactly 2 steps logged (A->B, B->C)",
+        steps.length === 2 && steps[0].old_value === "a@x.com" && steps[0].new_value === "b@x.com" && steps[1].old_value === "b@x.com" && steps[1].new_value === "c@x.com",
+        JSON.stringify(steps)
+      );
+    }
+    {
+      // (d) Short-circuit: occurrences [A, X, A] (first === last) -> 0 steps logged,
+      // even though there's a real difference in the middle — same short-circuit
+      // computeAccentureFieldChain already gives a matched row, now proven to
+      // carry over correctly to a brand-new row's own first occurrence as "stored".
+      const cid = CID(103);
+      const syncId = await makeSyncId(sql);
+      const rows = [fileRow(cid, { email: "a@x.com" }), fileRow(cid, { email: "x@x.com" }), fileRow(cid, { email: "a@x.com" })];
+      await runCandidateAccentureSync(rows, syncId, sql, { dryRun: false });
+      cidsUsed.push(cid);
+      const [row] = await getCandidateMasterRowsByCid(cid, sql);
+      check("[A,X,A]: final email is A (unchanged from the inserted first occurrence)", row?.email === "a@x.com", row?.email);
+      const steps = await sql<{ id: number }[]>`SELECT id FROM candidate_sync_changes WHERE candidate_master_id = ${row!.id} AND field_name = 'email'`;
+      check("[A,X,A]: 0 steps logged (short-circuit: final occurrence equals what was inserted)", steps.length === 0, String(steps.length));
+    }
+    {
+      // (e) Re-upload idempotency: upload the SAME 3-occurrence new-CID file twice.
+      // Run 1 inserts + catches up via the continuation. Run 2 must hit the
+      // MATCHED path (the CID now exists) and write nothing new.
+      const cid = CID(104);
+      const syncId1 = await makeSyncId(sql);
+      const rows = [fileRow(cid, { email: "a@x.com" }), fileRow(cid, { email: "b@x.com" }), fileRow(cid, { email: "c@x.com" })];
+      const summary1 = await runCandidateAccentureSync(rows, syncId1, sql, { dryRun: false });
+      cidsUsed.push(cid);
+      check("Re-upload (new-CID case), run 1: insertedCount 1, matchedCidCount 0", summary1.insertedCount === 1 && summary1.matchedCidCount === 0, JSON.stringify(summary1));
+      const syncId2 = await makeSyncId(sql);
+      const summary2 = await runCandidateAccentureSync(rows, syncId2, sql, { dryRun: false });
+      check("Re-upload (new-CID case), run 2: goes through the MATCHED path this time (matchedCidCount 1, insertedCount 0)", summary2.matchedCidCount === 1 && summary2.insertedCount === 0, JSON.stringify(summary2));
+      check("Re-upload (new-CID case), run 2: 0 new email changes (idempotent)", summary2.fieldChangeCounts.email === 0, String(summary2.fieldChangeCounts.email));
+      const [row] = await getCandidateMasterRowsByCid(cid, sql);
+      check("Re-upload (new-CID case): email still C", row?.email === "c@x.com", row?.email);
+      const steps = await sql<{ id: number }[]>`SELECT id FROM candidate_sync_changes WHERE candidate_master_id = ${row!.id} AND field_name = 'email'`;
+      check("Re-upload (new-CID case): still exactly 2 email steps total (0 new from run 2)", steps.length === 2, String(steps.length));
+    }
+    {
+      // (f) Lock rule unchanged: occurrence 1 has a blank email, occurrence 2 has a
+      // usable one -> lock still ends up TRUE, and the final email is occurrence
+      // 2's value via the continuation chain (not a one-shot "last occurrence" copy).
+      const cid = CID(105);
+      const syncId = await makeSyncId(sql);
+      const rows = [fileRow(cid, { email: "-" }), fileRow(cid, { email: "usable@x.com" })];
+      await runCandidateAccentureSync(rows, syncId, sql, { dryRun: false });
+      cidsUsed.push(cid);
+      const [row] = await getCandidateMasterRowsByCid(cid, sql);
+      check("Blank-then-usable: lock ends up TRUE", row?.email_accenture_locked === true);
+      check("Blank-then-usable: final email is the usable occurrence", row?.email === "usable@x.com", row?.email);
+    }
+    {
+      // (g) Snapshot-field blank-is-a-real-value rule survives the insert +
+      // continuation split: occurrence 1 has a real stage, occurrence 2 blanks it.
+      const cid = CID(106);
+      const syncId = await makeSyncId(sql);
+      const rows = [fileRow(cid, { candidateStage: "Review" }), fileRow(cid, { candidateStage: "" })];
+      await runCandidateAccentureSync(rows, syncId, sql, { dryRun: false });
+      cidsUsed.push(cid);
+      const [row] = await getCandidateMasterRowsByCid(cid, sql);
+      check("Snapshot blank-is-real-value: final stage is '-' (the blank second occurrence), not the first occurrence's value", row?.accenture_candidate_stage === "-", row?.accenture_candidate_stage);
+      const steps = await sql<{ old_value: string; new_value: string }[]>`SELECT old_value, new_value FROM candidate_sync_changes WHERE candidate_master_id = ${row!.id} AND field_name = 'accenture_candidate_stage'`;
+      check("Snapshot blank-is-real-value: exactly 1 step logged (Review -> '-')", steps.length === 1 && steps[0].old_value === "Review" && steps[0].new_value === "-", JSON.stringify(steps));
     }
 
     // ===== 2. Matched update: step-chain history, idempotent re-upload =====

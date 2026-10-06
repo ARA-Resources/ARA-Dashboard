@@ -16,7 +16,18 @@
  *  - Malformed CID (not /^C[0-9]+$/, migration 018's format): skipped,
  *    flagged via the EXISTING `invalid_candidate_id` review-flag reason
  *    (candidate-sync-engine.ts) — no new reason/migration needed.
- *  - No live row shares this CID: INSERT one new row.
+ *  - No live row shares this CID: INSERT one new row from this CID's FIRST
+ *    file occurrence only. If the group has more than one occurrence, every
+ *    remaining one is then fed through the exact same matched-row chain
+ *    (below) the just-inserted row would get on a later, separate upload —
+ *    so a brand-new CID repeated in one file ends up at the same final
+ *    values a single occurrence would have produced on its own eventual
+ *    last state, but with one logged `candidate_sync_changes` step per real
+ *    change instead of silently collapsing to the last occurrence with no
+ *    history. `name` IS written literally from the first occurrence here
+ *    (there is no prior name to protect yet) — but once the row exists, the
+ *    continuation treats it exactly like any matched row's name: never
+ *    overwritten, only noted on a mismatch.
  *  - One or more live rows share this CID: apply to EVERY one of them, no
  *    narrowing (unlike the Oorwin engine's CID+JR narrowing for ambiguous
  *    CIDs) — the spec for this feature is explicit that an Accenture
@@ -33,11 +44,14 @@
  * before entering the chain — a blank/unparseable cell never overwrites a
  * stored value and never sets that field's Accenture lock; the 3 snapshot
  * fields have no such filtering (a blank file cell is a real occurrence of
- * "-", per the plain-diff rule).
+ * "-", per the plain-diff rule). The brand-new-CID continuation above reuses
+ * this unchanged — the just-inserted row's first-occurrence values are its
+ * "stored" starting point.
  *
- * `name` is never written to the `name` column (see `buildRowPlan` /
- * `applyMatchedRowWrites`) — only a dedup-checked `candidate_sync_changes`
- * note.
+ * `name` is never written to the `name` column on a MATCHED row (see
+ * `buildRowPlan` / `applyMatchedRowWrites`) — only a dedup-checked
+ * `candidate_sync_changes` note. (A brand-new row's insert is the one
+ * exception — see above.)
  */
 import {
   getCandidateMasterRowsByCid,
@@ -302,15 +316,22 @@ async function applyInsertRow(
   cid: string,
   groupRows: CandidateAccentureParsedRow[]
 ): Promise<{ emailUsable: boolean; levelUsable: boolean }> {
-  const lastRow = groupRows[groupRows.length - 1];
-  const name = coerceBlank(lastRow.name);
+  // Insert from the FIRST occurrence only — any later occurrences in this
+  // CID's group are fed through the same matched-row chain machinery right
+  // after (see the `existingRows.length === 0` branch below), exactly like
+  // a CID that already existed before this run. Lock flags below still
+  // consider every occurrence in the group, not just the first — the lock
+  // rule itself (locked if ANY occurrence this run supplied a usable value)
+  // is unaffected by this change.
+  const firstRow = groupRows[0];
+  const name = coerceBlank(firstRow.name);
   const emailOcc = usableEmailOccurrences(groupRows);
-  const email = emailOcc.length > 0 ? emailOcc[emailOcc.length - 1] : "-";
+  const email = emailOcc.length > 0 ? emailOcc[0] : "-";
   const levelOcc = usableLevelOccurrences(groupRows);
-  const level = levelOcc.length > 0 ? levelOcc[levelOcc.length - 1] : "-";
-  const stage = coerceBlank(lastRow.candidateStage);
-  const cidSource = coerceBlank(lastRow.currentCidSource);
-  const completionStatus = coerceBlank(lastRow.applicationCompletionStatus);
+  const level = levelOcc.length > 0 ? levelOcc[0] : "-";
+  const stage = coerceBlank(firstRow.candidateStage);
+  const cidSource = coerceBlank(firstRow.currentCidSource);
+  const completionStatus = coerceBlank(firstRow.applicationCompletionStatus);
   const today = todayAsDdMmYyyy();
   const emailUsable = emailOcc.length > 0;
   const levelUsable = levelOcc.length > 0;
@@ -426,6 +447,37 @@ export async function runCandidateAccentureSync(
       if (levelOcc.length > 0) newlyLockedCount.job_management_level += 1;
       if (!dryRun) {
         await applyInsertRow(sqlClient, syncId as number, cid, groupRows);
+        // This CID's file group had MORE than one occurrence: the row was
+        // just inserted from occurrence[0] alone, so every remaining
+        // occurrence (1..n-1) is still unapplied. Re-read the row this
+        // transaction just wrote and run it through the exact same
+        // matched-row chain (buildAccentureRowPlan / applyMatchedRowWrites)
+        // a pre-existing CID would use — so a brand-new CID repeated in one
+        // file ends up with the SAME final values as before (the file's
+        // last occurrence) but, unlike before, one logged
+        // candidate_sync_changes step per real change instead of silently
+        // collapsing straight to the last occurrence with no history.
+        if (groupRows.length > 1) {
+          const [insertedRow] = await getCandidateMasterRowsByCid(cid, sqlClient);
+          if (insertedRow) {
+            const continuationPlan = buildAccentureRowPlan(insertedRow, groupRows.slice(1));
+            if (continuationPlan.email.wouldWrite) fieldChangeCounts.email += 1;
+            if (continuationPlan.level.wouldWrite) fieldChangeCounts.job_management_level += 1;
+            else if (continuationPlan.levelUsableThisRun) levelFormatOnlyNoOpCount += 1;
+            if (continuationPlan.stage.wouldWrite) fieldChangeCounts.accenture_candidate_stage += 1;
+            if (continuationPlan.cidSource.wouldWrite) fieldChangeCounts.current_cid_source += 1;
+            if (continuationPlan.completionStatus.wouldWrite) {
+              fieldChangeCounts.application_completion_status += 1;
+            }
+            const { nameMismatchWritten } = await applyMatchedRowWrites(
+              sqlClient,
+              syncId as number,
+              insertedRow,
+              continuationPlan
+            );
+            if (nameMismatchWritten) nameMismatchNotesCount += 1;
+          }
+        }
       }
       continue;
     }
