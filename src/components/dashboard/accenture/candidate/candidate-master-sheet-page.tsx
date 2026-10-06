@@ -70,6 +70,11 @@ import { cn } from "@/lib/utils";
 import { CandidateRowFormModal } from "@/components/dashboard/accenture/candidate/candidate-row-form-modal";
 import { CandidateDeleteConfirmModal } from "@/components/dashboard/accenture/candidate/candidate-delete-confirm-modal";
 import type { CandidateMasterSheetPgRow } from "@/services/persistence/candidate-master-sheet-postgres";
+// Value import (not just a type) from the plain-constants columns module —
+// deliberately NOT from candidate-master-sheet-postgres.ts, which pulls in
+// server-only DB client code; candidate-master-sheet-columns.ts has zero
+// imports of its own and is safe for this client component to import.
+import { CANDIDATE_MASTER_EXCEL_HEADERS } from "@/services/persistence/candidate-master-sheet-columns";
 
 /**
  * "Highlights" isn't a real candidate_master column — it's a synthetic
@@ -922,8 +927,8 @@ export function CandidateMasterSheetPage() {
             <div>
               <p className="text-sm font-semibold text-foreground">Master Sheet</p>
               <p className="text-xs text-muted-foreground">
-                16 columns stored in candidate_master. Click the filter icon in a
-                column header to filter.
+                {CANDIDATE_MASTER_EXCEL_HEADERS.length} columns stored in candidate_master.
+                Click the filter icon in a column header to filter.
               </p>
             </div>
             {data && data.total > 0 ? (
