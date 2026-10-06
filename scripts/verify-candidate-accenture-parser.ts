@@ -65,6 +65,11 @@ async function main() {
         Object.keys(result.matchedHeaders).length === 7,
         JSON.stringify(result.matchedHeaders)
       );
+      check(
+        "Real Accenture file (no Date column): hasDateColumn is false -> classic path",
+        result.hasDateColumn === false
+      );
+      check("Real Accenture file: reportDateRaw is empty on every row (no Date column)", result.rows.every((r) => r.reportDateRaw === ""));
     }
 
     // Direction 1: real Accenture file fed to the OORWIN parser -> rejected

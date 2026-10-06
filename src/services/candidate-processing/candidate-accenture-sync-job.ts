@@ -26,6 +26,10 @@ import {
   runCandidateAccentureSync,
   type CandidateAccentureSyncSummary,
 } from "./candidate-accenture-engine";
+import {
+  runCandidateAccentureReplaySync,
+  type CandidateAccentureReplaySyncSummary,
+} from "./candidate-accenture-replay-engine";
 
 /**
  * The top-level client only (needs `.begin`) — this module always opens its
@@ -45,11 +49,12 @@ export interface CandidateAccentureSyncRunResult {
   finishedAt: string;
   sourceFilename: string;
   triggeredBy: string;
-  counts: CandidateAccentureSyncSummary;
+  /** Classic single-snapshot shape, or the replay-mode shape (dated Master Sheet export) — see `parsed.hasDateColumn`, which is what picked the engine that produced this. */
+  counts: CandidateAccentureSyncSummary | CandidateAccentureReplaySyncSummary;
   failureReason: string | null;
 }
 
-function needsReview(summary: CandidateAccentureSyncSummary): boolean {
+function needsReview(summary: { invalidCidCount: number; skippedBlankCidCount: number; reviewFlagCount: number }): boolean {
   return summary.invalidCidCount > 0 || summary.skippedBlankCidCount > 0 || summary.reviewFlagCount > 0;
 }
 
@@ -119,7 +124,9 @@ export async function invokeCandidateAccentureSync(
   }
 
   if (dryRun) {
-    const summary = await runCandidateAccentureSync(parsed.rows, null, sql, { dryRun: true });
+    const summary = parsed.hasDateColumn
+      ? await runCandidateAccentureReplaySync(parsed.rows, null, sql, { dryRun: true })
+      : await runCandidateAccentureSync(parsed.rows, null, sql, { dryRun: true });
     const finishedAt = new Date();
     return {
       result: needsReview(summary) ? "partial" : "success",
@@ -143,7 +150,9 @@ export async function invokeCandidateAccentureSync(
         RETURNING id
       `;
       const txSyncId = Number(historyRow.id);
-      const txSummary = await runCandidateAccentureSync(parsed.rows, txSyncId, tx, { dryRun: false });
+      const txSummary = parsed.hasDateColumn
+        ? await runCandidateAccentureReplaySync(parsed.rows, txSyncId, tx, { dryRun: false })
+        : await runCandidateAccentureSync(parsed.rows, txSyncId, tx, { dryRun: false });
       const txResult: CandidateAccentureSyncRunResultStatus = needsReview(txSummary) ? "partial" : "success";
 
       await tx`

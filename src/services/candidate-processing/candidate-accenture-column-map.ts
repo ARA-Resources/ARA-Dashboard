@@ -24,11 +24,22 @@ export type CandidateAccentureField =
   | "level"
   | "applicationCompletionStatus"
   | "candidateStage"
-  | "currentCidSource";
+  | "currentCidSource"
+  | "reportDate";
 
 export interface CandidateAccentureColumnDef {
   field: CandidateAccentureField;
   aliases: readonly string[];
+  /**
+   * The Accenture Master Sheet's dated, multi-row-per-candidate export adds
+   * a "Date" column the original single-snapshot export never had. Marking
+   * it optional (rather than a second column map / a parser fork) means a
+   * missing optional column is simply left unmatched instead of failing
+   * the whole file — `CandidateAccentureParseSuccess.hasDateColumn` is what
+   * the sync job reads to pick classic vs. replay mode (see
+   * candidate-accenture-parser.ts / candidate-accenture-sync-job.ts).
+   */
+  optional?: boolean;
 }
 
 export const CANDIDATE_ACCENTURE_COLUMN_MAP: readonly CandidateAccentureColumnDef[] = [
@@ -42,6 +53,7 @@ export const CANDIDATE_ACCENTURE_COLUMN_MAP: readonly CandidateAccentureColumnDe
     field: "currentCidSource",
     aliases: ["Current CID Source (As per candidate latest application)"],
   },
+  { field: "reportDate", aliases: ["Date"], optional: true },
 ] as const;
 
 /** The header text the parser scans for to locate the real header row. */

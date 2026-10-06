@@ -356,6 +356,7 @@ function buildWouldBeInsertedRow(cid: string, groupRows: CandidateAccentureParse
     email_accenture_locked: emailOcc.length > 0,
     job_management_level_accenture_locked: levelOcc.length > 0,
     last_accenture_sync_id: null,
+    last_accenture_report_date: null,
     deleted_at: null,
     deleted_by: null,
   };

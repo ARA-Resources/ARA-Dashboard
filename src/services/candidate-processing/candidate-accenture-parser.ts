@@ -17,6 +17,14 @@
  * ("Candidate ID"), which only decides which row to start matching from —
  * the full required-header set still has to match for either parser to
  * accept the file.
+ *
+ * "Date" (the dated Master Sheet export's column, candidate-accenture-
+ * column-map.ts) is the one OPTIONAL column — its absence is never a
+ * missing-header rejection. `hasDateColumn` on the success result is the
+ * single flag candidate-accenture-sync-job.ts reads to dispatch to replay
+ * mode (candidate-accenture-replay-engine.ts) instead of the classic
+ * single-snapshot path (candidate-accenture-engine.ts) — the classic path
+ * and its own tests are completely untouched by this.
  */
 import * as XLSX from "xlsx";
 import {
@@ -36,12 +44,16 @@ export interface CandidateAccentureParsedRow {
   applicationCompletionStatus: string;
   candidateStage: string;
   currentCidSource: string;
+  /** Raw "Date" cell text (an Excel serial number) when the file has a Date column; "" otherwise. Parsed to a real date by candidate-excel-date.ts, not here — this file stays dumb raw-text extraction, mirroring the Oorwin parser. */
+  reportDateRaw: string;
 }
 
 export interface CandidateAccentureParseSuccess {
   ok: true;
   rows: CandidateAccentureParsedRow[];
   matchedHeaders: Record<CandidateAccentureField, string>;
+  /** True when this file has a "Date" column (the dated master-sheet export) — what candidate-accenture-sync-job.ts reads to dispatch to replay mode instead of the classic single-snapshot path. */
+  hasDateColumn: boolean;
 }
 
 export interface CandidateAccentureParseFailure {
@@ -115,7 +127,7 @@ export function parseCandidateAccentureWorkbook(
       }
     }
     if (foundIndex === -1) {
-      missing.push(def.aliases[0]);
+      if (!def.optional) missing.push(def.aliases[0]);
       continue;
     }
     colIndex[def.field] = foundIndex;
@@ -152,6 +164,7 @@ export function parseCandidateAccentureWorkbook(
       applicationCompletionStatus: get(row, "applicationCompletionStatus"),
       candidateStage: get(row, "candidateStage"),
       currentCidSource: get(row, "currentCidSource"),
+      reportDateRaw: get(row, "reportDate"),
     });
   }
 
@@ -159,5 +172,6 @@ export function parseCandidateAccentureWorkbook(
     ok: true,
     rows,
     matchedHeaders: matchedHeaders as Record<CandidateAccentureField, string>,
+    hasDateColumn: colIndex.reportDate !== undefined,
   };
 }

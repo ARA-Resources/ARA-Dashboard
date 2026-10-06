@@ -123,6 +123,7 @@ function main() {
     "email_accenture_locked",
     "job_management_level_accenture_locked",
     "last_accenture_sync_id",
+    "last_accenture_report_date",
   ];
   for (const col of forbidden) {
     check(

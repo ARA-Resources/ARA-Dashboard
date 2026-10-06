@@ -84,6 +84,8 @@ export interface CandidateMasterRow {
    * lock fields above.
    */
   last_accenture_sync_id: number | null;
+  /** Migration 023 — this CID's own last report date within the most recent Accenture run that touched it ("YYYY-MM-DD"), set unconditionally on every touch, same discipline as last_accenture_sync_id. Backstops the replay engine's per-field checkpoint for a field that had zero real steps in that run. */
+  last_accenture_report_date: string | null;
   deleted_at: string | null;
   deleted_by: string | null;
 }
@@ -119,6 +121,8 @@ function mapRow(row: Record<string, unknown>): CandidateMasterRow {
     job_management_level_accenture_locked: Boolean(row.job_management_level_accenture_locked),
     last_accenture_sync_id:
       row.last_accenture_sync_id == null ? null : Number(row.last_accenture_sync_id),
+    last_accenture_report_date:
+      row.last_accenture_report_date == null ? null : String(row.last_accenture_report_date),
     deleted_at:
       row.deleted_at == null ? null : new Date(row.deleted_at as string).toISOString(),
     deleted_by: row.deleted_by == null ? null : String(row.deleted_by),
@@ -185,6 +189,7 @@ export async function listCandidateMasterRows(
       email_accenture_locked,
       job_management_level_accenture_locked,
       last_accenture_sync_id,
+      last_accenture_report_date,
       deleted_at,
       deleted_by
     FROM candidate_master
@@ -234,12 +239,68 @@ export async function getCandidateMasterById(
       email_accenture_locked,
       job_management_level_accenture_locked,
       last_accenture_sync_id,
+      last_accenture_report_date,
       deleted_at,
       deleted_by
     FROM candidate_master
     WHERE id = ${id} AND deleted_at IS NULL
   `;
   return dataRows[0] ? mapRow(dataRows[0]) : null;
+}
+
+/**
+ * Every LIVE row whose CID is in the given list, oldest first within each
+ * CID — the batched counterpart to `getCandidateMasterRowsByCid` below, for
+ * a caller (the Accenture replay engine) that needs every matched row for a
+ * whole file's CID set up front in ONE round trip instead of one per CID.
+ * Empty input returns `[]` without a query.
+ */
+export async function getCandidateMasterRowsByCids(
+  cids: string[],
+  sqlClient?: SqlClient
+): Promise<CandidateMasterRow[]> {
+  const trimmed = Array.from(new Set(cids.map((c) => String(c ?? "").trim()))).filter(
+    (c) => c !== "" && c !== "-"
+  );
+  if (trimmed.length === 0) return [];
+  const sql = sqlClient ?? getDbClient();
+  const dataRows = await sql<Record<string, unknown>[]>`
+    SELECT
+      id,
+      cid,
+      name,
+      gender,
+      contact_number,
+      date_of_upload,
+      submitter,
+      customer,
+      job_requisition_id,
+      primary_skills,
+      job_management_level,
+      market,
+      submitted_date,
+      status,
+      submission_comments,
+      email,
+      client_spoc,
+      accenture_candidate_stage,
+      current_cid_source,
+      application_completion_status,
+      screening_candidate_stage,
+      disposition_reason,
+      last_touched_at,
+      inserted_sync_id,
+      email_accenture_locked,
+      job_management_level_accenture_locked,
+      last_accenture_sync_id,
+      last_accenture_report_date,
+      deleted_at,
+      deleted_by
+    FROM candidate_master
+    WHERE cid = ANY(${trimmed}) AND deleted_at IS NULL
+    ORDER BY cid ASC, id ASC
+  `;
+  return dataRows.map(mapRow);
 }
 
 /**
@@ -285,6 +346,7 @@ export async function getCandidateMasterRowsByCid(
       email_accenture_locked,
       job_management_level_accenture_locked,
       last_accenture_sync_id,
+      last_accenture_report_date,
       deleted_at,
       deleted_by
     FROM candidate_master
