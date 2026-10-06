@@ -37,6 +37,9 @@ export interface CandidateMasterDateFilter {
  */
 export const CANDIDATE_HIGHLIGHT_FILTER_OPTIONS = [
   { value: "changed", label: "Recently changed" },
+  { value: "accenture_touched", label: "Accenture Final Report" },
+  { value: "accenture_new_rows", label: "Accenture Final Report New Rows" },
+  { value: "accenture_latest_upload", label: "Accenture Final Report Latest Upload" },
   { value: "duplicate_name_mismatch", label: "Duplicate name" },
   { value: "duplicate_cid", label: "Duplicate CID" },
   { value: "invalid_candidate_id", label: "Invalid CID" },

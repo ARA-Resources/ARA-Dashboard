@@ -319,7 +319,13 @@ async function main() {
       const afterOorwin = await getCandidateMasterById(locked.id, sql);
       check("Lock survives Oorwin: email UNCHANGED despite a different Oorwin value", afterOorwin?.email === "accenture-locked@x.com", afterOorwin?.email);
       check("Lock survives Oorwin: job_management_level UNCHANGED", afterOorwin?.job_management_level === "CL7", afterOorwin?.job_management_level);
-      check("Lock survives Oorwin: accentureLockedFieldsKeptCount reflects both skipped fields", oorwinSummary.accentureLockedFieldsKeptCount === 2, String(oorwinSummary.accentureLockedFieldsKeptCount));
+      // accentureLockedFieldsKeptCount only counts a field when the lock
+      // actually blocked a real difference (see candidate-sync-engine.ts's
+      // comment above the lock block). This row's JR id ("JR-DIFFERENT") is
+      // unresolvable, so job_management_level contributes 0 even though
+      // it's locked — only email (genuinely different) contributes 1. This
+      // IS the "locked row with no JR -> 0 for level" case.
+      check("Lock survives Oorwin: accentureLockedFieldsKeptCount counts only the genuinely-blocked field (email=1, level=0 — no resolvable JR)", oorwinSummary.accentureLockedFieldsKeptCount === 1, String(oorwinSummary.accentureLockedFieldsKeptCount));
       const lockChangeRows = await sql<{ id: number }[]>`
         SELECT id FROM candidate_sync_changes WHERE candidate_master_id = ${locked.id} AND field_name IN ('email', 'job_management_level') AND sync_id = ${Number(oorwinSyncId)}
       `;
@@ -328,6 +334,72 @@ async function main() {
         SELECT id FROM candidate_review_flags WHERE cid = ${cid} AND sync_id = ${Number(oorwinSyncId)} AND reason != 'jr_id_conflict'
       `;
       check("Lock survives Oorwin: NO new review flag written for the lock itself", lockFlags.length === 0, String(lockFlags.length));
+    }
+
+    // ===== 6b/6c. accentureLockedFieldsKeptCount only counts a REAL block:
+    //       3 locked CIDs with different emails -> 3; the same 3 CIDs with
+    //       matching emails on a later run -> 0 =====
+    {
+      const lockedRows = [CID(11), CID(12), CID(13)].map((cid) =>
+        seedRow(sql, cid, {
+          email: `multi-locked-${cid}@x.com`,
+          job_requisition_id: "-", // no JR -> level never contributes, isolating the email-only count
+          email_accenture_locked: true,
+          job_management_level_accenture_locked: true,
+        })
+      );
+      const seeded = await Promise.all(lockedRows);
+
+      const [{ id: diffSyncId }] = await sql<{ id: number }[]>`
+        INSERT INTO candidate_sync_history (started_at, result, kind, source_filename, triggered_by)
+        VALUES (NOW(), 'success', 'oorwin_upload', 'synthetic-oorwin-multi-diff.xls', 'verify-script@example.com') RETURNING id
+      `;
+      syncIdsUsed.push(Number(diffSyncId));
+      const diffRows: CandidateOorwinParsedRow[] = seeded.map((row, i) => ({
+        sheetRowNumber: i + 1,
+        cid: row.cid,
+        firstName: "Oorwin",
+        middleName: "-",
+        lastName: "Row",
+        email: `oorwin-different-${i}@x.com`,
+        mobile: "-",
+        gender: "-",
+        submitter: "-",
+        customer: "-",
+        clientSubmissionJr: "-",
+        customerJobTitle: "-",
+        market: "-",
+        clientSpoc: "-",
+        status: "-",
+        submittedDate: "-",
+        reasonForRejection: "-",
+        submissionComments: "-",
+      }));
+      const diffSummary = await runCandidateSync(diffRows, Number(diffSyncId), sql);
+      check(
+        "3 locked CIDs, Oorwin email different on all 3 -> accentureLockedFieldsKeptCount === 3",
+        diffSummary.accentureLockedFieldsKeptCount === 3,
+        String(diffSummary.accentureLockedFieldsKeptCount)
+      );
+
+      const [{ id: sameSyncId }] = await sql<{ id: number }[]>`
+        INSERT INTO candidate_sync_history (started_at, result, kind, source_filename, triggered_by)
+        VALUES (NOW(), 'success', 'oorwin_upload', 'synthetic-oorwin-multi-same.xls', 'verify-script@example.com') RETURNING id
+      `;
+      syncIdsUsed.push(Number(sameSyncId));
+      // Oorwin's email now matches each row's CURRENT stored email exactly
+      // (still the original locked value — the previous run's different
+      // emails were correctly blocked and never written).
+      const sameRows: CandidateOorwinParsedRow[] = seeded.map((row, i) => ({
+        ...diffRows[i]!,
+        email: row.email,
+      }));
+      const sameSummary = await runCandidateSync(sameRows, Number(sameSyncId), sql);
+      check(
+        "Same 3 locked CIDs, Oorwin email now matches stored -> accentureLockedFieldsKeptCount === 0",
+        sameSummary.accentureLockedFieldsKeptCount === 0,
+        String(sameSummary.accentureLockedFieldsKeptCount)
+      );
     }
 
     // ===== 7. Manual Modify of a locked field still saves; the lock itself stays TRUE =====

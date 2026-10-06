@@ -19,6 +19,14 @@ import {
   type CandidateChangedFieldsByCid,
   type CandidateReviewFlagRow,
 } from "@/services/persistence/read-candidate-highlights";
+import {
+  getAccentureChangedFieldsForRun,
+  getAccentureHoverData,
+  getAccentureUploadSyncIds,
+  getCidsInsertedByRun,
+  getLatestSuccessfulAccentureRun,
+  type CandidateAccentureHoverEntry,
+} from "@/services/persistence/read-candidate-accenture-highlights";
 import { getCandidateCidsTouchedBySync } from "@/services/persistence/read-candidate-sync-history";
 import {
   isCandidateRoleNameColumn,
@@ -115,6 +123,12 @@ export interface CandidateMasterSheetHighlights {
   duplicateFlagCids: Record<string, ("duplicate_name_mismatch" | "invalid_candidate_id" | "duplicate_cid")[]>;
   /** CID -> open per-field flags (jr_id_conflict / unclean_contact_number / legacy_contact_number_unclean / missing_job_requisition_id). */
   fieldFlagsByCid: Record<string, CandidateFieldFlag[]>;
+  /** Stage 3 — violet: cells touched (or, for Name, still-unresolved-mismatch-noted) by the single latest SUCCESSFUL Accenture run. Independent of changedCellsByCid/the Oorwin window. */
+  accentureCellsByCid: Record<string, CandidateMasterExcelHeader[]>;
+  /** Stage 3 — CIDs (of the current page) inserted by the latest successful Accenture run, for the Candidate ID cell's violet tint. */
+  accentureInsertedCids: string[];
+  /** Stage 3 — rich hover data for the 5 Accenture-synced fields + Name, page-scoped. */
+  accentureHoverByCid: Record<string, Record<string, CandidateAccentureHoverEntry>>;
 }
 
 export interface CandidateMasterSheetPageResult {
@@ -205,7 +219,12 @@ function buildHighlightState(
   cidsOnPage: string[],
   changedFields: CandidateChangedFieldsByCid,
   reviewFlags: CandidateReviewFlagRow[],
-  liveDuplicateCids: Set<string>
+  liveDuplicateCids: Set<string>,
+  accentureState: {
+    accentureCellsByCid: Record<string, CandidateMasterExcelHeader[]>;
+    accentureInsertedCids: string[];
+    accentureHoverByCid: Record<string, Record<string, CandidateAccentureHoverEntry>>;
+  }
 ): CandidateMasterSheetHighlights {
   const cidSet = new Set(cidsOnPage);
 
@@ -256,6 +275,86 @@ function buildHighlightState(
     changedCellsByCid,
     duplicateFlagCids,
     fieldFlagsByCid,
+    accentureCellsByCid: accentureState.accentureCellsByCid,
+    accentureInsertedCids: accentureState.accentureInsertedCids,
+    accentureHoverByCid: accentureState.accentureHoverByCid,
+  };
+}
+
+/**
+ * Stage 3 — page-scoped violet highlight cells + hover data, built from the
+ * latest successful Accenture run alone (not a window). Name gets an extra
+ * check the other 5 synced fields don't: if the hover data shows a LATER
+ * write (a manual correction) is now the most recent word on this CID's
+ * name, the mismatch note not only reverts its hover to plain but is also
+ * removed from the violet highlight set entirely — "if it now matches, no
+ * note and no highlight" (explicit Stage 3 decision, Name only; the other 5
+ * fields' violet highlight is a plain snapshot of what the latest run
+ * touched, with no analogous staleness check).
+ */
+async function loadAccentureHighlightState(
+  cidsOnPage: string[],
+  latestSuccessfulSyncId: number | null,
+  sqlClient?: SqlClient
+): Promise<{
+  accentureCellsByCid: Record<string, CandidateMasterExcelHeader[]>;
+  accentureInsertedCids: string[];
+  accentureHoverByCid: Record<string, Record<string, CandidateAccentureHoverEntry>>;
+}> {
+  if (latestSuccessfulSyncId === null || cidsOnPage.length === 0) {
+    return { accentureCellsByCid: {}, accentureInsertedCids: [], accentureHoverByCid: {} };
+  }
+
+  const [changedFields, insertedCids, hoverData] = await Promise.all([
+    getAccentureChangedFieldsForRun(latestSuccessfulSyncId, sqlClient),
+    getCidsInsertedByRun(latestSuccessfulSyncId, sqlClient),
+    getAccentureHoverData(cidsOnPage, sqlClient),
+  ]);
+
+  const accentureCellsByCid: Record<string, CandidateMasterExcelHeader[]> = {};
+  for (const cid of cidsOnPage) {
+    const fields = changedFields.get(cid);
+    if (!fields || fields.size === 0) continue;
+    const headers: CandidateMasterExcelHeader[] = [];
+    for (const field of fields) {
+      if (field === "name") {
+        if (hoverData.get(cid)?.get("name")?.isAccentureLatest) headers.push("Name");
+        continue;
+      }
+      try {
+        headers.push(excelHeaderForCandidateDbColumn(field as CandidateMasterSheetDbColumn));
+      } catch {
+        // stray field_name — ignore rather than crash the page.
+      }
+    }
+    if (headers.length > 0) accentureCellsByCid[cid] = headers;
+  }
+
+  const cidsOnPageSet = new Set(cidsOnPage);
+  const accentureHoverByCid: Record<string, Record<string, CandidateAccentureHoverEntry>> = {};
+  for (const [cid, byField] of hoverData) {
+    if (!cidsOnPageSet.has(cid)) continue;
+    const obj: Record<string, CandidateAccentureHoverEntry> = {};
+    for (const [field, entry] of byField) {
+      const header =
+        field === "name"
+          ? "Name"
+          : (() => {
+              try {
+                return excelHeaderForCandidateDbColumn(field as CandidateMasterSheetDbColumn);
+              } catch {
+                return null;
+              }
+            })();
+      if (header) obj[header] = entry;
+    }
+    accentureHoverByCid[cid] = obj;
+  }
+
+  return {
+    accentureCellsByCid,
+    accentureInsertedCids: [...insertedCids].filter((cid) => cidsOnPageSet.has(cid)),
+    accentureHoverByCid,
   };
 }
 
@@ -415,6 +514,10 @@ export function applyCandidateMasterSheetFilters(
     reviewFlags: CandidateReviewFlagRow[];
     /** Live CIDs currently duplicated (migration 021, D2) — see computeLiveDuplicateCids. */
     liveDuplicateCids: Set<string>;
+    /** Stage 3 — every candidate_sync_history id ever stamped kind='accenture_upload' (non-failed) — backs the permanent "New Rows" filter. */
+    accentureUploadSyncIds?: Set<number>;
+    /** Stage 3 — the latest successful Accenture run's id — backs the "Latest Upload" filter. */
+    latestSuccessfulAccentureSyncId?: number | null;
   },
   /** CIDs updated/flagged by `query.syncFilter` (see getCandidateCidsTouchedBySync) — inserts are checked directly via each row's own `insertedSyncId` instead. */
   syncFilterCids?: Set<string> | null
@@ -450,6 +553,31 @@ export function applyCandidateMasterSheetFilters(
     }
     if (highlightFilters.includes("duplicate_cid")) {
       for (const cid of highlightData.liveDuplicateCids) highlightMatchCids.add(cid);
+    }
+    if (highlightFilters.includes("accenture_touched")) {
+      for (const row of rows) {
+        if (row.lastAccentureSyncId !== null) highlightMatchCids.add(row["Candidate ID"]);
+      }
+    }
+    if (highlightFilters.includes("accenture_new_rows") && highlightData.accentureUploadSyncIds) {
+      for (const row of rows) {
+        if (
+          row.insertedSyncId !== null &&
+          highlightData.accentureUploadSyncIds.has(row.insertedSyncId)
+        ) {
+          highlightMatchCids.add(row["Candidate ID"]);
+        }
+      }
+    }
+    if (
+      highlightFilters.includes("accenture_latest_upload") &&
+      highlightData.latestSuccessfulAccentureSyncId != null
+    ) {
+      for (const row of rows) {
+        if (row.lastAccentureSyncId === highlightData.latestSuccessfulAccentureSyncId) {
+          highlightMatchCids.add(row["Candidate ID"]);
+        }
+      }
     }
     // Explicit generic: TS's inferred-predicate narrowing on the .filter()
     // below would otherwise narrow this Set's element type to exclude
@@ -538,20 +666,31 @@ async function loadCandidateHighlightData(
   changedFields: CandidateChangedFieldsByCid;
   reviewFlags: CandidateReviewFlagRow[];
   liveDuplicateCids: Set<string>;
+  accentureUploadSyncIds: Set<number>;
+  latestSuccessfulAccentureSyncId: number | null;
 }> {
   const windowSyncIds = await getCandidateRecentChangeWindowSyncIds(sqlClient);
-  const [changedFields, insertedCids, reviewFlags] = await Promise.all([
-    getLatestCandidateChangedFields(windowSyncIds, sqlClient),
-    getCandidateCidsInsertedInWindow(windowSyncIds, sqlClient),
-    getLatestCandidateReviewFlags(sqlClient),
-  ]);
+  const [changedFields, insertedCids, reviewFlags, accentureUploadSyncIds, latestAccentureRun] =
+    await Promise.all([
+      getLatestCandidateChangedFields(windowSyncIds, sqlClient),
+      getCandidateCidsInsertedInWindow(windowSyncIds, sqlClient),
+      getLatestCandidateReviewFlags(sqlClient),
+      getAccentureUploadSyncIds(sqlClient),
+      getLatestSuccessfulAccentureRun(sqlClient),
+    ]);
   for (const cid of insertedCids) {
     if (!changedFields.has(cid)) {
       changedFields.set(cid, new Set(CANDIDATE_MASTER_COLUMN_MAP.map((m) => m.dbColumn)));
     }
   }
   const liveDuplicateCids = computeLiveDuplicateCids(rows);
-  return { changedFields, reviewFlags, liveDuplicateCids };
+  return {
+    changedFields,
+    reviewFlags,
+    liveDuplicateCids,
+    accentureUploadSyncIds,
+    latestSuccessfulAccentureSyncId: latestAccentureRun?.id ?? null,
+  };
 }
 
 export async function getCandidateMasterSheetSchema(
@@ -576,7 +715,10 @@ export async function queryCandidateMasterSheetPage(
   // predicate (needs full-table coverage, pre-pagination) and the page's
   // display highlight state (page-scoped, post-pagination) below — avoids
   // querying the highlight tables twice per request.
-  const [{ changedFields, reviewFlags, liveDuplicateCids }, syncFilterCids] = await Promise.all([
+  const [
+    { changedFields, reviewFlags, liveDuplicateCids, accentureUploadSyncIds, latestSuccessfulAccentureSyncId },
+    syncFilterCids,
+  ] = await Promise.all([
     loadCandidateHighlightData(rows, sqlClient),
     query.syncFilter != null
       ? getCandidateCidsTouchedBySync(query.syncFilter, sqlClient)
@@ -585,15 +727,28 @@ export async function queryCandidateMasterSheetPage(
   const filtered = applyCandidateMasterSheetFilters(
     rows,
     query,
-    { changedFields, reviewFlags, liveDuplicateCids },
+    {
+      changedFields,
+      reviewFlags,
+      liveDuplicateCids,
+      accentureUploadSyncIds,
+      latestSuccessfulAccentureSyncId,
+    },
     syncFilterCids
   );
   const page = paginate(filtered, query.page, query.pageSize);
+  const pageCids = page.rows.map((row) => row["Candidate ID"]);
+  const accentureState = await loadAccentureHighlightState(
+    pageCids,
+    latestSuccessfulAccentureSyncId,
+    sqlClient
+  );
   const highlights = buildHighlightState(
-    page.rows.map((row) => row["Candidate ID"]),
+    pageCids,
     changedFields,
     reviewFlags,
-    liveDuplicateCids
+    liveDuplicateCids,
+    accentureState
   );
 
   return {
@@ -628,7 +783,10 @@ export async function exportCandidateMasterSheetRows(
   sheetName: string;
 }> {
   const rows = await loadRows(sqlClient);
-  const [{ changedFields, reviewFlags, liveDuplicateCids }, syncFilterCids] = await Promise.all([
+  const [
+    { changedFields, reviewFlags, liveDuplicateCids, accentureUploadSyncIds, latestSuccessfulAccentureSyncId },
+    syncFilterCids,
+  ] = await Promise.all([
     loadCandidateHighlightData(rows, sqlClient),
     query.syncFilter != null
       ? getCandidateCidsTouchedBySync(query.syncFilter, sqlClient)
@@ -637,7 +795,13 @@ export async function exportCandidateMasterSheetRows(
   const filtered = applyCandidateMasterSheetFilters(
     rows,
     query,
-    { changedFields, reviewFlags, liveDuplicateCids },
+    {
+      changedFields,
+      reviewFlags,
+      liveDuplicateCids,
+      accentureUploadSyncIds,
+      latestSuccessfulAccentureSyncId,
+    },
     syncFilterCids
   );
 

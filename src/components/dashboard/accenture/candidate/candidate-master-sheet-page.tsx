@@ -103,6 +103,11 @@ function formatSyncLabel(sync: CandidateSyncHistoryRow): string {
         hour: "2-digit",
         minute: "2-digit",
       });
+  // Stage 3 — an Accenture run is labeled distinctly rather than by its raw
+  // uploaded filename, same spirit as the history modal's kindLabel.
+  if (sync.kind === "accenture_upload") {
+    return `Accenture Final Report - ${dateLabel}`;
+  }
   return sync.sourceFilename ? `${sync.sourceFilename} — ${dateLabel}` : dateLabel;
 }
 

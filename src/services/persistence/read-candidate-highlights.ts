@@ -169,6 +169,20 @@ export async function getLatestCandidateReviewFlags(
   }));
 }
 
+/** Stage 3 — human label for a candidate_sync_history.kind value. */
+export type CandidateHistoryKindLabel =
+  | "Accenture Final Report upload"
+  | "Oorwin upload"
+  | "Manual edit"
+  | "Legacy";
+
+function labelForHistoryKind(kind: string | null): CandidateHistoryKindLabel {
+  if (kind === "accenture_upload") return "Accenture Final Report upload";
+  if (kind === "oorwin_upload") return "Oorwin upload";
+  if (kind === "manual_add" || kind === "manual_modify") return "Manual edit";
+  return "Legacy";
+}
+
 /** One historical field change for the C10 candidate history popup. */
 export interface CandidateHistoryEntry {
   header: CandidateMasterExcelHeader;
@@ -178,13 +192,31 @@ export interface CandidateHistoryEntry {
   syncId: number;
   sourceFilename: string | null;
   triggeredBy: string | null;
+  /** Stage 3 — candidate_sync_history.kind, raw (null for a pre-migration-021/script-driven row). */
+  kind: string | null;
+  kindLabel: CandidateHistoryKindLabel;
+  /**
+   * Stage 3 — true for a field_name='name' row from an accenture_upload run
+   * (the Accenture engine never writes the `name` column itself — this is
+   * always a mismatch NOTE, never an applied change). The modal renders
+   * these with distinct wording instead of the generic old->new display.
+   */
+  isAccentureNameMismatch: boolean;
 }
 
 /**
- * Full change history for one CID across every sync, oldest first — no
- * "latest sync only" filter (that's C9's job, above). Left-joined to
- * candidate_sync_history for traceability (which file / who triggered it),
- * tolerating a missing history row rather than dropping the change entry.
+ * Full change history for one CID across every sync, newest first (Stage 3
+ * — `changed_at DESC, id DESC`; previously oldest-first). The `id`
+ * tie-break is required, not optional: Stage 2's Accenture engine runs its
+ * whole file inside ONE transaction, and Postgres's `now()` (this column's
+ * DEFAULT) is stable for an entire transaction, so every
+ * candidate_sync_changes row one Accenture run writes shares the identical
+ * `changed_at` — without the `id DESC` tie-break, a multi-step chain
+ * (C<-B<-A) could print in the wrong order. No "latest sync only" filter
+ * (that's C9's job, above) — every row ever written for this CID, across
+ * every sync. Left-joined to candidate_sync_history for traceability
+ * (which file / who triggered it / its kind), tolerating a missing history
+ * row rather than dropping the change entry.
  */
 export async function getCandidateChangeHistory(
   cid: string,
@@ -202,6 +234,7 @@ export async function getCandidateChangeHistory(
       sync_id: number | string;
       source_filename: string | null;
       triggered_by: string | null;
+      kind: string | null;
     }[]
   >`
     SELECT
@@ -211,11 +244,12 @@ export async function getCandidateChangeHistory(
       csc.changed_at,
       csc.sync_id,
       csh.source_filename,
-      csh.triggered_by
+      csh.triggered_by,
+      csh.kind
     FROM candidate_sync_changes csc
     LEFT JOIN candidate_sync_history csh ON csh.id = csc.sync_id
     WHERE csc.cid = ${trimmed}
-    ORDER BY csc.changed_at ASC, csc.id ASC
+    ORDER BY csc.changed_at DESC, csc.id DESC
   `;
 
   const entries: CandidateHistoryEntry[] = [];
@@ -234,6 +268,9 @@ export async function getCandidateChangeHistory(
       syncId: Number(row.sync_id),
       sourceFilename: row.source_filename,
       triggeredBy: row.triggered_by,
+      kind: row.kind,
+      kindLabel: labelForHistoryKind(row.kind),
+      isAccentureNameMismatch: row.field_name === "name" && row.kind === "accenture_upload",
     });
   }
   return entries;

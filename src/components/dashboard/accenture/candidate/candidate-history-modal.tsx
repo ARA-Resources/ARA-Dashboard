@@ -31,7 +31,8 @@ function formatChangedAt(iso: string): string {
  * nobody clicks.
  *
  * Deliberately unfiltered: every field change ever recorded for this CID,
- * oldest first — the opposite of C9's "latest sync only" highlight rule.
+ * newest first (Stage 3) — the opposite of C9's "latest sync only"
+ * highlight rule.
  */
 export function CandidateHistoryModal({
   open,
@@ -101,11 +102,20 @@ export function CandidateHistoryModal({
                         {formatChangedAt(entry.changedAt)}
                       </span>
                     </div>
-                    <p className="mt-1 break-words text-foreground">
-                      <span className="text-muted-foreground line-through">{entry.oldValue}</span>
-                      <span className="mx-1.5 text-muted-foreground">&rarr;</span>
-                      <span>{entry.newValue}</span>
+                    <p className="mt-0.5 text-xs font-medium text-violet-600 dark:text-violet-400">
+                      {entry.kindLabel}
                     </p>
+                    {entry.isAccentureNameMismatch ? (
+                      <p className="mt-1 break-words text-foreground">
+                        Name mismatch noted (Accenture): {entry.newValue}, not applied
+                      </p>
+                    ) : (
+                      <p className="mt-1 break-words text-foreground">
+                        <span className="text-muted-foreground line-through">{entry.oldValue}</span>
+                        <span className="mx-1.5 text-muted-foreground">&rarr;</span>
+                        <span>{entry.newValue}</span>
+                      </p>
+                    )}
                     {entry.sourceFilename || entry.triggeredBy ? (
                       <p className="mt-1 truncate text-xs text-muted-foreground">
                         {entry.sourceFilename ?? "-"}

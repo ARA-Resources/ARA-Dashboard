@@ -100,6 +100,7 @@ import { getDbClient } from "@/lib/persistence/db-client";
 import { resolveCandidateAutoFetchFields } from "./candidate-auto-fetch";
 import { combineCandidateName, normalizeCandidateMobile } from "./candidate-field-utils";
 import type { CandidateOorwinParsedRow } from "./candidate-oorwin-parser";
+import { extractJmlNumber } from "./candidate-jml-format";
 
 /** DB columns diffed/updated by the sync (excludes id/cid/date_of_upload/created_at/updated_at/last_touched_at). */
 const DIFFABLE_FIELDS = [
@@ -431,15 +432,33 @@ async function processSurvivorRow(
   // candidate_sync_changes row, unlike jr_id_conflict's own recurring flag.
   // Only applies to an existing row: a lock can't exist on a row that
   // doesn't exist yet, so this never touches the INSERT path below.
+  //
+  // The counter only increments when the lock actually blocked something —
+  // i.e. Oorwin's own desired value for that field, read BEFORE these
+  // conflictFields.add() calls run (buildDesiredFields already computed
+  // `desired.values` from its own, separate, JR-conflict-only snapshot of
+  // conflictFields, so these reads are never blanked out by the add() calls
+  // below), genuinely differs from what's already stored. A locked row
+  // where Oorwin agrees, or has nothing usable for that field, never
+  // actually loses a write, so it must count 0. Email compares the same way
+  // the plain diff loop below does (`!==` on the already-coerceBlank'd
+  // value); job_management_level compares by NUMBER via extractJmlNumber —
+  // Oorwin's auto-fetched value and Accenture's stored "CL<n>" form are
+  // frequently the same level in different text ("9-Team Lead/Consultant"
+  // vs "CL9"), and a format-only difference must not count as blocked.
   let accentureLockedFieldsKept = 0;
   if (existing) {
     if (existing.email_accenture_locked) {
+      if (desired.values.email !== existing.email) accentureLockedFieldsKept += 1;
       desired.conflictFields.add("email");
-      accentureLockedFieldsKept += 1;
     }
     if (existing.job_management_level_accenture_locked) {
+      const desiredLevelNumber = extractJmlNumber(desired.values.job_management_level);
+      const storedLevelNumber = extractJmlNumber(existing.job_management_level);
+      if (desiredLevelNumber !== null && desiredLevelNumber !== storedLevelNumber) {
+        accentureLockedFieldsKept += 1;
+      }
       desired.conflictFields.add("job_management_level");
-      accentureLockedFieldsKept += 1;
     }
   }
 
