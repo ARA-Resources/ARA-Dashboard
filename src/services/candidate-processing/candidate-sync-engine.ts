@@ -346,6 +346,14 @@ export async function writeReviewFlag(
  * unique (205 CIDs are duplicated in prod). Optional and defaulted to
  * `null` so pre-migration-021 callers still compile; every call site in
  * this file (and in candidate-manual-edit.ts) passes the row's real id.
+ *
+ * `changedAt` (trailing, optional) is for the Accenture replay engine
+ * (candidate-accenture-replay-engine.ts) only — a historical step whose
+ * real-world date is the file's own report date, not upload time. Every
+ * existing call site omits it and keeps relying on the column's
+ * `DEFAULT NOW()`; the two branches below are two static INSERTs (not one
+ * INSERT with a conditionally-built column list) so every existing call
+ * site's generated SQL is byte-identical to before this parameter existed.
  */
 export async function writeChange(
   sqlClient: SqlClient,
@@ -354,8 +362,16 @@ export async function writeChange(
   field: string,
   oldValue: string | null,
   newValue: string | null,
-  candidateMasterId: number | null = null
+  candidateMasterId: number | null = null,
+  changedAt?: Date | null
 ): Promise<void> {
+  if (changedAt) {
+    await sqlClient`
+      INSERT INTO candidate_sync_changes (sync_id, cid, field_name, old_value, new_value, candidate_master_id, changed_at)
+      VALUES (${syncId}, ${cid}, ${field}, ${oldValue}, ${newValue}, ${candidateMasterId}, ${changedAt})
+    `;
+    return;
+  }
   await sqlClient`
     INSERT INTO candidate_sync_changes (sync_id, cid, field_name, old_value, new_value, candidate_master_id)
     VALUES (${syncId}, ${cid}, ${field}, ${oldValue}, ${newValue}, ${candidateMasterId})
