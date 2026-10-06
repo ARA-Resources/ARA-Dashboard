@@ -296,6 +296,74 @@ async function main() {
       check("Snapshot blank-is-real-value: exactly 1 step logged (Review -> '-')", steps.length === 1 && steps[0].old_value === "Review" && steps[0].new_value === "-", JSON.stringify(steps));
     }
 
+    // ===== 1c. Dry-run/apply PARITY for a repeated brand-new CID =====
+    // Regression coverage for the bug this round found: a dry run on a
+    // repeated new CID used to under-report fieldChangeCounts/
+    // nameMismatchNotesCount vs what the subsequent apply actually wrote,
+    // because the continuation's count increments were nested inside
+    // `if (!dryRun)`. Now the diff is computed unconditionally
+    // (buildWouldBeInsertedRow + buildAccentureRowPlan), so dry run and
+    // apply must report identical counts for the SAME file, on two
+    // otherwise-identical fresh CIDs (one run dry, one run for real).
+    async function parityCheck(
+      label: string,
+      rowsFor: (cid: string) => ReturnType<typeof fileRow>[]
+    ) {
+      const dryCid = CID(110 + parityCheck.n * 2);
+      const applyCid = CID(110 + parityCheck.n * 2 + 1);
+      parityCheck.n += 1;
+
+      const drySyncId = await makeSyncId(sql);
+      const dryRows = rowsFor(dryCid);
+      const drySummary = await runCandidateAccentureSync(dryRows, drySyncId, sql, { dryRun: true });
+      const dryRowsAfter = await getCandidateMasterRowsByCid(dryCid, sql);
+      check(`${label}: dry run writes ZERO rows to candidate_master`, dryRowsAfter.length === 0, String(dryRowsAfter.length));
+
+      const applySyncId = await makeSyncId(sql);
+      const applyRows = rowsFor(applyCid);
+      const applySummary = await runCandidateAccentureSync(applyRows, applySyncId, sql, { dryRun: false });
+      cidsUsed.push(applyCid);
+
+      check(
+        `${label}: dry run's fieldChangeCounts match apply's`,
+        JSON.stringify(drySummary.fieldChangeCounts) === JSON.stringify(applySummary.fieldChangeCounts),
+        JSON.stringify({ dry: drySummary.fieldChangeCounts, apply: applySummary.fieldChangeCounts })
+      );
+      check(
+        `${label}: dry run's newlyLockedCount matches apply's`,
+        JSON.stringify(drySummary.newlyLockedCount) === JSON.stringify(applySummary.newlyLockedCount),
+        JSON.stringify({ dry: drySummary.newlyLockedCount, apply: applySummary.newlyLockedCount })
+      );
+      check(
+        `${label}: dry run's nameMismatchNotesCount matches apply's`,
+        drySummary.nameMismatchNotesCount === applySummary.nameMismatchNotesCount,
+        JSON.stringify({ dry: drySummary.nameMismatchNotesCount, apply: applySummary.nameMismatchNotesCount })
+      );
+    }
+    parityCheck.n = 0;
+
+    await parityCheck("Repeated new CID x2 (email+name+stage change)", (cid) => [
+      fileRow(cid, { name: "Parity First", email: "parity-a@x.com", candidateStage: "Review" }),
+      fileRow(cid, { name: "Parity Final", email: "parity-b@x.com", candidateStage: "On Hold" }),
+    ]);
+
+    await parityCheck("Repeated new CID x3 (email+name+stage change)", (cid) => [
+      fileRow(cid, { name: "Parity First", email: "parity-a@x.com", candidateStage: "Review" }),
+      fileRow(cid, { name: "Parity Mid", email: "parity-b@x.com", candidateStage: "In Progress" }),
+      fileRow(cid, { name: "Parity Final", email: "parity-c@x.com", candidateStage: "On Hold" }),
+    ]);
+
+    await parityCheck("Repeated new CID, name differs between occurrences only", (cid) => [
+      fileRow(cid, { name: "Parity Name A" }),
+      fileRow(cid, { name: "Parity Name B" }),
+    ]);
+
+    await parityCheck("Repeated new CID, first and last email match but the middle differs (short-circuit)", (cid) => [
+      fileRow(cid, { email: "parity-same@x.com" }),
+      fileRow(cid, { email: "parity-different@x.com" }),
+      fileRow(cid, { email: "parity-same@x.com" }),
+    ]);
+
     // ===== 2. Matched update: step-chain history, idempotent re-upload =====
     {
       const cid = CID(2);

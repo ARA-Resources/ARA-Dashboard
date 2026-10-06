@@ -27,7 +27,11 @@
  *    history. `name` IS written literally from the first occurrence here
  *    (there is no prior name to protect yet) — but once the row exists, the
  *    continuation treats it exactly like any matched row's name: never
- *    overwritten, only noted on a mismatch.
+ *    overwritten, only noted on a mismatch. The continuation's DIFF
+ *    (`buildWouldBeInsertedRow` + `buildAccentureRowPlan`) is computed
+ *    unconditionally, dry run or not — only the actual INSERT/UPDATE/
+ *    writeChange calls are gated by `dryRun` — so a dry run's preview counts
+ *    for a repeated brand-new CID match what an apply would actually do.
  *  - One or more live rows share this CID: apply to EVERY one of them, no
  *    narrowing (unlike the Oorwin engine's CID+JR narrowing for ambiguous
  *    CIDs) — the spec for this feature is explicit that an Accenture
@@ -310,12 +314,59 @@ async function applyMatchedRowWrites(
   return { nameMismatchWritten };
 }
 
+/**
+ * Pure — the CandidateMasterRow `applyInsertRow` below would actually write,
+ * computed with zero DB access so a dry run can preview a repeated-new-CID's
+ * continuation (see the `existingRows.length === 0` branch further down)
+ * exactly like a real apply would, without needing a real INSERT to re-read
+ * afterward. Fields `buildAccentureRowPlan` never reads (id, gender, dates,
+ * etc.) are filled with the same literal placeholders `applyInsertRow`
+ * itself writes for them, purely so this satisfies the full
+ * `CandidateMasterRow` shape.
+ */
+function buildWouldBeInsertedRow(cid: string, groupRows: CandidateAccentureParsedRow[]): CandidateMasterRow {
+  const firstRow = groupRows[0];
+  const emailOcc = usableEmailOccurrences(groupRows);
+  const levelOcc = usableLevelOccurrences(groupRows);
+  return {
+    id: -1,
+    cid,
+    name: coerceBlank(firstRow.name),
+    gender: "-",
+    contact_number: "-",
+    date_of_upload: todayAsDdMmYyyy(),
+    submitter: "-",
+    customer: "-",
+    job_requisition_id: "-",
+    primary_skills: "-",
+    job_management_level: levelOcc.length > 0 ? levelOcc[0] : "-",
+    market: "-",
+    submitted_date: "-",
+    status: "-",
+    submission_comments: "-",
+    email: emailOcc.length > 0 ? emailOcc[0] : "-",
+    client_spoc: "-",
+    accenture_candidate_stage: coerceBlank(firstRow.candidateStage),
+    current_cid_source: coerceBlank(firstRow.currentCidSource),
+    application_completion_status: coerceBlank(firstRow.applicationCompletionStatus),
+    screening_candidate_stage: "-",
+    disposition_reason: "-",
+    last_touched_at: null,
+    inserted_sync_id: null,
+    email_accenture_locked: emailOcc.length > 0,
+    job_management_level_accenture_locked: levelOcc.length > 0,
+    last_accenture_sync_id: null,
+    deleted_at: null,
+    deleted_by: null,
+  };
+}
+
 async function applyInsertRow(
   sqlClient: SqlClient,
   syncId: number,
   cid: string,
   groupRows: CandidateAccentureParsedRow[]
-): Promise<{ emailUsable: boolean; levelUsable: boolean }> {
+): Promise<void> {
   // Insert from the FIRST occurrence only — any later occurrences in this
   // CID's group are fed through the same matched-row chain machinery right
   // after (see the `existingRows.length === 0` branch below), exactly like
@@ -323,18 +374,7 @@ async function applyInsertRow(
   // consider every occurrence in the group, not just the first — the lock
   // rule itself (locked if ANY occurrence this run supplied a usable value)
   // is unaffected by this change.
-  const firstRow = groupRows[0];
-  const name = coerceBlank(firstRow.name);
-  const emailOcc = usableEmailOccurrences(groupRows);
-  const email = emailOcc.length > 0 ? emailOcc[0] : "-";
-  const levelOcc = usableLevelOccurrences(groupRows);
-  const level = levelOcc.length > 0 ? levelOcc[0] : "-";
-  const stage = coerceBlank(firstRow.candidateStage);
-  const cidSource = coerceBlank(firstRow.currentCidSource);
-  const completionStatus = coerceBlank(firstRow.applicationCompletionStatus);
-  const today = todayAsDdMmYyyy();
-  const emailUsable = emailOcc.length > 0;
-  const levelUsable = levelOcc.length > 0;
+  const row = buildWouldBeInsertedRow(cid, groupRows);
 
   await sqlClient`
     INSERT INTO candidate_master (
@@ -346,16 +386,15 @@ async function applyInsertRow(
       email_accenture_locked, job_management_level_accenture_locked,
       last_touched_at, inserted_sync_id, last_accenture_sync_id
     ) VALUES (
-      ${cid}, ${name}, '-', '-', ${today}, '-', '-',
-      '-', '-', ${level}, '-',
-      '-', '-', ${stage}, ${cidSource},
-      ${completionStatus}, '-', '-',
-      '-', '-', ${email},
-      ${emailUsable}, ${levelUsable},
+      ${cid}, ${row.name}, '-', '-', ${row.date_of_upload}, '-', '-',
+      '-', '-', ${row.job_management_level}, '-',
+      '-', '-', ${row.accenture_candidate_stage}, ${row.current_cid_source},
+      ${row.application_completion_status}, '-', '-',
+      '-', '-', ${row.email},
+      ${row.email_accenture_locked}, ${row.job_management_level_accenture_locked},
       NOW(), ${syncId}, ${syncId}
     )
   `;
-  return { emailUsable, levelUsable };
 }
 
 export interface CandidateAccentureSyncSummary {
@@ -445,30 +484,37 @@ export async function runCandidateAccentureSync(
       const levelOcc = usableLevelOccurrences(groupRows);
       if (emailOcc.length > 0) newlyLockedCount.email += 1;
       if (levelOcc.length > 0) newlyLockedCount.job_management_level += 1;
-      if (!dryRun) {
-        await applyInsertRow(sqlClient, syncId as number, cid, groupRows);
-        // This CID's file group had MORE than one occurrence: the row was
-        // just inserted from occurrence[0] alone, so every remaining
-        // occurrence (1..n-1) is still unapplied. Re-read the row this
-        // transaction just wrote and run it through the exact same
-        // matched-row chain (buildAccentureRowPlan / applyMatchedRowWrites)
-        // a pre-existing CID would use — so a brand-new CID repeated in one
-        // file ends up with the SAME final values as before (the file's
-        // last occurrence) but, unlike before, one logged
-        // candidate_sync_changes step per real change instead of silently
-        // collapsing straight to the last occurrence with no history.
-        if (groupRows.length > 1) {
+      // This CID's file group may have MORE than one occurrence: the row
+      // is (or would be) inserted from occurrence[0] alone, so every
+      // remaining occurrence (1..n-1) still needs to be walked through the
+      // exact same matched-row chain (buildAccentureRowPlan) a pre-existing
+      // CID would use — a brand-new CID repeated in one file ends up with
+      // the SAME final values the file's last occurrence implies, with one
+      // logged candidate_sync_changes step per real change instead of
+      // silently collapsing straight to the last occurrence with no
+      // history. `buildWouldBeInsertedRow` computes this with zero DB
+      // access, so the preview below is identical whether or not `dryRun`
+      // is set — only the actual writes further down are gated by it.
+      if (groupRows.length > 1) {
+        const wouldBeRow = buildWouldBeInsertedRow(cid, groupRows);
+        const continuationPlan = buildAccentureRowPlan(wouldBeRow, groupRows.slice(1));
+        if (continuationPlan.email.wouldWrite) fieldChangeCounts.email += 1;
+        if (continuationPlan.level.wouldWrite) fieldChangeCounts.job_management_level += 1;
+        else if (continuationPlan.levelUsableThisRun) levelFormatOnlyNoOpCount += 1;
+        if (continuationPlan.stage.wouldWrite) fieldChangeCounts.accenture_candidate_stage += 1;
+        if (continuationPlan.cidSource.wouldWrite) fieldChangeCounts.current_cid_source += 1;
+        if (continuationPlan.completionStatus.wouldWrite) {
+          fieldChangeCounts.application_completion_status += 1;
+        }
+
+        if (!dryRun) {
+          await applyInsertRow(sqlClient, syncId as number, cid, groupRows);
           const [insertedRow] = await getCandidateMasterRowsByCid(cid, sqlClient);
           if (insertedRow) {
-            const continuationPlan = buildAccentureRowPlan(insertedRow, groupRows.slice(1));
-            if (continuationPlan.email.wouldWrite) fieldChangeCounts.email += 1;
-            if (continuationPlan.level.wouldWrite) fieldChangeCounts.job_management_level += 1;
-            else if (continuationPlan.levelUsableThisRun) levelFormatOnlyNoOpCount += 1;
-            if (continuationPlan.stage.wouldWrite) fieldChangeCounts.accenture_candidate_stage += 1;
-            if (continuationPlan.cidSource.wouldWrite) fieldChangeCounts.current_cid_source += 1;
-            if (continuationPlan.completionStatus.wouldWrite) {
-              fieldChangeCounts.application_completion_status += 1;
-            }
+            // `continuationPlan` was computed against `wouldBeRow`, whose
+            // field values are exactly what `applyInsertRow` just wrote —
+            // so it's already the correct plan for the real row; only
+            // `applyMatchedRowWrites` needs the real row, for its id/cid.
             const { nameMismatchWritten } = await applyMatchedRowWrites(
               sqlClient,
               syncId as number,
@@ -477,7 +523,14 @@ export async function runCandidateAccentureSync(
             );
             if (nameMismatchWritten) nameMismatchNotesCount += 1;
           }
+        } else if (continuationPlan.nameMismatchCandidate) {
+          // Brand-new row: there is no prior note to dedupe against (unlike
+          // the matched-row dry-run preview below), so every mismatch here
+          // is new by definition.
+          nameMismatchNotesCount += 1;
         }
+      } else if (!dryRun) {
+        await applyInsertRow(sqlClient, syncId as number, cid, groupRows);
       }
       continue;
     }
