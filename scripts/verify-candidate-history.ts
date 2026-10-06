@@ -20,6 +20,7 @@ import {
   getCandidateChangeHistory,
   getLatestCandidateChangedFields,
 } from "../src/services/persistence/read-candidate-highlights";
+import { kindLabelClassName } from "../src/services/candidate-processing/candidate-history-label-style";
 
 interface TestResult {
   name: string;
@@ -79,6 +80,14 @@ const BASE = {
 
 async function main() {
   const results: TestResult[] = [];
+
+  // History modal label color: violet ONLY for Accenture entries; a neutral
+  // muted color for Oorwin, manual, and legacy entries (no DB needed — pure).
+  check(results, "kindLabelClassName('Accenture Final Report upload') is violet", kindLabelClassName("Accenture Final Report upload").includes("violet"));
+  check(results, "kindLabelClassName('Oorwin upload') is muted, not violet", kindLabelClassName("Oorwin upload") === "text-muted-foreground");
+  check(results, "kindLabelClassName('Manual edit') is muted, not violet", kindLabelClassName("Manual edit") === "text-muted-foreground");
+  check(results, "kindLabelClassName('Legacy') is muted, not violet", kindLabelClassName("Legacy") === "text-muted-foreground");
+
   const sql = getDbClient();
 
   try {

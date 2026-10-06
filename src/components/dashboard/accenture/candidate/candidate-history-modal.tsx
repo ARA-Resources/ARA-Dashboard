@@ -6,6 +6,7 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CandidateHistoryEntry } from "@/services/persistence/read-candidate-highlights";
+import { kindLabelClassName } from "@/services/candidate-processing/candidate-history-label-style";
 
 export interface CandidateHistoryModalProps {
   open: boolean;
@@ -20,6 +21,7 @@ function formatChangedAt(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
+
 
 /**
  * Candidate Master Sheet — C10 full change history popup. Opens from
@@ -102,7 +104,7 @@ export function CandidateHistoryModal({
                         {formatChangedAt(entry.changedAt)}
                       </span>
                     </div>
-                    <p className="mt-0.5 text-xs font-medium text-violet-600 dark:text-violet-400">
+                    <p className={cn("mt-0.5 text-xs font-medium", kindLabelClassName(entry.kindLabel))}>
                       {entry.kindLabel}
                     </p>
                     {entry.isAccentureNameMismatch ? (
