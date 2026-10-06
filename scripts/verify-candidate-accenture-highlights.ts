@@ -240,6 +240,14 @@ async function main() {
 
       const hoverBefore = await getAccentureHoverData([cid], sql);
       check("Before manual edit: hover IS Accenture-latest", hoverBefore.get(cid)?.get("email")?.isAccentureLatest === true);
+      const pageBefore = await queryCandidateMasterSheetPage(
+        { page: 1, pageSize: 50, columnFilters: {}, textFilters: {}, dateFilters: {} },
+        sql
+      );
+      check(
+        "Before manual edit: Email IS in the page's violet accentureCellsByCid",
+        pageBefore.highlights.accentureCellsByCid[cid]?.includes("Email") ?? false
+      );
 
       const fullOriginal: CandidateManualFieldValues = {
         cid: seeded.cid, date_of_upload: "-", name: seeded.name, email: "accenture-set@x.com",
@@ -266,6 +274,96 @@ async function main() {
       check(
         "After manual edit: hover reverts to plain (isAccentureLatest false — the manual edit is now the latest write)",
         hoverAfter.get(cid)?.get("email")?.isAccentureLatest === false
+      );
+
+      // The fix under test: the violet CELL must now agree with the hover —
+      // this assertion FAILS on the pre-fix code (Email stayed violet forever
+      // once any Accenture run had touched it, with no check that Accenture
+      // was still the latest writer for this specific cell).
+      const pageAfter = await queryCandidateMasterSheetPage(
+        { page: 1, pageSize: 50, columnFilters: {}, textFilters: {}, dateFilters: {} },
+        sql
+      );
+      check(
+        "After manual edit: Email is NO LONGER in the page's violet accentureCellsByCid (color now agrees with hover)",
+        !(pageAfter.highlights.accentureCellsByCid[cid]?.includes("Email") ?? false)
+      );
+    }
+
+    // ===== 5b. Same staleness check on job_management_level — confirms the fix is general, not email-specific =====
+    {
+      const cid = CID(90);
+      const seeded = await seedRow(sql, cid, { email: "-" });
+      await sql`UPDATE candidate_master SET job_management_level = '-' WHERE id = ${seeded.id}`;
+      const syncId = await makeAccentureSyncId(sql);
+      await runCandidateAccentureSync([fileRow(cid, { level: "CL8" })], syncId, sql, { dryRun: false });
+
+      const pageBefore = await queryCandidateMasterSheetPage(
+        { page: 1, pageSize: 50, columnFilters: {}, textFilters: {}, dateFilters: {} },
+        sql
+      );
+      check(
+        "job_management_level, before manual edit: violet",
+        pageBefore.highlights.accentureCellsByCid[cid]?.includes("Job Management Level") ?? false
+      );
+
+      const fullOriginal: CandidateManualFieldValues = {
+        cid: seeded.cid, date_of_upload: "-", name: seeded.name, email: "-",
+        contact_number: "-", submitter: "-", customer: "-", job_requisition_id: "-",
+        primary_skills: "-", job_management_level: "CL8", market: "-", client_spoc: "-", status: "-",
+        accenture_candidate_stage: "-", current_cid_source: "-", application_completion_status: "-",
+        screening_candidate_stage: "-", disposition_reason: "-", submitted_date: "-",
+        submission_comments: "-", gender: "-",
+      };
+      await updateCandidateManualRow(
+        seeded.id,
+        { ...fullOriginal, job_management_level: "CL9" },
+        null,
+        fullOriginal,
+        "verify-script@example.com",
+        sql
+      );
+
+      const pageAfter = await queryCandidateMasterSheetPage(
+        { page: 1, pageSize: 50, columnFilters: {}, textFilters: {}, dateFilters: {} },
+        sql
+      );
+      check(
+        "job_management_level, after manual edit: no longer violet (same fix, different field)",
+        !(pageAfter.highlights.accentureCellsByCid[cid]?.includes("Job Management Level") ?? false)
+      );
+    }
+
+    // ===== 5c. Regression guard: a field with NO later write stays violet (the fix must not over-correct) =====
+    {
+      const cid = CID(91);
+      await seedRow(sql, cid, { email: "untouched-after@x.com" });
+      const syncId = await makeAccentureSyncId(sql);
+      await runCandidateAccentureSync([fileRow(cid, { email: "untouched-after@x.com", candidateStage: "On Hold" })], syncId, sql, { dryRun: false });
+      // No manual edit at all.
+      const page = await queryCandidateMasterSheetPage(
+        { page: 1, pageSize: 50, columnFilters: {}, textFilters: {}, dateFilters: {} },
+        sql
+      );
+      check(
+        "No manual edit: the touched field stays violet (regression guard — the fix doesn't remove fields that are genuinely still Accenture-latest)",
+        page.highlights.accentureCellsByCid[cid]?.includes("Accenture Candidate Stage") ?? false
+      );
+    }
+
+    // ===== 5d. The new-row Candidate ID tint is a SEPARATE mechanism (accentureInsertedCids) and is unaffected by the fix =====
+    {
+      const cid = CID(92);
+      cidsUsed.push(cid);
+      const syncId = await makeAccentureSyncId(sql);
+      await runCandidateAccentureSync([fileRow(cid, { email: "brand-new-row@x.com" })], syncId, sql, { dryRun: false });
+      const page = await queryCandidateMasterSheetPage(
+        { page: 1, pageSize: 50, columnFilters: {}, textFilters: {}, dateFilters: {} },
+        sql
+      );
+      check(
+        "New row: Candidate ID tint (accentureInsertedCids) still fires — unaffected by the latest-writer fix",
+        page.highlights.accentureInsertedCids.includes(cid)
       );
     }
 

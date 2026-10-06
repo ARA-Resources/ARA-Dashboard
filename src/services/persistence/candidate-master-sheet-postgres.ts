@@ -283,14 +283,21 @@ function buildHighlightState(
 
 /**
  * Stage 3 — page-scoped violet highlight cells + hover data, built from the
- * latest successful Accenture run alone (not a window). Name gets an extra
- * check the other 5 synced fields don't: if the hover data shows a LATER
- * write (a manual correction) is now the most recent word on this CID's
- * name, the mismatch note not only reverts its hover to plain but is also
- * removed from the violet highlight set entirely — "if it now matches, no
- * note and no highlight" (explicit Stage 3 decision, Name only; the other 5
- * fields' violet highlight is a plain snapshot of what the latest run
- * touched, with no analogous staleness check).
+ * latest successful Accenture run alone (not a window). Every one of the 6
+ * tracked fields (the 5 synced fields + Name) gets the SAME staleness check
+ * the hover already computes per-field: a field only stays in the violet
+ * set if the Accenture run is still the most recent WRITER of that exact
+ * cell (`isAccentureLatest`) — if a later write (a manual correction, or an
+ * Oorwin sync for a field it also touches) is now the most recent word on
+ * this CID's field, the cell drops out of the violet set entirely, same as
+ * the hover already reverts to plain for it. (Previously this staleness
+ * check was applied to Name only; the other 5 fields used a plain snapshot
+ * of what the latest run touched, with no check that Accenture was still
+ * the latest writer — fixed here, not a new query, since `hoverData` below
+ * already carries `isAccentureLatest` for all 6 fields.) This is unrelated
+ * to `accentureInsertedCids` (the Candidate ID tint for a row the latest
+ * run INSERTED) — that one is permanent-by-design and untouched by this
+ * check.
  */
 async function loadAccentureHighlightState(
   cidsOnPage: string[],
@@ -317,8 +324,11 @@ async function loadAccentureHighlightState(
     if (!fields || fields.size === 0) continue;
     const headers: CandidateMasterExcelHeader[] = [];
     for (const field of fields) {
+      // A later write (manual edit, or Oorwin for a field it also touches)
+      // is now the latest word on this exact cell — don't show violet.
+      if (!hoverData.get(cid)?.get(field)?.isAccentureLatest) continue;
       if (field === "name") {
-        if (hoverData.get(cid)?.get("name")?.isAccentureLatest) headers.push("Name");
+        headers.push("Name");
         continue;
       }
       try {
