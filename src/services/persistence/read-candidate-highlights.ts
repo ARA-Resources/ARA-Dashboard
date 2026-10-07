@@ -202,6 +202,16 @@ export interface CandidateHistoryEntry {
    * show and no override ever happens.
    */
   reportDate: string | null;
+  /**
+   * `candidate_sync_history.started_at` for this entry's run — the real
+   * upload/run-start time, captured before any file parsing. Unlike
+   * `changedAt`, the replay engine never backdates this. Null only if the
+   * LEFT JOIN finds no matching history row. Used for the "Uploaded ..."
+   * line on replay-mode Accenture cards (the ones with a `reportDate`);
+   * `finished_at` is deliberately not used here — it's captured after the
+   * whole run completes, not when it started.
+   */
+  startedAt: string | null;
   syncId: number;
   sourceFilename: string | null;
   triggeredBy: string | null;
@@ -218,9 +228,12 @@ export interface CandidateHistoryEntry {
 }
 
 /**
- * Full change history for one CID across every sync, newest first (Stage 3
- * — `changed_at DESC, id DESC`; previously oldest-first). The `id`
- * tie-break is required, not optional: Stage 2's Accenture engine runs its
+ * Full change history for one CID across every sync, newest first by
+ * DISPLAYED date (the history popup's tile/list view shows `report_date`
+ * when set, else `changed_at` — the ORDER BY sorts by that same effective
+ * date, not raw `changed_at`, so a replay-mode step's backdated file date
+ * sorts where it's actually displayed). `changed_at DESC, id DESC` remains
+ * the tie-break for same-day entries: Stage 2's Accenture engine runs its
  * whole file inside ONE transaction, and Postgres's `now()` (this column's
  * DEFAULT) is stable for an entire transaction, so every
  * candidate_sync_changes row one Accenture run writes shares the identical
@@ -228,8 +241,8 @@ export interface CandidateHistoryEntry {
  * (C<-B<-A) could print in the wrong order. No "latest sync only" filter
  * (that's C9's job, above) — every row ever written for this CID, across
  * every sync. Left-joined to candidate_sync_history for traceability
- * (which file / who triggered it / its kind), tolerating a missing history
- * row rather than dropping the change entry.
+ * (which file / who triggered it / its kind / its real `started_at`),
+ * tolerating a missing history row rather than dropping the change entry.
  */
 export async function getCandidateChangeHistory(
   cid: string,
@@ -249,6 +262,7 @@ export async function getCandidateChangeHistory(
       source_filename: string | null;
       triggered_by: string | null;
       kind: string | null;
+      started_at: string | null;
     }[]
   >`
     SELECT
@@ -260,11 +274,18 @@ export async function getCandidateChangeHistory(
       csc.sync_id,
       csh.source_filename,
       csh.triggered_by,
-      csh.kind
+      csh.kind,
+      csh.started_at
     FROM candidate_sync_changes csc
     LEFT JOIN candidate_sync_history csh ON csh.id = csc.sync_id
     WHERE csc.cid = ${trimmed}
-    ORDER BY csc.changed_at DESC, csc.id DESC
+    ORDER BY
+      COALESCE(
+        CASE WHEN csc.report_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN csc.report_date::date END,
+        (csc.changed_at AT TIME ZONE 'Asia/Kolkata')::date
+      ) DESC,
+      csc.changed_at DESC,
+      csc.id DESC
   `;
 
   const entries: CandidateHistoryEntry[] = [];
@@ -281,6 +302,7 @@ export async function getCandidateChangeHistory(
       newValue: row.new_value ?? "-",
       changedAt: new Date(row.changed_at).toISOString(),
       reportDate: row.report_date,
+      startedAt: row.started_at ? new Date(row.started_at).toISOString() : null,
       syncId: Number(row.sync_id),
       sourceFilename: row.source_filename,
       triggeredBy: row.triggered_by,
