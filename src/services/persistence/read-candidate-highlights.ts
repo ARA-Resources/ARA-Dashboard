@@ -246,47 +246,83 @@ export interface CandidateHistoryEntry {
  */
 export async function getCandidateChangeHistory(
   cid: string,
-  sqlClient?: SqlClient
+  sqlClient?: SqlClient,
+  candidateMasterId?: number | null
 ): Promise<CandidateHistoryEntry[]> {
   const trimmed = String(cid ?? "").trim();
   if (!trimmed || trimmed === "-") return [];
   const sql = sqlClient ?? getDbClient();
-  const rows = await sql<
-    {
-      field_name: string;
-      old_value: string | null;
-      new_value: string | null;
-      changed_at: string;
-      report_date: string | null;
-      sync_id: number | string;
-      source_filename: string | null;
-      triggered_by: string | null;
-      kind: string | null;
-      started_at: string | null;
-    }[]
-  >`
-    SELECT
-      csc.field_name,
-      csc.old_value,
-      csc.new_value,
-      csc.changed_at,
-      csc.report_date,
-      csc.sync_id,
-      csh.source_filename,
-      csh.triggered_by,
-      csh.kind,
-      csh.started_at
-    FROM candidate_sync_changes csc
-    LEFT JOIN candidate_sync_history csh ON csh.id = csc.sync_id
-    WHERE csc.cid = ${trimmed}
-    ORDER BY
-      COALESCE(
-        CASE WHEN csc.report_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN csc.report_date::date END,
-        (csc.changed_at AT TIME ZONE 'Asia/Kolkata')::date
-      ) DESC,
-      csc.changed_at DESC,
-      csc.id DESC
-  `;
+  type Row = {
+    field_name: string;
+    old_value: string | null;
+    new_value: string | null;
+    changed_at: string;
+    report_date: string | null;
+    sync_id: number | string;
+    source_filename: string | null;
+    triggered_by: string | null;
+    kind: string | null;
+    started_at: string | null;
+  };
+  // Row-scoped (masterId given, e.g. the clicked table row's candidate_master.id):
+  // a CID can have more than one live candidate_master row (migration 021 —
+  // never enforced unique), and the Accenture engines deliberately apply to
+  // EVERY live row sharing a CID, each tagged with its own candidate_master_id
+  // (migration 021). Without this filter, two rows sharing a CID have their
+  // independent histories concatenated and look like duplicated entries.
+  // candidate_master_id IS NULL rows (written before migration 021, never
+  // backfilled) have no row identity at all, so they fall back to matching by
+  // cid alone and are shown under every row sharing that cid — unavoidable for
+  // that legacy data, not a regression.
+  const rows =
+    candidateMasterId != null
+      ? await sql<Row[]>`
+          SELECT
+            csc.field_name,
+            csc.old_value,
+            csc.new_value,
+            csc.changed_at,
+            csc.report_date,
+            csc.sync_id,
+            csh.source_filename,
+            csh.triggered_by,
+            csh.kind,
+            csh.started_at
+          FROM candidate_sync_changes csc
+          LEFT JOIN candidate_sync_history csh ON csh.id = csc.sync_id
+          WHERE csc.cid = ${trimmed}
+            AND (csc.candidate_master_id = ${candidateMasterId} OR csc.candidate_master_id IS NULL)
+          ORDER BY
+            COALESCE(
+              CASE WHEN csc.report_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN csc.report_date::date END,
+              (csc.changed_at AT TIME ZONE 'Asia/Kolkata')::date
+            ) DESC,
+            csc.changed_at DESC,
+            csc.id DESC
+        `
+      : await sql<Row[]>`
+          SELECT
+            csc.field_name,
+            csc.old_value,
+            csc.new_value,
+            csc.changed_at,
+            csc.report_date,
+            csc.sync_id,
+            csh.source_filename,
+            csh.triggered_by,
+            csh.kind,
+            csh.started_at
+          FROM candidate_sync_changes csc
+          LEFT JOIN candidate_sync_history csh ON csh.id = csc.sync_id
+          WHERE csc.cid = ${trimmed}
+          ORDER BY
+            COALESCE(
+              CASE WHEN csc.report_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN csc.report_date::date END,
+              (csc.changed_at AT TIME ZONE 'Asia/Kolkata')::date
+            ) DESC,
+            csc.changed_at DESC,
+            csc.id DESC
+        `;
 
   const entries: CandidateHistoryEntry[] = [];
   for (const row of rows) {

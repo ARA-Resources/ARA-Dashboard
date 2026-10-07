@@ -14,12 +14,27 @@ interface RouteContext {
  * existing `/api/excel/*` -> viewer rule in access.ts, same as the
  * Candidate Master Sheet's own data route, since anyone who can see the
  * sheet should be able to see a candidate's history.
+ *
+ * Optional `?masterId=` scopes history to the clicked row's
+ * candidate_master.id — a CID can have more than one live row (migration
+ * 021 never enforced uniqueness), and without this, two rows sharing a CID
+ * have their independent histories merged and look duplicated. Missing or
+ * invalid `masterId` falls back to today's cid-only behavior untouched.
  */
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const { cid } = await context.params;
 
+  const masterIdRaw = new URL(request.url).searchParams.get("masterId");
+  let masterId: number | null = null;
+  if (masterIdRaw !== null) {
+    const parsed = Number(masterIdRaw);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      masterId = parsed;
+    }
+  }
+
   try {
-    const entries = await getCandidateChangeHistory(decodeURIComponent(cid));
+    const entries = await getCandidateChangeHistory(decodeURIComponent(cid), undefined, masterId);
     return NextResponse.json({ ok: true, cid, entries });
   } catch (error) {
     const message =

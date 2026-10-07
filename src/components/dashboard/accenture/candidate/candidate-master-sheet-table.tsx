@@ -300,14 +300,18 @@ export function CandidateMasterSheetTable({
   );
 
   const openHistoryForCid = React.useCallback(
-    (cid: string) => {
+    (cid: string, masterId?: number) => {
       captureScroll();
       setHistoryCid(cid);
       setHistoryOpen(true);
       setHistoryLoading(true);
       setHistoryError(null);
       setHistoryEntries([]);
-      fetch(`/api/excel/candidate-master-sheet/${encodeURIComponent(cid)}/history`, {
+      const query =
+        typeof masterId === "number" && Number.isInteger(masterId) && masterId > 0
+          ? `?masterId=${masterId}`
+          : "";
+      fetch(`/api/excel/candidate-master-sheet/${encodeURIComponent(cid)}/history${query}`, {
         cache: "no-store",
       })
         .then(async (res) => {
@@ -544,7 +548,7 @@ export function CandidateMasterSheetTable({
                                 ) : isCandidateId ? (
                                   <CandidateIdCell
                                     cid={display}
-                                    onOpen={() => openHistoryForCid(display)}
+                                    onOpen={() => openHistoryForCid(display, rowId)}
                                   />
                                 ) : (
                                   <span
