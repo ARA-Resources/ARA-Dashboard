@@ -46,6 +46,7 @@ import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api/client";
 import { gmailOAuthStartHref } from "@/lib/config/gmail-oauth-start";
 import { LateralRunProgressPanel } from "@/components/dataset/lateral-run-progress-panel";
+import { usePostedButton, PostedButtonTrigger, PostedButtonMessages, LastPostedLine } from "@/components/dataset/posted-button";
 
 const DatasetSetupWizard = dynamic(
   () =>
@@ -267,6 +268,7 @@ const MANAGER_SECTION_IDS: ManagerSectionId[] = [
 export function DatasetManager() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const postedButtonState = usePostedButton("/api/dataset/lateral/posted");
   const [loading, setLoading] = React.useState(true);
   const [setup, setSetup] = React.useState<DatasetSetupConfig | null>(null);
   const [editing, setEditing] = React.useState(false);
@@ -834,46 +836,51 @@ export function DatasetManager() {
         title="Lateral Dataset"
         description="Lateral automation: Gmail → Download → Validate → Drive → Master Sheet update → Dashboard cache → Company Dashboard."
         actions={
-          runAllConfirm ? (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="rounded-xl"
-                disabled={runAllDisabled}
-                onClick={() => setRunAllConfirm(false)}
-              >
-                Cancel
-              </Button>
+          <>
+            {runAllConfirm ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="rounded-xl"
+                  disabled={runAllDisabled}
+                  onClick={() => setRunAllConfirm(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="rounded-xl gap-1.5"
+                  disabled={runAllDisabled}
+                  onClick={() => void runAllLateralProcessing()}
+                >
+                  <Zap className="size-3.5" />
+                  {confirmRunLabel}
+                </Button>
+              </>
+            ) : (
               <Button
                 type="button"
                 size="sm"
                 className="rounded-xl gap-1.5"
                 disabled={runAllDisabled}
-                onClick={() => void runAllLateralProcessing()}
+                onClick={() => {
+                  setRunAllConfirm(true);
+                  setRunAllFeedback(null);
+                }}
               >
                 <Zap className="size-3.5" />
-                {confirmRunLabel}
+                {runAllButtonLabel}
               </Button>
-            </>
-          ) : (
-            <Button
-              type="button"
-              size="sm"
-              className="rounded-xl gap-1.5"
-              disabled={runAllDisabled}
-              onClick={() => {
-                setRunAllConfirm(true);
-                setRunAllFeedback(null);
-              }}
-            >
-              <Zap className="size-3.5" />
-              {runAllButtonLabel}
-            </Button>
-          )
+            )}
+            <PostedButtonTrigger state={postedButtonState} />
+          </>
         }
       />
+      <LastPostedLine apiBase="/api/dataset/lateral/posted" />
+      <PostedButtonMessages state={postedButtonState} />
 
       {runAllConfirm ? (
         <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">

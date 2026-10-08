@@ -58,7 +58,16 @@
     "test:executive-new-sheet-mapping": "tsx scripts/verify-executive-new-sheet-mapping.ts",
     "test:executive-posted-sheet-cleaner": "tsx scripts/verify-executive-posted-sheet-cleaner.ts",
     "test:executive-file-type-broadening": "tsx scripts/verify-executive-file-type-broadening.ts",
-    "test:executive-full-pipeline-orchestration": "tsx scripts/verify-executive-full-pipeline-orchestration.ts"
+    "test:executive-full-pipeline-orchestration": "tsx scripts/verify-executive-full-pipeline-orchestration.ts",
+    "test:posted-sheet-row-cleaner": "tsx scripts/verify-posted-sheet-row-cleaner.ts",
+    "test:posted-sheet-cleaner-parity": "tsx scripts/verify-posted-sheet-cleaner-parity.ts",
+    "test:posted-write-guards": "tsx scripts/verify-posted-write-guards.ts",
+    "test:posted-drive-retry": "tsx scripts/verify-posted-drive-retry.ts",
+    "test:posted-sheet-writer-integration": "tsx scripts/verify-posted-sheet-writer-integration.ts",
+    "test:posted-run-e2e": "tsx scripts/verify-posted-run-e2e.ts",
+    "test:posted-step18-roundtrip": "tsx scripts/verify-posted-step18-roundtrip.ts",
+    "test:posted-fake-drive-demo-gate": "tsx scripts/verify-posted-fake-drive-demo-gate.ts",
+    "test:posted-boot-warning": "tsx scripts/verify-posted-boot-warning.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ExecutiveSchedulerPanel } from "@/components/dataset/executive-scheduler-panel";
+import { usePostedButton, PostedButtonTrigger, PostedButtonMessages, LastPostedLine } from "@/components/dataset/posted-button";
 import { ROUTES } from "@/constants/routes";
 import { cn } from "@/lib/utils";
 import type { DatasetSetupConfig } from "@/types/dataset-setup";
@@ -122,6 +123,7 @@ export function ExecutiveDatasetManagerPage() {
   }
 
   const executiveConfig = setup?.datasets?.Executive;
+  const postedButtonState = usePostedButton("/api/dataset/executive/posted");
 
   return (
     <div className="space-y-4">
@@ -143,6 +145,7 @@ export function ExecutiveDatasetManagerPage() {
               )}
               {runAllBusy ? "Running…" : "Run All"}
             </Button>
+            <PostedButtonTrigger state={postedButtonState} />
             <Button
               type="button"
               variant="outline"
@@ -162,6 +165,8 @@ export function ExecutiveDatasetManagerPage() {
           </div>
         }
       />
+      <LastPostedLine apiBase="/api/dataset/executive/posted" />
+      <PostedButtonMessages state={postedButtonState} />
 
       {runAllMessage ? (
         <FadeIn>

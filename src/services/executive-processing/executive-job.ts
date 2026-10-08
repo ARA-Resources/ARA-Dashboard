@@ -42,6 +42,10 @@ import {
   acquireExecutiveJobLock,
   type JobLockResult,
 } from "@/lib/persistence/job-lock";
+import {
+  setExecutiveRunHolder,
+  clearExecutiveRunHolder,
+} from "@/services/executive-processing/executive-run-progress";
 import { advanceExecutiveGmailCheckpoint } from "@/services/executive-processing/executive-gmail-checkpoint-store";
 import {
   runExecutiveGmailIncrementalSync,
@@ -102,9 +106,11 @@ export async function invokeExecutiveJob(
     };
   }
 
+  setExecutiveRunHolder(trigger);
   try {
     return await invokeExecutiveJobBody(trigger, ranAt, startedMs, deps);
   } finally {
+    clearExecutiveRunHolder();
     await lock.release();
   }
 }

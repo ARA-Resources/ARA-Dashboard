@@ -34,6 +34,15 @@ export async function registerNodeInstrumentation() {
   }
 
   try {
+    const { logPostedFakeDriveDemoBootWarningOnce } = await import(
+      "@/services/dataset-posted/posted-fake-drive-demo"
+    );
+    await logPostedFakeDriveDemoBootWarningOnce();
+  } catch (error) {
+    console.error("[instrumentation] Posted fake-Drive demo gate check failed", error);
+  }
+
+  try {
     const { startDatasetScheduler } = await import(
       "@/services/dataset/scheduler"
     );
