@@ -31,6 +31,7 @@ import {
   type LateralMasterSheetClientQuery,
 } from "@/hooks/use-lateral-master-sheet";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useLateralSchedulerStatus } from "@/hooks/use-lateral-scheduler-status";
 import { cn } from "@/lib/utils";
 
 /** DD/MM/YYYY , HH:MM:SS am/pm (12h, zero-padded). */
@@ -52,6 +53,45 @@ function formatLastRunDateTime(iso: string): string {
 
 function formatLastRunTrigger(trigger: string): "manual" | "auto" {
   return trigger === "scheduler" ? "auto" : "manual";
+}
+
+/**
+ * "received DD/MM/YYYY" — explicit Asia/Kolkata, date-only. Standalone (not
+ * shared with Executive's formatter) by deliberate choice: this release
+ * keeps each page's formatting self-contained rather than extracting a
+ * shared util across files that weren't otherwise being touched.
+ */
+function formatIstDateOnly(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).formatToParts(d);
+  const day = parts.find((p) => p.type === "day")?.value;
+  const month = parts.find((p) => p.type === "month")?.value;
+  const year = parts.find((p) => p.type === "year")?.value;
+  return day && month && year ? `${day}/${month}/${year}` : iso;
+}
+
+/** "processed DD/MM/YYYY hh:mm am/pm" — explicit Asia/Kolkata. */
+function formatIstDateTimeAmPm(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const dayPeriod = get("dayPeriod").toLowerCase();
+  return `${get("day")}/${get("month")}/${get("year")} ${get("hour")}:${get("minute")} ${dayPeriod}`;
 }
 
 /**
@@ -155,6 +195,13 @@ export function LateralMasterSheetPage() {
   } = useLateralMasterFilterSchema();
 
   const { data, isLoading, isFetching, error } = useLateralMasterSheet(query);
+
+  // Fetched once per page load (staleTime 30s, retry: false — same pattern
+  // as Executive's existing useExecutiveSchedulerStatus hook). A viewer
+  // session gets a 403 from this editor-gated route; `schedulerStatus` then
+  // stays undefined and the line below renders nothing, quietly.
+  const { data: schedulerStatus } = useLateralSchedulerStatus();
+  const lastRealSheet = schedulerStatus?.gmailCheckpoint ?? null;
 
   React.useEffect(() => {
     setPage(1);
@@ -462,6 +509,18 @@ export function LateralMasterSheetPage() {
                   .join(", ")}
               </span>
             ) : null}
+          </div>
+        </FadeIn>
+      ) : null}
+
+      {lastRealSheet?.attachmentFilename &&
+      lastRealSheet.receivedAt &&
+      lastRealSheet.processedAt ? (
+        <FadeIn>
+          <div className="mb-3 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1 text-[11px] leading-snug text-muted-foreground">
+            Latest demand sheet: {lastRealSheet.attachmentFilename} · received{" "}
+            {formatIstDateOnly(lastRealSheet.receivedAt)} · processed{" "}
+            {formatIstDateTimeAmPm(lastRealSheet.processedAt)}
           </div>
         </FadeIn>
       ) : null}

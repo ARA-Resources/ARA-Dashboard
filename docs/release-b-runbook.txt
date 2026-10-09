@@ -1,0 +1,233 @@
+# Release B deploy runbook — Lateral no-new-sheet = Success, demand-sheet lines
+
+Nothing in this document has been run. All commands assume
+`/root/ARA-Dashboard-prod` on the prod host. Real compose service name:
+`ara-dashboard` (container_name `ara-dashboard-prod`), confirmed from
+`docker-compose.yml`. Real image: `localhost/ara-dashboard-prod_ara-dashboard:latest`.
+
+Scope of this release — the exact 11 files in commit `a1c5a2e`, confirmed
+via `git show --stat -1`:
+- `docs/release-b-runbook.txt`
+- `package.json`
+- `scripts/verify-lateral-demand-sheet-line.ts`
+- `scripts/verify-lateral-no-new-email-success.ts`
+- `scripts/verify-lateral-scheduler-status-retry.ts`
+- `src/components/dashboard/accenture/executive/executive-master-sheet-page.tsx`
+- `src/components/dashboard/accenture/lateral/lateral-master-sheet-page.tsx`
+- `src/components/dataset/lateral-scheduler-panel.tsx`
+- `src/hooks/use-lateral-scheduler-status.ts`
+- `src/services/lateral-processing/lateral-job.ts`
+- `src/services/lateral-processing/lateral-scheduler.ts`
+
+`src/hooks/use-executive-master-sheet.ts` was touched in an earlier working
+draft (a `retry:false` experiment) and then reverted before commit — it is
+**NOT** part of this release; `git show --stat -1 -- <that path>` shows no
+match in this commit.
+**No migration** — no new file under `db/migrations/`, no schema change.
+**No Posted file touched** — confirmed empty for this commit.
+**`pipeline.ts` and `/api/cron/lateral/route.ts` untouched.**
+
+## 0. Git checks
+
+```bash
+cd /root/ARA-Dashboard-prod
+git branch --show-current
+git log --oneline -3
+git status --short
+git show --stat --oneline -1
+```
+Expect: branch `prod`, the Release B merge/commit as the newest, a clean
+tree, and the stat matching the file list above exactly. Stop if not.
+
+## 1. Pre-checks — all must come back clean
+
+```bash
+# 1a. Advisory locks. pg_advisory_lock(bigint) splits the 64-bit key into
+# pg_locks.classid (high 32 bits) + objid (low 32 bits) — comparing objid
+# alone can NEVER match any of these three keys, since all three exceed
+# 2^32 (4294967296) and so always have a nonzero classid. Reconstruct the
+# original key instead:
+docker exec ara-dashboard-prod sh -c 'psql "$POSTGRES_URL" -c "SELECT ((classid::bigint << 32) | objid::bigint) AS lock_key, pid, granted FROM pg_locks WHERE locktype='"'"'advisory'"'"';"'
+# Keys: 7482910234 = Lateral job, 7482910249 = Executive job,
+# 7482910263 = candidate purge job (unchanged by this release — confirmed via
+# grep against src/lib/persistence/job-lock.ts). Any row = one of those is
+# mid-flight — wait for it, don't deploy over it.
+
+# 1b. No Oorwin upload/replay mid-flight (generic pre-deploy safety gate,
+# unrelated to this release's own code, but the container restart below
+# would kill it mid-flight regardless of which feature is being shipped).
+docker exec ara-dashboard-prod sh -c 'psql "$POSTGRES_URL" -c "SELECT id, kind, started_at FROM candidate_sync_history WHERE finished_at IS NULL;"'
+
+# 1c. No active query touching the tables this release's logic reads/writes
+# (pid/state/duration only — never query text). Excludes pg_backend_pid() so
+# the check doesn't match its own psql session.
+docker exec ara-dashboard-prod sh -c 'psql "$POSTGRES_URL" -c "SELECT pid, state, now() - query_start AS running_for FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND (query ILIKE '"'"'%lateral_scheduler_state%'"'"' OR query ILIKE '"'"'%lateral_sync_history%'"'"' OR query ILIKE '"'"'%gmail_checkpoint%'"'"') AND state <> '"'"'idle'"'"';"'
+```
+Quoting of all three `-c "..."` SQL strings above was tested locally with
+`psql` swapped for `echo` (no docker, no prod) — each resolves to exactly
+the intended single SQL statement, correctly single-quoted
+(`locktype='advisory'`, the three `ILIKE '%...%'` patterns, `state <>
+'idle'`). Not re-tested against the real container/DB.
+
+## 2. Record the current container and image
+
+```bash
+docker ps --filter name=ara-dashboard-prod --format '{{.ID}} {{.Image}} {{.Status}}'
+docker inspect ara-dashboard-prod --format 'ContainerID={{.Id}}  ImageID={{.Image}}'
+docker images localhost/ara-dashboard-prod_ara-dashboard
+```
+Tripwire: the container ID changes at every deploy — always take it fresh
+from the `docker ps` above, never reuse an old one from memory or notes.
+
+## 3. Rollback tag
+
+```bash
+docker tag localhost/ara-dashboard-prod_ara-dashboard:latest \
+  localhost/ara-dashboard-prod_ara-dashboard:pre-release-b-20261009
+# Fixed literal date (matches this repo's existing convention —
+# pre-posted-button-20261009, pre-row-scope-20261007 — not `$(date)`: a
+# rollback tag must stay pinned to today even if this step runs again later
+# the same day or the command is copy-pasted on a different day).
+```
+
+## 4. Backup — OPTIONAL for this release, take one anyway
+
+This release has **no migration and no schema change** — rollback (section 9)
+is a pure image retag + container recreate, with zero data-shape risk; there
+is nothing a restore would ever need to undo that a retag doesn't already
+fix. Strictly required: **no**. Recommended anyway: **yes** — it's cheap,
+and a backup immediately before any prod container restart is generically
+good practice independent of what the release itself touches (the restart
+below briefly stops the running process regardless).
+
+```bash
+docker exec ara-dashboard-prod pg_dump --version
+```
+If that errors or prints nothing, STOP before the backup step below.
+
+```bash
+df -h /root
+mkdir -p /root/release-b-backups && chmod 700 /root/release-b-backups
+( umask 077
+  docker exec ara-dashboard-prod sh -c 'pg_dump -Fc "$POSTGRES_URL"' \
+    > /root/release-b-backups/pre-release-b-20261009.dump )
+head -c 5 /root/release-b-backups/pre-release-b-20261009.dump; echo   # expect PGDMP
+ls -la /root/release-b-backups/pre-release-b-20261009.dump            # non-empty
+docker exec -i ara-dashboard-prod pg_restore -l < /root/release-b-backups/pre-release-b-20261009.dump | head
+```
+This dump contains candidate data (same database as everything else) —
+handle like any other PII dump, delete it by its exact name once the release
+is confirmed good.
+
+## 5. Confirm no ARA_POSTED_* drift
+
+```bash
+grep -nE "ARA_POSTED_" /root/ARA-Dashboard-prod/.env
+grep -rnE "ARA_POSTED_" /root/ARA-Dashboard-prod/docker-compose.yml
+docker exec ara-dashboard-prod env | grep -E "ARA_POSTED_"
+```
+This release makes no `ARA_POSTED_*` change. Compare the three outputs
+above against what they printed immediately before this deploy (not
+captured here — capture your own baseline right before you start) —
+they must be identical. If anything differs, STOP.
+
+## 6. Timing — do not deploy or click during these windows
+
+- Not on a weekday between 10:00–14:00 IST unless step 1 is clean right
+  before you start.
+- Not around 03:00 IST — the candidate purge job runs then and holds its
+  own advisory lock (7482910263).
+- After deploy, avoid clicking Run All on Lateral/Executive during the
+  `:55`–`:05` minute window of any hour inside 10:00–14:00 IST — a
+  scheduled Run All is most likely to be running then and holds the same
+  per-dataset advisory lock (not independently re-verified against today's
+  actual cron schedule — confirm the real schedule before relying on this).
+
+## 7. Build and deploy
+
+```bash
+cd /root/ARA-Dashboard-prod
+docker compose up -d --build
+```
+The site is down for about a minute during this rebuild+recreate — not
+measured precisely here, a rough expectation to set, not a guarantee.
+
+No migration runs in this release — `docker-entrypoint.sh` still runs
+`node scripts/db-migrate.mjs` on every start, but `schema_migrations` has
+nothing new to apply; expect it to report the same highest version
+(`v025`) as before this deploy, not a new one.
+
+## 8. Verify after deploy
+
+```bash
+docker ps --filter name=ara-dashboard-prod --format '{{.ID}} {{.Image}} {{.Status}}'
+docker logs --since 10m ara-dashboard-prod 2>&1 | grep -iE "error"
+# Expect no error lines.
+
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/login   # expect 200
+```
+
+### Post-deploy proof (the actual feature) — do this while NO new Lateral
+### demand-sheet email is waiting (i.e. the next real one hasn't arrived yet):
+
+1. Log in as editor+, open `/dataset/lateral`. Click the page-level **Run
+   All** button (`dataset-manager.tsx` — confirm, not "Confirm Run All",
+   the confirmation-dialog variant of the same action; it shows the latter
+   label only while the first click's confirm step is up). The embedded
+   scheduler panel further down the same page has its own **Run Now**
+   button that triggers the identical job — either one proves the same
+   thing; this runbook uses Run All as the primary path.
+2. **Banner** (Master Sheet page, `/company/accenture/lateral/master-sheet`):
+   expect the neutral "Last Run All: Success" banner (not red), with the
+   line "No new Lateral demand sheet on last run" — not "Failed", not the
+   old "Last Adhoc DS: <date>" text.
+3. **Last Result** (the embedded scheduler panel on the same `/dataset/lateral`
+   page): expect the green "Success" badge, with the same "No new Lateral
+   demand sheet on last run" line next to it.
+4. **Sync history row**: on that same panel, click **View Sync History**
+   (confirmed present, toggles to "Hide Sync History" once open), confirm
+   the newest row shows `result = Success`, not `Failed`.
+5. **No bell**: open the notification bell — confirm no new notification
+   was added for this run (compare the unread count / newest item's
+   timestamp against just before the click).
+6. **Next scheduled run**: confirm "Next Scheduled Run" on the panel still
+   shows a sensible future time (this run must not have disturbed the
+   schedule) — not independently re-verified against the live cron
+   schedule here; eyeball it against what it said before step 1.
+
+**If a new demand-sheet email actually is waiting when you click Run
+All/Run Now, this is not a test anymore** — it processes that email for
+real (Drive upload, Master Sheet update, checkpoint advance), the same as
+any other live Run All. Only steps 1-6 above describe the idle-tick proof;
+confirm there's genuinely nothing new pending (or deliberately choose a
+moment when you know there isn't) before relying on this section as "just
+a smoke test."
+
+After this check passes: `git push origin prod` (run by the user, not
+here).
+
+## 9. Rollback (only if step 8 looks wrong)
+
+```bash
+docker tag localhost/ara-dashboard-prod_ara-dashboard:pre-release-b-20261009 \
+  localhost/ara-dashboard-prod_ara-dashboard:latest
+docker compose up -d
+```
+No `--build`, no `docker compose down` — this just points `:latest` back at
+the previous image and recreates the container from it. No migration to
+reverse (none was added).
+
+---
+
+Not checked (requires the live system / real time of day, unavailable here):
+- The actual advisory-lock/activity/Oorwin-upload pre-checks (section 1) —
+  never run against the real prod DB from this session.
+- Whether `docker compose up -d --build` actually completes cleanly against
+  the real prod host (its Docker/network/disk state) — only the Dockerfile
+  build itself was proven, in a separate throwaway image, not on this host's
+  prod compose stack.
+- The real current cron schedule's exact next-fire time, for the timing
+  windows in section 6 and the "Next Scheduled Run" check in step 8.6.
+- Real Gmail/Drive behavior end-to-end (this release's own verify scripts
+  and preview container used synthetic/injected sync results throughout,
+  never real Gmail/Drive credentials).

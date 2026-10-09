@@ -8,7 +8,10 @@ import {
   buildCronExpressionsFromSchedule,
   estimateNextRunFromExpressions,
 } from "@/services/dataset/scheduler";
-import { executeLateralDatasetJob } from "@/services/lateral-processing/lateral-job";
+import {
+  executeLateralDatasetJob,
+  type LateralJobDeps,
+} from "@/services/lateral-processing/lateral-job";
 import { readLateralGmailCheckpoint } from "@/services/lateral-processing/lateral-gmail-checkpoint-store";
 import { appendLateralSyncHistory } from "@/services/lateral-processing/lateral-sync-history-store";
 import type { LateralGmailCheckpoint } from "@/types/lateral-gmail-checkpoint";
@@ -211,7 +214,7 @@ function normalizeLastRunSummary(
     adhocDsDateLabel:
       typeof v.adhocDsDateLabel === "string"
         ? v.adhocDsDateLabel
-        : "No new Adhoc DS on last run",
+        : "No new Lateral demand sheet on last run",
     failureReason:
       typeof v.failureReason === "string" ? v.failureReason : null,
     noNewSource: Boolean(v.noNewSource),
@@ -476,27 +479,27 @@ async function runLateralScheduledTick(timezone: string) {
  */
 async function runAndPersistLateralJob(
   trigger: "scheduler" | "manual",
-  lock: { release: () => Promise<void> }
+  lock: { release: () => Promise<void> },
+  deps?: LateralJobDeps
 ): Promise<Awaited<ReturnType<typeof executeLateralDatasetJob>>> {
   try {
     console.info(`[lateral-scheduler] Starting Lateral job (${trigger})`);
-    const outcome = await executeLateralDatasetJob(trigger);
+    const outcome = await executeLateralDatasetJob(trigger, deps);
 
     const summary = outcome.syncSummary;
-    const noNewSource =
-      outcome.status !== "failed" &&
-      !outcome.checkpointAdvanced &&
-      (summary?.rowsImported ?? 0) === 0 &&
-      /no new lateral dataset/i.test(outcome.message);
+    // Exact, not a heuristic: keyed on the same failure code the job's own
+    // effectiveStatus branch uses (lateral-job.ts), not on regex-matching
+    // outcome.message or inferring from outcome.status/checkpointAdvanced.
+    const noNewSource = outcome.failure?.code === "NO_MATCHING_EMAIL";
 
     const adhocDsDate = formatAdhocDsDateDdMmYyyy(summary?.sourceReceivedAt);
     const adhocDsDateLabel = noNewSource
-      ? "No new Adhoc DS on last run"
+      ? "No new Lateral demand sheet on last run"
       : adhocDsDate
         ? `Last Adhoc DS: ${adhocDsDate}`
         : summary?.originalFilename && summary.originalFilename !== "—"
           ? `Last source file: ${summary.originalFilename}`
-          : "No new Adhoc DS on last run";
+          : "No new Lateral demand sheet on last run";
 
     const lastRunSummary: LateralRunLastSummary = {
       result: outcome.status,
@@ -653,7 +656,8 @@ async function persistUnexpectedLateralJobCrash(
  * the job has started rather than waiting for it to finish.
  */
 export async function invokeLateralJob(
-  trigger: "scheduler" | "manual"
+  trigger: "scheduler" | "manual",
+  deps?: LateralJobDeps
 ): Promise<{
   status: LateralSchedulerStatus;
   outcome: Awaited<ReturnType<typeof executeLateralDatasetJob>>;
@@ -668,7 +672,7 @@ export async function invokeLateralJob(
   }
 
   rt.running = true;
-  const outcome = await runAndPersistLateralJob(trigger, lock);
+  const outcome = await runAndPersistLateralJob(trigger, lock, deps);
   return {
     status: await getLateralSchedulerStatus(),
     outcome,

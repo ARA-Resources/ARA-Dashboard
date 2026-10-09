@@ -75,6 +75,46 @@ function formatLastRunTrigger(trigger: string): "manual" | "auto" {
 }
 
 /**
+ * "received DD/MM/YYYY" — explicit Asia/Kolkata, date-only. Standalone (not
+ * reusing `formatLastRunDateTime` above) by deliberate choice: this release
+ * keeps each page's new-line formatting self-contained rather than
+ * extracting a shared util across files that weren't otherwise being
+ * touched — see the identical copy on the Lateral Master Sheet page.
+ */
+function formatIstDateOnly(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).formatToParts(d);
+  const day = parts.find((p) => p.type === "day")?.value;
+  const month = parts.find((p) => p.type === "month")?.value;
+  const year = parts.find((p) => p.type === "year")?.value;
+  return day && month && year ? `${day}/${month}/${year}` : iso;
+}
+
+/** "processed DD/MM/YYYY hh:mm am/pm" — explicit Asia/Kolkata. */
+function formatIstDateTimeAmPm(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const dayPeriod = get("dayPeriod").toLowerCase();
+  return `${get("day")}/${get("month")}/${get("year")} ${get("hour")}:${get("minute")} ${dayPeriod}`;
+}
+
+/**
  * Filter params the page accepts on navigation (e.g. from the dashboard pivot's
  * clickable Primary Skill). `skill` / `skillCat` are exact single values; the
  * rest are repeatable. They seed `columnFilters` once, then get stripped from
@@ -166,6 +206,7 @@ export function ExecutiveMasterSheetPage() {
   const { data: schedulerStatus } = useExecutiveSchedulerStatus();
   const lastRunSummary = schedulerStatus?.lastRunSummary ?? null;
   const runTimezone = schedulerStatus?.timezone ?? "Asia/Kolkata";
+  const lastRealSheet = schedulerStatus?.gmailCheckpoint ?? null;
 
   React.useEffect(() => {
     setPage(1);
@@ -407,6 +448,18 @@ export function ExecutiveMasterSheetPage() {
                 reconcile: {lastRunSummary.supersededFiles.join(", ")}
               </span>
             ) : null}
+          </div>
+        </FadeIn>
+      ) : null}
+
+      {lastRealSheet?.attachmentFilename &&
+      lastRealSheet.receivedAt &&
+      lastRealSheet.processedAt ? (
+        <FadeIn>
+          <div className="mb-3 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1 text-[11px] leading-snug text-muted-foreground">
+            Latest demand sheet: {lastRealSheet.attachmentFilename} · received{" "}
+            {formatIstDateOnly(lastRealSheet.receivedAt)} · processed{" "}
+            {formatIstDateTimeAmPm(lastRealSheet.processedAt)}
           </div>
         </FadeIn>
       ) : null}

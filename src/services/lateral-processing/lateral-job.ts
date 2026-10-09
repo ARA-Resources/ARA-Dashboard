@@ -74,6 +74,17 @@ async function logJobFailure(failure: LateralStageFailure): Promise<void> {
 }
 
 /**
+ * Test-only injection seam. Every field is optional and defaults to the
+ * real implementation — omitting `deps` entirely (every production caller
+ * does) reproduces current behavior exactly. Added so a verify script can
+ * exercise NO_MATCHING_EMAIL / ALL_CANDIDATES_EXHAUSTED / a hard failure
+ * without real Gmail/Drive credentials.
+ */
+export interface LateralJobDeps {
+  runSync?: typeof runLateralGmailIncrementalSync;
+}
+
+/**
  * Canonical Lateral Dataset job with robust failure handling.
  *
  * On ANY hard failure:
@@ -87,7 +98,8 @@ async function logJobFailure(failure: LateralStageFailure): Promise<void> {
  *  - never report success
  */
 export async function executeLateralDatasetJob(
-  trigger: LateralJobTrigger
+  trigger: LateralJobTrigger,
+  deps?: LateralJobDeps
 ): Promise<LateralJobOutcome> {
   const ranAt = new Date().toISOString();
   const startedMs = Date.now();
@@ -95,7 +107,7 @@ export async function executeLateralDatasetJob(
   startLateralRunProgress(trigger);
 
   try {
-    return await executeLateralDatasetJobBody(trigger, ranAt, startedMs);
+    return await executeLateralDatasetJobBody(trigger, ranAt, startedMs, deps);
   } finally {
     const progress = getLateralRunProgress();
     if (progress.active) {
@@ -107,8 +119,10 @@ export async function executeLateralDatasetJob(
 async function executeLateralDatasetJobBody(
   trigger: LateralJobTrigger,
   ranAt: string,
-  startedMs: number
+  startedMs: number,
+  deps?: LateralJobDeps
 ): Promise<LateralJobOutcome> {
+  const runSync = deps?.runSync ?? runLateralGmailIncrementalSync;
 
   let syncOk = false;
   let pipelineOk = false;
@@ -138,7 +152,7 @@ async function executeLateralDatasetJobBody(
   updateLateralGmailProgress("gmail_search", "active");
 
   try {
-    syncResult = await runLateralGmailIncrementalSync();
+    syncResult = await runSync();
     // A recoverable candidate failure that was skipped-and-continued-past
     // does NOT make the sync phase a failure as long as something later in
     // the queue succeeded — only a genuine hard stop (non-recoverable) or
@@ -201,16 +215,19 @@ async function executeLateralDatasetJobBody(
       syncResult.skippedCandidates.length === 0 &&
       syncResult.matchedAttachments === 0
     ) {
-      // Clear terminal state — not a hard failure; no Master work required for mail.
-      const idle = createLateralStageFailure({
+      // Clear terminal state — not a hard failure; no Master work required for
+      // mail. Assigned to the outer `hardFailure` (not just a local const) so
+      // effectiveStatus / the notification gate / the idle label can all key
+      // on the exact code `hardFailure?.code === "NO_MATCHING_EMAIL"` below.
+      hardFailure = createLateralStageFailure({
         code: "NO_MATCHING_EMAIL",
         stage: "gmail_email_match",
       });
       updateLateralGmailProgress("gmail_search", "ok");
-      updateLateralGmailProgress("gmail_download", "skipped", idle.message);
+      updateLateralGmailProgress("gmail_download", "skipped", hardFailure.message);
       updateLateralGmailProgress("drive_upload", "skipped");
       updateLateralGmailProgress("drive_replace", "skipped");
-      parts.push(idle.message);
+      parts.push(hardFailure.message);
     } else {
       updateLateralGmailProgress("gmail_search", "ok");
       updateLateralGmailProgress("gmail_download", "ok");
@@ -386,6 +403,22 @@ async function executeLateralDatasetJobBody(
     effectiveStatus = "failed";
     pipelineOk = false;
     checkpointAdvanced = false;
+  } else if (hardFailure?.code === "NO_MATCHING_EMAIL") {
+    // Narrow, exact, and placed first (right after the hard-failure check):
+    // nothing new arrived since the checkpoint. Not a failure — mirrors
+    // Executive's identical no-new-email Success branch (executive-job.ts).
+    // ALL_CANDIDATES_EXHAUSTED and every other failure code are caught by
+    // `hardFailure?.isHardFailure` above and never reach here (mutually
+    // exclusive by construction with this code). Deliberately placed BEFORE
+    // `pendingCheckpointAdvances.length > 0` and `!processingSetup`: this
+    // code implies pendingCheckpointAdvances is always empty, so ordering
+    // against that check doesn't matter, but ordering against
+    // `!processingSetup` does — "no new email" must never be reclassified
+    // as a setup-config problem (a transient config-read hiccup, or a
+    // dataset that's simply never been configured, is an orthogonal fact to
+    // "was anything new found"; Chain 1 above already treats this exact
+    // combo as a benign no-op with no hardFailure escalation and no log).
+    effectiveStatus = "success";
   } else if (pendingCheckpointAdvances.length > 0) {
     effectiveStatus = checkpointAdvanced ? "success" : "failed";
   } else if (!processingSetup) {
@@ -449,9 +482,10 @@ async function executeLateralDatasetJobBody(
     lastUploaded?.attachmentName ||
     syncResult?.checkpointBefore.attachmentFilename ||
     null;
+  const isNoMatchingEmailIdle = hardFailure?.code === "NO_MATCHING_EMAIL";
   const adhocDsDateLabel = (() => {
-    if (pendingCheckpointAdvances.length === 0 && !hardFailure?.isHardFailure) {
-      return "No new Adhoc DS on last run";
+    if (isNoMatchingEmailIdle) {
+      return "No new Lateral demand sheet on last run";
     }
     if (!sourceReceivedAt) {
       return sourceFilename
@@ -522,36 +556,40 @@ async function executeLateralDatasetJobBody(
     skippedSummaryLine,
   ].filter(Boolean);
 
-  await pushAppNotification({
-    kind:
-      effectiveStatus === "failed"
-        ? "dataset_sync_failed"
-        : effectiveStatus === "partial" || successWithSkips
-          ? "dataset_sync_partial"
-          : "dataset_sync_success",
-    title: notificationTitle,
-    body: notificationBodyParts.join(" · "),
-    href: effectiveStatus === "failed" ? failureHref : successHref,
-    meta: {
-      trigger,
-      datasetName: "Lateral",
-      checkpointAdvanced,
-      processingResult: checkpointAdvanced ? "SUCCESS" : null,
-      failureCode: hardFailure?.code ?? null,
-      failedStage: hardFailure?.failedStage ?? null,
-      previousMasterPreserved: true,
-      retryable: true,
-      sourceFilename,
-      sourceReceivedAt,
-      adhocDsDateLabel,
-      rowsImported: pipelineSummary?.rowsImported ?? 0,
-      newCount: pipelineSummary?.newCount ?? 0,
-      reopenCount: pipelineSummary?.reopenCount ?? 0,
-      closedCount: pipelineSummary?.closedCount ?? 0,
-      activeCount: pipelineSummary?.activeCount ?? 0,
-      skippedCandidates,
-    },
-  }).catch(() => undefined);
+  // No new matching email is a quiet, routine tick — not worth a bell
+  // notification (real failures and partial successes still notify below).
+  if (!isNoMatchingEmailIdle) {
+    await pushAppNotification({
+      kind:
+        effectiveStatus === "failed"
+          ? "dataset_sync_failed"
+          : effectiveStatus === "partial" || successWithSkips
+            ? "dataset_sync_partial"
+            : "dataset_sync_success",
+      title: notificationTitle,
+      body: notificationBodyParts.join(" · "),
+      href: effectiveStatus === "failed" ? failureHref : successHref,
+      meta: {
+        trigger,
+        datasetName: "Lateral",
+        checkpointAdvanced,
+        processingResult: checkpointAdvanced ? "SUCCESS" : null,
+        failureCode: hardFailure?.code ?? null,
+        failedStage: hardFailure?.failedStage ?? null,
+        previousMasterPreserved: true,
+        retryable: true,
+        sourceFilename,
+        sourceReceivedAt,
+        adhocDsDateLabel,
+        rowsImported: pipelineSummary?.rowsImported ?? 0,
+        newCount: pipelineSummary?.newCount ?? 0,
+        reopenCount: pipelineSummary?.reopenCount ?? 0,
+        closedCount: pipelineSummary?.closedCount ?? 0,
+        activeCount: pipelineSummary?.activeCount ?? 0,
+        skippedCandidates,
+      },
+    }).catch(() => undefined);
+  }
 
   const formatEmailInfo = (parts: {
     sender?: string | null;

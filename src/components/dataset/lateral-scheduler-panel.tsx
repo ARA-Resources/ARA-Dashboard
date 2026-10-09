@@ -302,6 +302,13 @@ export function LateralSchedulerPanel({
         <MetaRow
           label="Last Result"
           value={<ResultBadge result={lastResult} />}
+          trailing={
+            processing?.lastRunSummary?.adhocDsDateLabel ? (
+              <span className="text-xs text-muted-foreground">
+                {processing.lastRunSummary.adhocDsDateLabel}
+              </span>
+            ) : null
+          }
         />
         <MetaRow
           label="Next Scheduled Run"
